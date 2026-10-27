@@ -49,6 +49,8 @@ zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 | F11 | Toggle fullscreen |
 | Left mouse button | Captured but not used yet (see Known issues) |
 
+Keys are bound to named actions in `game/controls.zig`.
+
 ## Project structure
 
 ```
@@ -56,16 +58,23 @@ zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 ├── build.zig                  Build graph: SDL3, stb_image, shader compilation, run step
 ├── build.zig.zon              Package manifest and pinned dependencies
 ├── src/
-│   ├── main.zig               Entry point, window, main loop, player, frame layout
-│   ├── sdl.zig                The only SDL3 C import; every file uses it
-│   ├── renderer.zig           GPU device, swapchain, command buffers, render passes
-│   ├── shader.zig             Loads SPIR-V from disk and creates GPU shaders
-│   ├── texture.zig            2D textures, render targets, nearest-neighbor sampler
-│   ├── image.zig              Decodes image files to RGBA8 with stb_image
-│   ├── sprite.zig             Batched textured quads, sprite pipeline, vertex upload
-│   ├── camera.zig             View position, follow target, edge clamping
-│   ├── world.zig              Tile grid, view culling, tile drawing
-│   ├── input.zig              Held-key state and mouse events
+│   ├── main.zig               Entry point: hands the game to the engine
+│   ├── engine/                Reusable engine code. Never names a game type.
+│   │   ├── engine.zig         Public engine API: window, frame loop, Config, Context, DrawContext
+│   │   ├── sdl.zig            The only SDL3 C import
+│   │   ├── renderer.zig       GPU device, swapchain, command buffers, render passes
+│   │   ├── shader.zig         Loads SPIR-V from disk and creates GPU shaders
+│   │   ├── texture.zig        2D textures, render targets, nearest-neighbor sampler
+│   │   ├── image.zig          Decodes image files to RGBA8 with stb_image
+│   │   ├── sprite.zig         Batched textured quads, sprite pipeline, vertex upload
+│   │   ├── camera.zig         View position, follow target, edge clamping
+│   │   └── input.zig          Key enum, held, pressed, and released state, mouse events
+│   ├── game/                  Gameplay code. Uses the engine only through engine/engine.zig.
+│   │   ├── game.zig           Game state, asset loading, update and draw
+│   │   ├── controls.zig       Named actions and the keys bound to them
+│   │   ├── player.zig         Player position, facing, walk animation, drawing
+│   │   ├── level.zig          Tile grid, view culling, tile drawing
+│   │   └── config.zig         Title, window and native sizes, level size, background color
 │   └── root.zig               Unused template file from `zig init`
 ├── shaders/
 │   └── triangle.slang         Sprite vertex and fragment shaders (the name is legacy)
@@ -96,19 +105,18 @@ The native view is never smaller than 320x180 pixels. The window's aspect ratio 
 
 ### Frame lifecycle
 
-Each pass through the main loop does the following:
+Each pass through the main loop does the following. The loop is in `engine/engine.zig`. The game steps are implemented in `game/`.
 
 1. Measure `dt` since the last frame, capped at 0.1 s.
-2. Drain the SDL event queue. Quit requests, F11, and mouse events are handled here.
-3. Clear one-shot input state (`Input.endFrame`).
-4. Read held movement keys, normalize diagonal movement, move the player at 80 px/s, and clamp the player to the map. Esc ends the loop.
-5. Read the window size in pixels, then compute `scale = min(win_w / 320, win_h / 180)` and the view size `floor(window / scale + 0.01)`. The 0.01 keeps float rounding from dropping a whole native pixel.
+2. Clear last frame's one-shot input: presses, releases, and clicks (`Input.beginFrame`).
+3. Drain the SDL event queue. The engine handles quit requests and F11. Key and mouse events update `Input`.
+4. Game `update`: read actions from `game/controls.zig`. The quit action sets `running` to false when it is pressed. Movement actions move the player at 80 px/s, with diagonals normalized, and the player is clamped to the map.
+5. Read the window size in pixels, then compute `scale = min(win_w / native_w, win_h / native_h)` and the view size `floor(window / scale + 0.01)`. The native view size is 320×180 in `game/config.zig`. The 0.01 keeps float rounding from dropping a whole native pixel.
 6. If the view size changed, wait for the GPU to go idle and recreate the native target.
-7. Point the camera at the player's center. The camera position snaps to whole pixels.
-8. Acquire a command buffer and swapchain texture. Skip the frame if either is unavailable.
-9. Pass 1: queue the visible tiles and the player into the sprite batch, upload the vertices, and draw into the native target.
-10. Pass 2: queue one quad covering the window that samples the native target, upload, and draw into the swapchain.
-11. Submit the command buffer. Every 0.5 s, refresh the window title with FPS, sprite count, draw calls, scale, and view size.
+7. Acquire a command buffer and swapchain texture. Skip the frame if either is unavailable.
+8. Pass 1: game `draw` points the camera at the player's center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target.
+9. Pass 2: queue one quad covering the window that samples the native target, upload, and draw into the swapchain.
+10. Submit the command buffer. Every 0.5 s, refresh the window title with FPS, sprite count, draw calls, scale, and view size.
 
 ### Coordinate systems
 
@@ -175,19 +183,20 @@ These estimates are rough. They measure how close each area is to something usab
 | Area | File | Status | Est. done | Notes |
 |---|---|---|---|---|
 | Platform | `sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
-| Application | `main.zig` | Prototype | 40% | Window, loop, and frame layout work. Player logic and movement sit inline, and there is no scene or state system. |
+| Engine | `engine/engine.zig` | Prototype | 50% | Window, GPU setup, native-view pipeline, frame loop, and the `Game` interface. Missing: scene or state system, fixed timestep, device-lost recovery. |
+| Gameplay | `game/` | Prototype | 15% | Player with directional walk animation, one test level, and movement and quit actions bound in `game/controls.zig`. No entities, rules, or level files. |
 | Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Missing: device-lost recovery, other backends' shader formats, pass helpers. |
 | Shaders | `shader.zig` | Basic | 50% | Loads SPIR-V from disk. Missing: embedding, reflection, hot reload. Uniform buffer count is supported but unused. |
 | Textures | `texture.zig` | Solid base | 70% | Synchronous upload that waits for GPU idle. Missing: atlases, async uploads, unload and reload. |
 | Images | `image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
 | Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Missing: index buffer, rotation, flip, origin, alpha tint, z-order, growable capacity. |
 | Camera | `camera.zig` | Functional | 50% | Follow, clamp, and pixel snap. Missing: smoothing, dead zone, zoom, shake. |
-| World | `world.zig` | Early | 25% | One uniform layer drawn with culling. No tile data, multiple layers, loading, or collision. |
-| Input | `input.zig` | Partial | 40% | Held keys work. Click and mouse position are captured but not usable yet (see Known issues). No press and release edges, action mapping, or gamepad. |
+| Level | `game/level.zig` | Early | 25% | One uniform layer drawn with culling. No tile data, multiple layers, loading, or collision. |
+| Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input lasts until the frame that reads it. Clicks are captured but not usable yet, and mouse position is in window space (see Known issues). No gamepad or text input. |
 | Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, shaders, and the run step. Missing: tests, asset install step, other shader targets. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
 | Tests | `root.zig` | Not started | 0% | Template leftover, not connected to the build. |
-| Entities | none | Not started | 0% | The player is two floats in `main.zig`. |
+| Entities | none | Not started | 0% | The player is a struct in `game/player.zig`. There is no entity list yet. |
 | Collision | none | Not started | 0% | |
 | Audio | none | Not started | 0% | |
 | UI and text | none | Not started | 0% | |
@@ -197,56 +206,52 @@ These estimates are rough. They measure how close each area is to something usab
 
 These are the natural extension points. Each one reuses existing code.
 
-**Character sprite and animation.** The warrior is loaded once from `assets/warrior_16x32.png` and drawn through the existing `drawSprite` source-rectangle API. Each cell is 16×32 pixels. `main.zig` tracks a facing row, walk timer, and frame index; the back-facing row uses four frames, while the other rows use five. Frame 0 is selected while idle.
+**Character sprite and animation.** The warrior is loaded once from `assets/warrior_16x32.png` and drawn through the existing `drawSprite` source-rectangle API. Each cell is 16×32 pixels. `game/player.zig` tracks a facing row, walk timer, and frame index; the back-facing row uses four frames, while the other rows use five. Frame 0 is selected while idle.
 
-**Add per-cell tile data.** `World` already knows its size and culls visible cells. Give it a `[]u16` of tile IDs with `cols * rows` entries. In `draw`, look up each cell's ID, convert it to a source rectangle in the tileset, and keep the same loop. The checkerboard tint is a stand-in for real data and can go.
+**Add per-cell tile data.** `Level` already knows its size and culls visible cells. Give it a `[]u16` of tile IDs with `cols * rows` entries. In `draw`, look up each cell's ID, convert it to a source rectangle in the tileset, and keep the same loop. The checkerboard tint is a stand-in for real data and can go.
 
-**Add collision.** Give `World` a `solid(col, row) bool` query. Move the player along x and resolve against overlapping solid cells, then move along y. The map clamp in `main.zig` is a special case: the map edges act as walls.
+**Add collision.** Give `Level` a `solid(col, row) bool` query. Move the player along x and resolve against overlapping solid cells, then move along y. The map clamp in `game/player.zig` is a special case: the map edges act as walls.
 
-**Add camera effects.** The camera is a position and a view size. Smoothing is a lerp toward the target before clamping. Shake is an offset applied after `follow`. Zoom changes the native view size that `main` uses in `fitScale`, and the rest of the pipeline already handles any view size.
+**Add camera effects.** The camera is a position and a view size. Smoothing is a lerp toward the target before clamping. Shake is an offset applied after `follow`. Zoom changes the native view size that `engine/engine.zig` uses in `fitScale`, and the rest of the pipeline already handles any view size.
 
-**Add input actions.** `Input.held` reads live state. To detect a press, store last frame's state and compare. Keep a table that maps actions to scancodes, so gameplay asks for "jump" and never checks a key directly.
+**Add input actions.** Add a name to `Action` in `game/controls.zig`, bind its keys in `keysFor`, and query it with `controls.held`, `controls.pressed`, or `controls.released`. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input.zig` and map it to its SDL scancode.
 
 **Add a shader or pipeline.** Put the file in `shaders/`, add its entry points to the list in `build.zig`, load it with `shader.loadSpirv`, and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
 
 **Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
 
-**Add entities.** Store entities in an array of structs with a position, a velocity, and a sprite or animation. Update and draw them in the loop, subtracting the camera from world positions the same way `drawPlayer` does. Once there are several entity types, consider the ECS approach from the roadmap.
+**Add entities.** Store entities in an array of structs with a position, a velocity, and a sprite or animation. Update and draw them in the loop, subtracting the camera from world positions the same way `Player.draw` does. Once there are several entity types, consider the ECS approach from the roadmap.
 
 ## Known issues
 
-1. **Left-click is lost.** `main.zig` calls `input_state.endFrame()` right after draining events, which clears `left_clicked` before any game code runs. Nothing reads it yet, so the failure is silent. Move `endFrame()` to the end of the loop body so one-shot input survives until the frame that reads it.
+1. **Mouse coordinates are in the wrong space for gameplay.** `motion.x` and `motion.y` are window-space values, but the render size comes from `SDL_GetWindowSizeInPixels`. On high-DPI displays these differ. Convert window coordinates to pixels, divide by the scale to get view pixels, then add the camera position to get world coordinates.
 
-2. **Mouse coordinates are in the wrong space for gameplay.** `motion.x` and `motion.y` are window-space values, but the render size comes from `SDL_GetWindowSizeInPixels`. On high-DPI displays these differ. Convert window coordinates to pixels, divide by the scale to get view pixels, then add the camera position to get world coordinates.
+2. **Asset and shader paths depend on the working directory.** Running the executable from another folder panics on the first load. The asset paths are set in `game/game.zig`, and the shader paths are hardcoded in `engine/sprite.zig`. Both are relative to the working directory. Resolve paths relative to the executable, or embed the compiled shaders.
 
-3. **Asset and shader paths depend on the working directory.** Running the executable from another folder panics on the first load. The asset paths are set in `main.zig`, and the shader paths are hardcoded in `sprite.zig`. Both are relative to the working directory. Resolve paths relative to the executable, or embed the compiled shaders.
+3. **A minimized window spins the CPU.** When the window has zero pixel size, the loop `continue`s without waiting. Add an `SDL_Delay`, or use `SDL_WaitEvent`, in that branch.
 
-4. **A minimized window spins the CPU.** When the window has zero pixel size, the loop `continue`s without waiting. Add an `SDL_Delay`, or use `SDL_WaitEvent`, in that branch.
+4. **The backend is assumed to be Vulkan.** The device accepts SPIR-V only, and the renderer sets Vulkan options. This works on the current machine. Other backends (D3D12, Metal) need DXIL or MSL shaders, which are on the roadmap. The sampler in `triangle.slang` is bound with the Vulkan-specific `[vk::binding(0, 2)]` attribute, so the binding layout will need attention when those targets are added.
 
-5. **The backend is assumed to be Vulkan.** The device accepts SPIR-V only, and the renderer sets Vulkan options. This works on the current machine. Other backends (D3D12, Metal) need DXIL or MSL shaders, which are on the roadmap. The sampler in `triangle.slang` is bound with the Vulkan-specific `[vk::binding(0, 2)]` attribute, so the binding layout will need attention when those targets are added.
+5. **Names don't match.** The package is `zig_sdl3_slang`, the executable is `my-game`, the window is `My Game`, and the sprite shader is `triangle.slang`. Choose one scheme and rename.
 
-6. **Names don't match.** The package is `zig_sdl3_slang`, the executable is `my-game`, the window is `My Game`, and the sprite shader is `triangle.slang`. Choose one scheme and rename.
+6. **`root.zig` is template code.** Its functions and test are not used by the game, and `zig build test` is not wired to anything. Delete the file or move real tests into it.
 
-7. **`root.zig` is template code.** Its functions and test are not used by the game, and `zig build test` is not wired to anything. Delete the file or move real tests into it.
+7. **Texture uploads block.** `Texture.initRgba8` waits for the GPU to go idle. That is fine at load time, but it must not run every frame.
 
-8. **Game logic lives in `main.zig`.** Movement, the player, and the level constants are inside the loop. Move them out before adding more entities.
+8. **Fixed batch limits.** `SpriteBatch` panics above 8192 sprites or 256 texture switches in one frame. These limits fail loudly on purpose, but they will need revisiting once there are many textures or large levels.
 
-9. **Texture uploads block.** `Texture.initRgba8` waits for the GPU to go idle. That is fine at load time, but it must not run every frame.
+9. **The package file list omits build inputs.** `build.zig.zon` lists only `build.zig`, `build.zig.zon`, and `src` in `.paths`. A project that depends on this package would not receive `shaders/` or `vendor/`, which the build needs. Add those paths, or defer this until the package is meant for reuse.
 
-10. **Fixed batch limits.** `SpriteBatch` panics above 8192 sprites or 256 texture switches in one frame. These limits fail loudly on purpose, but they will need revisiting once there are many textures or large levels.
-
-11. **The package file list omits build inputs.** `build.zig.zon` lists only `build.zig`, `build.zig.zon`, and `src` in `.paths`. A project that depends on this package would not receive `shaders/` or `vendor/`, which the build needs. Add those paths, or defer this until the package is meant for reuse.
-
-12. **The SPIR-V version is not pinned.** `build.zig` and `renderer.zig` both say the shaders are SPIR-V 1.5, but the `slangc` command passes no `-profile` flag, so the output depends on the installed Slang version's default. SPIR-V 1.5 is the version that matches the Vulkan 1.2 request made at runtime, so the two should be set together. Add `-profile spirv_1_5` to the command, or change the comment if another version is intended.
+10. **The SPIR-V version is not pinned.** `build.zig` and `renderer.zig` both say the shaders are SPIR-V 1.5, but the `slangc` command passes no `-profile` flag, so the output depends on the installed Slang version's default. SPIR-V 1.5 is the version that matches the Vulkan 1.2 request made at runtime, so the two should be set together. Add `-profile spirv_1_5` to the command, or change the comment if another version is intended.
 
 ## Roadmap
 
 ### Phase 1: finish the vertical slice
 
 - [x] Draw the warrior from `assets/warrior_16x32.png` with 16×32 source frames and directional walk animation.
-- [ ] Fix one-shot input and add press and release detection.
-- [ ] Map keys to named actions.
-- [ ] Move the player and game state out of `main.zig`.
+- [x] Fix one-shot input and add press and release detection.
+- [x] Map keys to named actions.
+- [x] Move the player and game state out of `main.zig`.
 - [ ] Separate fixed-timestep updates from rendering.
 - [ ] Add an integer-scale option for pixel-perfect output.
 
@@ -287,9 +292,10 @@ These are the natural extension points. Each one reuses existing code.
 - Paths are relative to the project root; run `zig build run` from the repository root so `assets/warrior_16x32.png` can be found.
 - `assets/warrior.png` is the original source art; the game loads the prepared 80×128 `assets/warrior_16x32.png` sheet instead.
 - Only `sdl.zig` imports SDL's C headers.
+- Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
 - Capacity limits are constants that panic when exceeded, so overflows are caught early.
-- GPU objects are released by their `deinit`. Resources in `main` are released with `defer`, in reverse order of creation.
+- GPU objects are released by their `deinit`. Resources in the engine loop and in the game's `deinit` are released with `defer`, in reverse order of creation.
 - Comments explain why. Public items have doc comments.
 
 Update the status table when a module changes, so this file stays useful.

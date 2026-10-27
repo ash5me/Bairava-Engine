@@ -1,0 +1,214 @@
+//! The engine: window, GPU device, the native-resolution pipeline, input, camera, and the
+//! frame loop. Engine code never names a game type. A game plugs in by passing a type with
+//! `init`, `update`, `draw`, and `deinit` to `run`. Game code should import only this file.
+
+const std = @import("std");
+const build_options = @import("build_options");
+
+const c = @import("sdl.zig").c;
+const image = @import("image.zig");
+const Renderer = @import("renderer.zig").Renderer;
+
+pub const Camera = @import("camera.zig").Camera;
+pub const Input = @import("input.zig").Input;
+pub const Key = @import("input.zig").Key;
+pub const Rect = @import("sprite.zig").Rect;
+pub const SpriteBatch = @import("sprite.zig").SpriteBatch;
+pub const Texture = @import("texture.zig").Texture;
+
+/// Settings the game passes to `run`.
+pub const Config = struct {
+    /// Window title. Play stats are appended to it.
+    title: [:0]const u8,
+    window_w: c_int,
+    window_h: c_int,
+    /// The smallest view the game is designed for, in native pixels. Larger windows show
+    /// more of the world instead of bigger pixels.
+    native_w: u32,
+    native_h: u32,
+    /// Background color behind the world, as RGB from 0 to 1.
+    clear_rgb: [3]f32,
+};
+
+/// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
+pub const Context = struct {
+    device: *c.SDL_GPUDevice,
+    /// Held keys and mouse state for this frame.
+    input: *const Input,
+    /// Seconds since the previous frame, capped at 0.1.
+    dt: f32 = 0,
+    /// Set to false to end the main loop after this frame.
+    running: bool = true,
+
+    /// Loads an image and uploads it as a texture. Panics if the file is missing or can't be
+    /// decoded. Paths are relative to the working directory.
+    pub fn loadTexture(self: *const Context, path: [*:0]const u8) Texture {
+        var img = image.loadRgba8(path) catch |err| {
+            std.debug.panic("failed to load {s}: {s}", .{ path, @errorName(err) });
+        };
+        defer img.deinit();
+        return Texture.initRgba8(self.device, img.width, img.height, img.pixels);
+    }
+};
+
+/// What the game needs to queue sprites for one frame.
+pub const DrawContext = struct {
+    /// Sprites are queued here. The engine uploads and draws them.
+    batch: *SpriteBatch,
+    /// The view camera. The game sets its world size, then calls `follow`.
+    cam: *Camera,
+    /// Native view size in pixels. The camera's view has this size.
+    view_w: f32,
+    view_h: f32,
+};
+
+/// Longest frame time the loop will use, so a stall doesn't make the next frame jump far ahead.
+const max_dt: f32 = 0.1;
+/// How often the window title is refreshed, in seconds.
+const title_interval: f32 = 0.5;
+
+const white = [3]f32{ 1.0, 1.0, 1.0 };
+const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
+
+/// The scale at which the native view fits the window on its limiting axis.
+fn fitScale(win_w: f32, win_h: f32, native_w: f32, native_h: f32) f32 {
+    return @min(win_w / native_w, win_h / native_h);
+}
+
+/// Opens the window and runs `Game` until it sets `running` to false or the window closes.
+pub fn run(comptime Game: type, config: Config) void {
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
+        std.debug.panic("SDL_Init failed: {s}", .{c.SDL_GetError()});
+    }
+    defer c.SDL_Quit();
+
+    const window = c.SDL_CreateWindow(config.title.ptr, config.window_w, config.window_h, c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY) orelse {
+        std.debug.panic("SDL_CreateWindow failed: {s}", .{c.SDL_GetError()});
+    };
+    defer c.SDL_DestroyWindow(window);
+
+    var gpu = Renderer.init(window, build_options.gpu_debug);
+    defer gpu.deinit();
+
+    const format = gpu.swapchainFormat();
+    const native_wf: f32 = @floatFromInt(config.native_w);
+    const native_hf: f32 = @floatFromInt(config.native_h);
+    const clear = c.SDL_FColor{
+        .r = config.clear_rgb[0],
+        .g = config.clear_rgb[1],
+        .b = config.clear_rgb[2],
+        .a = 1.0,
+    };
+
+    // The world is drawn into this target at the view's native size, then stretched to the window.
+    // It's rebuilt whenever the view size changes.
+    var target = Texture.initTarget(gpu.device, config.native_w, config.native_h, format);
+    defer target.deinit();
+
+    var world_batch = SpriteBatch.init(gpu.device, format);
+    defer world_batch.deinit();
+    var screen_batch = SpriteBatch.init(gpu.device, format);
+    defer screen_batch.deinit();
+
+    var input_state = Input.init();
+    // The game sets the world size every frame, so the camera starts without one.
+    var cam = Camera{ .view_w = native_wf, .view_h = native_hf, .world_w = 0, .world_h = 0 };
+
+    var ctx = Context{ .device = gpu.device, .input = &input_state };
+    var game = Game.init(&ctx);
+    defer game.deinit();
+
+    var last_ns = c.SDL_GetTicksNS();
+    var title_timer: f32 = 0;
+    var frames: u32 = 0;
+    var title_buf: [160:0]u8 = undefined;
+
+    while (ctx.running) {
+        // Frame timing: seconds since the last frame, capped at max_dt.
+        const now_ns = c.SDL_GetTicksNS();
+        const dt = @min(@as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0, max_dt);
+        last_ns = now_ns;
+        ctx.dt = dt;
+
+        // Clear last frame's presses, releases, and clicks first, so this frame's events are the only
+        // one-shot input the game update sees.
+        input_state.beginFrame();
+
+        // Events: quit requests, F11 fullscreen, and key and mouse state.
+        var event: c.SDL_Event = undefined;
+        while (c.SDL_PollEvent(&event)) {
+            if (event.type == c.SDL_EVENT_QUIT) ctx.running = false;
+            if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F11 and !event.key.repeat) {
+                const fullscreen = (c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_FULLSCREEN) != 0;
+                _ = c.SDL_SetWindowFullscreen(window, !fullscreen);
+            }
+            input_state.handleEvent(&event);
+        }
+        // Game logic. The game may set running to false, which ends the loop after this frame.
+        game.update(&ctx);
+
+        // Window size in pixels, which is also the swapchain size on high-DPI displays.
+        var pw: c_int = 0;
+        var ph: c_int = 0;
+        _ = c.SDL_GetWindowSizeInPixels(window, &pw, &ph);
+        if (pw <= 0 or ph <= 0) continue;
+        const win_wf: f32 = @floatFromInt(pw);
+        const win_hf: f32 = @floatFromInt(ph);
+
+        // The view is the part of the world the window shows. The 0.01 keeps float rounding
+        // from dropping a whole native pixel.
+        const scale = fitScale(win_wf, win_hf, native_wf, native_hf);
+        const view_w: u32 = @intFromFloat(@floor(win_wf / scale + 0.01));
+        const view_h: u32 = @intFromFloat(@floor(win_hf / scale + 0.01));
+        const view_wf: f32 = @floatFromInt(view_w);
+        const view_hf: f32 = @floatFromInt(view_h);
+
+        if (target.width != view_w or target.height != view_h) {
+            // Wait first, because the old target may still be in use by the GPU.
+            _ = c.SDL_WaitForGPUIdle(gpu.device);
+            target.deinit();
+            target = Texture.initTarget(gpu.device, view_w, view_h, format);
+        }
+
+        cam.view_w = view_wf;
+        cam.view_h = view_hf;
+
+        // Acquire the frame after the layout is known.
+        const frame = gpu.beginFrame() orelse continue;
+
+        // Pass 1: the game queues its sprites, and they're drawn into the view-sized target.
+        world_batch.begin(view_wf, view_hf);
+        const draw_ctx = DrawContext{ .batch = &world_batch, .cam = &cam, .view_w = view_wf, .view_h = view_hf };
+        game.draw(&draw_ctx);
+        world_batch.upload(frame.cmd);
+        const world_pass = Renderer.beginPass(frame.cmd, target.texture, clear);
+        world_batch.draw(world_pass);
+        Renderer.endPass(world_pass);
+
+        // Pass 2: stretch the target over the whole window. The stretch is less than one
+        // native pixel across the view, which isn't visible, and there are no bars.
+        const window_rect = Rect{ .x = 0, .y = 0, .w = win_wf, .h = win_hf };
+        const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
+        screen_batch.begin(win_wf, win_hf);
+        screen_batch.drawSprite(&target, view_rect, window_rect, white);
+        screen_batch.upload(frame.cmd);
+        const screen_pass = Renderer.beginPass(frame.cmd, frame.swapchain, black);
+        screen_batch.draw(screen_pass);
+        Renderer.endPass(screen_pass);
+
+        Renderer.endFrame(frame);
+
+        // Window title: FPS, sprite count, draw calls, scale, and view size, refreshed a few times a second.
+        frames += 1;
+        title_timer += dt;
+        if (title_timer >= title_interval) {
+            const fps = @as(f32, @floatFromInt(frames)) / title_timer;
+            const title = std.fmt.bufPrintZ(&title_buf, "{s} | {d:.0} fps | {d} sprites | {d} draw calls | {d:.0}% | view {d}x{d}", .{
+                config.title, fps, world_batch.sprite_count, world_batch.draw_calls + screen_batch.draw_calls, scale * 100.0, view_w, view_h,
+            }) catch null;
+            if (title) |t| _ = c.SDL_SetWindowTitle(window, t.ptr);
+            frames = 0;
+            title_timer = 0;
+        }
+    }
+}
