@@ -12,5 +12,7 @@ pub fn main() void {
         .native_w = config.native_w,
         .native_h = config.native_h,
         .clear_rgb = config.clear_rgb,
+        .update_hz = config.update_hz,
+        .scale_mode = config.scale_mode,
     });
 }

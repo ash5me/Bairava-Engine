@@ -47,6 +47,7 @@ zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 | Arrow keys, or W A S D | Move |
 | Esc | Quit |
 | F11 | Toggle fullscreen |
+| I | Toggle integer scale |
 | Left mouse button | Captured but not used yet (see Known issues) |
 
 Keys are bound to named actions in `game/controls.zig`.
@@ -60,7 +61,7 @@ Keys are bound to named actions in `game/controls.zig`.
 ├── src/
 │   ├── main.zig               Entry point: hands the game to the engine
 │   ├── engine/                Reusable engine code. Never names a game type.
-│   │   ├── engine.zig         Public engine API: window, frame loop, Config, Context, DrawContext
+│   │   ├── engine.zig         Public engine API: window, fixed-timestep loop, scale modes, Config, Context, DrawContext
 │   │   ├── sdl.zig            The only SDL3 C import
 │   │   ├── renderer.zig       GPU device, swapchain, command buffers, render passes
 │   │   ├── shader.zig         Loads SPIR-V from disk and creates GPU shaders
@@ -74,7 +75,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── controls.zig       Named actions and the keys bound to them
 │   │   ├── player.zig         Player position, facing, walk animation, drawing
 │   │   ├── level.zig          Tile grid, view culling, tile drawing
-│   │   └── config.zig         Title, window and native sizes, level size, background color
+│   │   └── config.zig         Title, window and native sizes, level size, background color, update rate, scale mode
 │   └── root.zig               Unused template file from `zig init`
 ├── shaders/
 │   └── triangle.slang         Sprite vertex and fragment shaders (the name is legacy)
@@ -101,22 +102,23 @@ world tiles + player ──► pass 1: sprite batch ──► native target (vie
                                                   swapchain (window pixels)
 ```
 
-The native view is never smaller than 320x180 pixels. The window's aspect ratio decides which axis fits exactly: on the limiting axis the view is exactly 320 or 180 pixels, and the other axis shows more of the world. The window therefore never has black bars. At the default 960x540 window the scale is exactly 3x, which is the cleanest case for pixel art. Other sizes give fractional scales, so some native pixels cover three screen pixels and others cover four. That trade-off is accepted for now, and an integer-scale option is on the roadmap.
+The native view is never smaller than 320x180 pixels. The window's aspect ratio decides which axis fits exactly: on the limiting axis the view is exactly 320 or 180 pixels, and the other axis shows more of the world. In fit mode the window therefore never has black bars. At the default 960x540 window the scale is exactly 3x, which is the cleanest case for pixel art. Other sizes give fractional scales, so some native pixels cover three screen pixels and others cover four. The default fit mode accepts that trade-off. Integer mode uses a whole-number multiple of the view size, so every native pixel is the same size. The result is centered, and thin black bars fill any leftover space at the edges. Set `scale_mode` in `game/config.zig`, or press I to toggle it.
 
 ### Frame lifecycle
 
-Each pass through the main loop does the following. The loop is in `engine/engine.zig`. The game steps are implemented in `game/`.
+The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing runs once per frame.
 
-1. Measure `dt` since the last frame, capped at 0.1 s.
-2. Clear last frame's one-shot input: presses, releases, and clicks (`Input.beginFrame`).
-3. Drain the SDL event queue. The engine handles quit requests and F11. Key and mouse events update `Input`.
-4. Game `update`: read actions from `game/controls.zig`. The quit action sets `running` to false when it is pressed. Movement actions move the player at 80 px/s, with diagonals normalized, and the player is clamped to the map.
-5. Read the window size in pixels, then compute `scale = min(win_w / native_w, win_h / native_h)` and the view size `floor(window / scale + 0.01)`. The native view size is 320×180 in `game/config.zig`. The 0.01 keeps float rounding from dropping a whole native pixel.
-6. If the view size changed, wait for the GPU to go idle and recreate the native target.
-7. Acquire a command buffer and swapchain texture. Skip the frame if either is unavailable.
-8. Pass 1: game `draw` points the camera at the player's center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target.
-9. Pass 2: queue one quad covering the window that samples the native target, upload, and draw into the swapchain.
-10. Submit the command buffer. Every 0.5 s, refresh the window title with FPS, sprite count, draw calls, scale, and view size.
+1. Measure the frame time since the last frame, capped at 0.1 s.
+2. Drain the SDL event queue. The engine handles quit requests and F11. Key and mouse events update the held state, and presses, releases, and clicks wait in `Input` for the next update step.
+3. Add the frame time to an accumulator. While it holds at least one fixed step (1/60 s by default), latch the pending input so it reaches exactly one update, run game `update` with `ctx.dt` set to that step, and subtract the step. Stop early if the game sets `running` to false.
+4. Game `update`: read actions from `game/controls.zig`. Quit and scale toggle act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and the player is clamped to the map.
+5. Compute `alpha`, the leftover fraction of a step, from 0 to 1. Drawing blends between the last two updates with it, so motion stays smooth when the display rate and update rate differ.
+6. Read the window size in pixels. Choose the scale for the current scale mode (see Rendering model), then compute the view size. The native view is 320×180 in `game/config.zig`.
+7. If the view size changed, wait for the GPU to go idle and recreate the native target.
+8. Acquire a command buffer and swapchain texture. Skip the frame if either is unavailable.
+9. Pass 1: game `draw` points the camera at the player's blended center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target.
+10. Pass 2: queue one quad that stretches the native target across the window. In fit mode it covers the whole window. In integer mode it covers a centered whole-number multiple of the view.
+11. Submit the command buffer. Every 0.5 s, refresh the window title with FPS, sprite count, draw calls, scale, scale mode, and view size.
 
 ### Coordinate systems
 
@@ -183,7 +185,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Area | File | Status | Est. done | Notes |
 |---|---|---|---|---|
 | Platform | `sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
-| Engine | `engine/engine.zig` | Prototype | 50% | Window, GPU setup, native-view pipeline, frame loop, and the `Game` interface. Missing: scene or state system, fixed timestep, device-lost recovery. |
+| Engine | `engine/engine.zig` | Prototype | 60% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
 | Gameplay | `game/` | Prototype | 15% | Player with directional walk animation, one test level, and movement and quit actions bound in `game/controls.zig`. No entities, rules, or level files. |
 | Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Missing: device-lost recovery, other backends' shader formats, pass helpers. |
 | Shaders | `shader.zig` | Basic | 50% | Loads SPIR-V from disk. Missing: embedding, reflection, hot reload. Uniform buffer count is supported but unused. |
@@ -192,7 +194,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Missing: index buffer, rotation, flip, origin, alpha tint, z-order, growable capacity. |
 | Camera | `camera.zig` | Functional | 50% | Follow, clamp, and pixel snap. Missing: smoothing, dead zone, zoom, shake. |
 | Level | `game/level.zig` | Early | 25% | One uniform layer drawn with culling. No tile data, multiple layers, loading, or collision. |
-| Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input lasts until the frame that reads it. Clicks are captured but not usable yet, and mouse position is in window space (see Known issues). No gamepad or text input. |
+| Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but not usable yet, and mouse position is in window space (see Known issues). No gamepad or text input. |
 | Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, shaders, and the run step. Missing: tests, asset install step, other shader targets. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
 | Tests | `root.zig` | Not started | 0% | Template leftover, not connected to the build. |
@@ -252,8 +254,8 @@ These are the natural extension points. Each one reuses existing code.
 - [x] Fix one-shot input and add press and release detection.
 - [x] Map keys to named actions.
 - [x] Move the player and game state out of `main.zig`.
-- [ ] Separate fixed-timestep updates from rendering.
-- [ ] Add an integer-scale option for pixel-perfect output.
+- [x] Separate fixed-timestep updates from rendering.
+- [x] Add an integer-scale option for pixel-perfect output.
 
 ### Phase 2: a playable map
 
@@ -289,6 +291,7 @@ These are the natural extension points. Each one reuses existing code.
 ## Conventions
 
 - Units: world, camera, and sprite positions are in native pixels, and time is `f32` seconds.
+- Game `update` runs at the fixed rate `update_hz` in `game/config.zig`, and `ctx.dt` is that step. `draw` runs once per frame and gets `alpha`, which blends between the last two updates.
 - Paths are relative to the project root; run `zig build run` from the repository root so `assets/warrior_16x32.png` can be found.
 - `assets/warrior.png` is the original source art; the game loads the prepared 80×128 `assets/warrior_16x32.png` sheet instead.
 - Only `sdl.zig` imports SDL's C headers.

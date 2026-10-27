@@ -28,10 +28,16 @@ pub const Game = struct {
         self.tile.deinit();
     }
 
-    /// Reads actions and advances the player. The quit action asks the engine to stop.
+    /// Runs at the fixed update rate. `ctx.dt` is the length of the step.
     pub fn update(self: *Game, ctx: *engine.Context) void {
         const input = ctx.input;
         if (controls.pressed(input, .quit)) ctx.running = false;
+        if (controls.pressed(input, .toggle_scale)) {
+            ctx.scale_mode = switch (ctx.scale_mode) {
+                .fit => .integer,
+                .integer => .fit,
+            };
+        }
 
         // Each movement action contributes one unit on its axis.
         var dx: f32 = 0;
@@ -44,13 +50,14 @@ pub const Game = struct {
         self.player.update(dx, dy, ctx.dt, self.level.widthPx(), self.level.heightPx());
     }
 
-    /// Points the camera at the player and queues the visible world.
+    /// Runs once per frame. `dc.alpha` blends the player between the last two updates.
     pub fn draw(self: *Game, dc: *const engine.DrawContext) void {
+        const center = self.player.drawCenter(dc.alpha);
         dc.cam.world_w = self.level.widthPx();
         dc.cam.world_h = self.level.heightPx();
-        dc.cam.follow(self.player.centerX(), self.player.centerY());
+        dc.cam.follow(center.x, center.y);
 
         self.level.draw(dc.batch, &self.tile, dc.cam);
-        self.player.draw(dc.batch, &self.warrior, dc.cam);
+        self.player.draw(dc.batch, &self.warrior, dc.cam, dc.alpha);
     }
 };

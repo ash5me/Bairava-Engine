@@ -20,10 +20,19 @@ const row_left: u32 = 3;
 
 const white = [3]f32{ 1.0, 1.0, 1.0 };
 
-pub const Player = struct {
-    /// World position of the top-left corner, in native pixels.
+/// A point in native pixels.
+pub const Point = struct {
     x: f32,
     y: f32,
+};
+
+pub const Player = struct {
+    /// Top-left corner, in native pixels, as of the latest update.
+    x: f32,
+    y: f32,
+    /// Top-left corner as of the update before that. Drawing blends between the two.
+    prev_x: f32,
+    prev_y: f32,
     /// Sheet row for the current facing.
     row: u32 = row_down,
     /// Sheet column to draw this frame.
@@ -33,23 +42,33 @@ pub const Player = struct {
 
     /// Starts the player in the middle of a map of the given size.
     pub fn init(map_w: f32, map_h: f32) Player {
+        const x = (map_w - width) / 2.0;
+        const y = (map_h - height) / 2.0;
+        return .{ .x = x, .y = y, .prev_x = x, .prev_y = y };
+    }
+
+    /// Top-left corner to draw at, blended between the last two updates. `alpha` is 0 at the
+    /// previous update and 1 at the latest.
+    pub fn drawPosition(self: *const Player, alpha: f32) Point {
         return .{
-            .x = (map_w - width) / 2.0,
-            .y = (map_h - height) / 2.0,
+            .x = self.prev_x + (self.x - self.prev_x) * alpha,
+            .y = self.prev_y + (self.y - self.prev_y) * alpha,
         };
     }
 
-    pub fn centerX(self: *const Player) f32 {
-        return self.x + width / 2.0;
-    }
-
-    pub fn centerY(self: *const Player) f32 {
-        return self.y + height / 2.0;
+    /// Center of the sprite to draw at, blended between the last two updates.
+    pub fn drawCenter(self: *const Player, alpha: f32) Point {
+        const top_left = self.drawPosition(alpha);
+        return .{ .x = top_left.x + width / 2.0, .y = top_left.y + height / 2.0 };
     }
 
     /// Moves the player. `move_x` and `move_y` are input directions, each -1, 0, or 1.
     /// The player stays inside a map of `map_w` by `map_h` pixels.
     pub fn update(self: *Player, move_x: f32, move_y: f32, dt: f32, map_w: f32, map_h: f32) void {
+        // Remember where we were, so drawing can blend from here to the new position.
+        self.prev_x = self.x;
+        self.prev_y = self.y;
+
         var dx = move_x;
         var dy = move_y;
 
@@ -92,8 +111,9 @@ pub const Player = struct {
         self.y = std.math.clamp(self.y + dy * speed * dt, 0.0, map_h - height);
     }
 
-    /// Queues the current frame at the player's position, relative to the camera.
-    pub fn draw(self: *const Player, batch: *engine.SpriteBatch, sheet: *const engine.Texture, cam: *const engine.Camera) void {
+    /// Queues the current frame at the blended position, relative to the camera.
+    pub fn draw(self: *const Player, batch: *engine.SpriteBatch, sheet: *const engine.Texture, cam: *const engine.Camera, alpha: f32) void {
+        const pos = self.drawPosition(alpha);
         const src = engine.Rect{
             .x = @as(f32, @floatFromInt(self.frame)) * width,
             .y = @as(f32, @floatFromInt(self.row)) * height,
@@ -102,8 +122,8 @@ pub const Player = struct {
         };
         // Whole native pixels keep the edges of the sprite sharp.
         const dst = engine.Rect{
-            .x = @round(self.x) - cam.x,
-            .y = @round(self.y) - cam.y,
+            .x = @round(pos.x) - cam.x,
+            .y = @round(pos.y) - cam.y,
             .w = width,
             .h = height,
         };

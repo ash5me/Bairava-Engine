@@ -10,6 +10,7 @@ pub const Action = enum {
     move_up,
     move_down,
     quit,
+    toggle_scale,
 };
 
 // An action is active when any of its keys is.
@@ -18,6 +19,7 @@ const move_right_keys = [_]engine.Key{ .right, .d };
 const move_up_keys = [_]engine.Key{ .up, .w };
 const move_down_keys = [_]engine.Key{ .down, .s };
 const quit_keys = [_]engine.Key{.escape};
+const toggle_scale_keys = [_]engine.Key{.i};
 
 /// The keys bound to an action. The switch has no default, so an action without a binding
 /// is a compile error.
@@ -28,6 +30,7 @@ pub fn keysFor(action: Action) []const engine.Key {
         .move_up => &move_up_keys,
         .move_down => &move_down_keys,
         .quit => &quit_keys,
+        .toggle_scale => &toggle_scale_keys,
     };
 }
 
@@ -36,12 +39,12 @@ pub fn held(input: *const engine.Input, action: Action) bool {
     return input.anyHeld(keysFor(action));
 }
 
-/// True on the frame any key bound to `action` went down.
+/// True during the update step that first sees any key bound to `action` go down.
 pub fn pressed(input: *const engine.Input, action: Action) bool {
     return input.anyPressed(keysFor(action));
 }
 
-/// True on the frame any key bound to `action` went up.
+/// True during the update step that first sees any key bound to `action` go up.
 pub fn released(input: *const engine.Input, action: Action) bool {
     return input.anyReleased(keysFor(action));
 }

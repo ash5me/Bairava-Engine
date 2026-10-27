@@ -1,6 +1,9 @@
 //! The engine: window, GPU device, the native-resolution pipeline, input, camera, and the
 //! frame loop. Engine code never names a game type. A game plugs in by passing a type with
 //! `init`, `update`, `draw`, and `deinit` to `run`. Game code should import only this file.
+//!
+//! Timing: `update` runs at a fixed rate, so game logic doesn't depend on the display. `draw`
+//! runs once per frame and gets `alpha` to blend between the last two updates.
 
 const std = @import("std");
 const build_options = @import("build_options");
@@ -16,6 +19,16 @@ pub const Rect = @import("sprite.zig").Rect;
 pub const SpriteBatch = @import("sprite.zig").SpriteBatch;
 pub const Texture = @import("texture.zig").Texture;
 
+/// How the native view is fitted to the window.
+pub const ScaleMode = enum {
+    /// Fill the window exactly. The view grows or shrinks with the window, and some native
+    /// pixels cover one more screen pixel than others.
+    fit,
+    /// Use a whole-number multiple of the view, so every native pixel is the same size. The
+    /// result is centered, and any leftover edge pixels are black.
+    integer,
+};
+
 /// Settings the game passes to `run`.
 pub const Config = struct {
     /// Window title. Play stats are appended to it.
@@ -28,17 +41,23 @@ pub const Config = struct {
     native_h: u32,
     /// Background color behind the world, as RGB from 0 to 1.
     clear_rgb: [3]f32,
+    /// Game `update` steps per second.
+    update_hz: u32,
+    /// Scale mode at startup. The game can change it later through `Context`.
+    scale_mode: ScaleMode = .fit,
 };
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
 pub const Context = struct {
     device: *c.SDL_GPUDevice,
-    /// Held keys and mouse state for this frame.
+    /// Held keys, presses, releases, and clicks for this update step.
     input: *const Input,
-    /// Seconds since the previous frame, capped at 0.1.
+    /// Length of one update step in seconds. This is always the fixed step.
     dt: f32 = 0,
-    /// Set to false to end the main loop after this frame.
+    /// Set to false to end the main loop.
     running: bool = true,
+    /// How the native view is fitted to the window. The game may change this at any time.
+    scale_mode: ScaleMode = .fit,
 
     /// Loads an image and uploads it as a texture. Panics if the file is missing or can't be
     /// decoded. Paths are relative to the working directory.
@@ -60,9 +79,12 @@ pub const DrawContext = struct {
     /// Native view size in pixels. The camera's view has this size.
     view_w: f32,
     view_h: f32,
+    /// Blend factor between the last two updates. 0 is the previous update, and 1 is the latest.
+    alpha: f32,
 };
 
-/// Longest frame time the loop will use, so a stall doesn't make the next frame jump far ahead.
+/// Longest frame time the loop will use. A longer stall is cut short, so the game slows down
+/// rather than racing to catch up.
 const max_dt: f32 = 0.1;
 /// How often the window title is refreshed, in seconds.
 const title_interval: f32 = 0.5;
@@ -77,6 +99,9 @@ fn fitScale(win_w: f32, win_h: f32, native_w: f32, native_h: f32) f32 {
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 pub fn run(comptime Game: type, config: Config) void {
+    std.debug.assert(config.update_hz > 0);
+    const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
+
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
         std.debug.panic("SDL_Init failed: {s}", .{c.SDL_GetError()});
     }
@@ -114,11 +139,12 @@ pub fn run(comptime Game: type, config: Config) void {
     // The game sets the world size every frame, so the camera starts without one.
     var cam = Camera{ .view_w = native_wf, .view_h = native_hf, .world_w = 0, .world_h = 0 };
 
-    var ctx = Context{ .device = gpu.device, .input = &input_state };
+    var ctx = Context{ .device = gpu.device, .input = &input_state, .scale_mode = config.scale_mode };
     var game = Game.init(&ctx);
     defer game.deinit();
 
     var last_ns = c.SDL_GetTicksNS();
+    var accumulator: f32 = 0;
     var title_timer: f32 = 0;
     var frames: u32 = 0;
     var title_buf: [160:0]u8 = undefined;
@@ -126,15 +152,11 @@ pub fn run(comptime Game: type, config: Config) void {
     while (ctx.running) {
         // Frame timing: seconds since the last frame, capped at max_dt.
         const now_ns = c.SDL_GetTicksNS();
-        const dt = @min(@as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0, max_dt);
+        const frame_dt = @min(@as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0, max_dt);
         last_ns = now_ns;
-        ctx.dt = dt;
 
-        // Clear last frame's presses, releases, and clicks first, so this frame's events are the only
-        // one-shot input the game update sees.
-        input_state.beginFrame();
-
-        // Events: quit requests, F11 fullscreen, and key and mouse state.
+        // Events: quit requests, F11 fullscreen, and key and mouse state. Presses and clicks wait
+        // in Input until an update step takes them.
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
             if (event.type == c.SDL_EVENT_QUIT) ctx.running = false;
@@ -144,8 +166,18 @@ pub fn run(comptime Game: type, config: Config) void {
             }
             input_state.handleEvent(&event);
         }
-        // Game logic. The game may set running to false, which ends the loop after this frame.
-        game.update(&ctx);
+
+        // Fixed-timestep updates. Run whole steps while the accumulated time covers one, so game
+        // logic advances at the same rate on any display. Stop early if the game quits.
+        accumulator += frame_dt;
+        while (accumulator >= fixed_dt and ctx.running) {
+            input_state.latch();
+            ctx.dt = fixed_dt;
+            game.update(&ctx);
+            accumulator -= fixed_dt;
+        }
+        // The leftover time as a fraction of a step. Drawing blends between the last two updates by this amount.
+        const alpha = @min(accumulator / fixed_dt, 1.0);
 
         // Window size in pixels, which is also the swapchain size on high-DPI displays.
         var pw: c_int = 0;
@@ -155,9 +187,14 @@ pub fn run(comptime Game: type, config: Config) void {
         const win_wf: f32 = @floatFromInt(pw);
         const win_hf: f32 = @floatFromInt(ph);
 
+        // Choose the scale. Integer mode needs the window to hold at least one native view, so the
+        // view never shrinks below its native size. Smaller windows fall back to fit.
+        const fit = fitScale(win_wf, win_hf, native_wf, native_hf);
+        const pixel_perfect = ctx.scale_mode == .integer and fit >= 1.0;
+        const scale: f32 = if (pixel_perfect) @floor(fit) else fit;
+
         // The view is the part of the world the window shows. The 0.01 keeps float rounding
         // from dropping a whole native pixel.
-        const scale = fitScale(win_wf, win_hf, native_wf, native_hf);
         const view_w: u32 = @intFromFloat(@floor(win_wf / scale + 0.01));
         const view_h: u32 = @intFromFloat(@floor(win_hf / scale + 0.01));
         const view_wf: f32 = @floatFromInt(view_w);
@@ -178,19 +215,35 @@ pub fn run(comptime Game: type, config: Config) void {
 
         // Pass 1: the game queues its sprites, and they're drawn into the view-sized target.
         world_batch.begin(view_wf, view_hf);
-        const draw_ctx = DrawContext{ .batch = &world_batch, .cam = &cam, .view_w = view_wf, .view_h = view_hf };
+        const draw_ctx = DrawContext{
+            .batch = &world_batch,
+            .cam = &cam,
+            .view_w = view_wf,
+            .view_h = view_hf,
+            .alpha = alpha,
+        };
         game.draw(&draw_ctx);
         world_batch.upload(frame.cmd);
         const world_pass = Renderer.beginPass(frame.cmd, target.texture, clear);
         world_batch.draw(world_pass);
         Renderer.endPass(world_pass);
 
-        // Pass 2: stretch the target over the whole window. The stretch is less than one
-        // native pixel across the view, which isn't visible, and there are no bars.
-        const window_rect = Rect{ .x = 0, .y = 0, .w = win_wf, .h = win_hf };
+        // Pass 2: stretch the target onto the window. Fit mode covers the whole window. Integer
+        // mode covers a centered whole-number multiple of the view, and the edges stay black.
+        var dst_rect = Rect{ .x = 0, .y = 0, .w = win_wf, .h = win_hf };
+        if (pixel_perfect) {
+            const content_w = view_wf * scale;
+            const content_h = view_hf * scale;
+            dst_rect = Rect{
+                .x = @floor((win_wf - content_w) / 2.0),
+                .y = @floor((win_hf - content_h) / 2.0),
+                .w = content_w,
+                .h = content_h,
+            };
+        }
         const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
         screen_batch.begin(win_wf, win_hf);
-        screen_batch.drawSprite(&target, view_rect, window_rect, white);
+        screen_batch.drawSprite(&target, view_rect, dst_rect, white);
         screen_batch.upload(frame.cmd);
         const screen_pass = Renderer.beginPass(frame.cmd, frame.swapchain, black);
         screen_batch.draw(screen_pass);
@@ -198,13 +251,14 @@ pub fn run(comptime Game: type, config: Config) void {
 
         Renderer.endFrame(frame);
 
-        // Window title: FPS, sprite count, draw calls, scale, and view size, refreshed a few times a second.
+        // Window title: FPS, sprite count, draw calls, scale, scale mode, and view size, refreshed a few times a second.
         frames += 1;
-        title_timer += dt;
+        title_timer += frame_dt;
         if (title_timer >= title_interval) {
             const fps = @as(f32, @floatFromInt(frames)) / title_timer;
-            const title = std.fmt.bufPrintZ(&title_buf, "{s} | {d:.0} fps | {d} sprites | {d} draw calls | {d:.0}% | view {d}x{d}", .{
-                config.title, fps, world_batch.sprite_count, world_batch.draw_calls + screen_batch.draw_calls, scale * 100.0, view_w, view_h,
+            const mode_label: []const u8 = if (pixel_perfect) "integer" else "fit";
+            const title = std.fmt.bufPrintZ(&title_buf, "{s} | {d:.0} fps | {d} sprites | {d} draw calls | {d:.0}% {s} | view {d}x{d}", .{
+                config.title, fps, world_batch.sprite_count, world_batch.draw_calls + screen_batch.draw_calls, scale * 100.0, mode_label, view_w, view_h,
             }) catch null;
             if (title) |t| _ = c.SDL_SetWindowTitle(window, t.ptr);
             frames = 0;

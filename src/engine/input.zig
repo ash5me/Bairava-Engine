@@ -12,34 +12,42 @@ pub const Key = enum {
     a,
     s,
     d,
+    i,
 };
 
 /// Number of keys in `Key`. Per-key arrays are indexed by `@intFromEnum(key)`.
 const key_count = std.enums.values(Key).len;
 
-/// Input state. Held keys are polled from SDL's keyboard state. Presses, releases, and mouse
-/// clicks come from the event queue, and they last until `beginFrame` clears them.
+/// Input state. Held keys are read from SDL's keyboard state when asked. Presses, releases, and
+/// clicks come from the event queue. They gather as events arrive, and `latch` hands them to the
+/// game one update step at a time.
 pub const Input = struct {
     keys: [*c]const bool,
-    /// Keys that went down this frame. Key repeats don't count.
+    /// Events gathered since the last `latch`.
+    pending_pressed: [key_count]bool = [_]bool{false} ** key_count,
+    pending_released: [key_count]bool = [_]bool{false} ** key_count,
+    pending_left_click: bool = false,
+    /// Events handed to the game by the latest `latch`. These are what the query methods report.
     pressed: [key_count]bool = [_]bool{false} ** key_count,
-    /// Keys that went up this frame.
     released: [key_count]bool = [_]bool{false} ** key_count,
+    left_clicked: bool = false,
     mouse_x: f32 = 0,
     mouse_y: f32 = 0,
-    left_clicked: bool = false,
 
     pub fn init() Input {
         // SDL owns this array, and it stays valid for the life of the app.
         return .{ .keys = c.SDL_GetKeyboardState(null) };
     }
 
-    /// Clears the one-shot state from the previous frame. Call once per frame, before pumping events,
-    /// so that everything collected this frame is still available to the game's update.
-    pub fn beginFrame(self: *Input) void {
-        @memset(&self.pressed, false);
-        @memset(&self.released, false);
-        self.left_clicked = false;
+    /// Hands the events gathered since the last call to the game, and starts gathering afresh.
+    /// The engine calls this before each update step, so each press or click reaches exactly one update.
+    pub fn latch(self: *Input) void {
+        self.pressed = self.pending_pressed;
+        self.released = self.pending_released;
+        self.left_clicked = self.pending_left_click;
+        @memset(&self.pending_pressed, false);
+        @memset(&self.pending_released, false);
+        self.pending_left_click = false;
     }
 
     /// True while the key is held down, as of the latest event pump.
@@ -47,12 +55,12 @@ pub const Input = struct {
         return self.keys[@intCast(scancode(key))];
     }
 
-    /// True on the frame the key went down.
+    /// True during the update step that first sees the key go down.
     pub fn wasPressed(self: *const Input, key: Key) bool {
         return self.pressed[@intFromEnum(key)];
     }
 
-    /// True on the frame the key went up.
+    /// True during the update step that first sees the key go up.
     pub fn wasReleased(self: *const Input, key: Key) bool {
         return self.released[@intFromEnum(key)];
     }
@@ -65,7 +73,7 @@ pub const Input = struct {
         return false;
     }
 
-    /// True on the frame any of `keys` went down.
+    /// True during the update step that first sees any of `keys` go down.
     pub fn anyPressed(self: *const Input, keys: []const Key) bool {
         for (keys) |key| {
             if (self.wasPressed(key)) return true;
@@ -73,7 +81,7 @@ pub const Input = struct {
         return false;
     }
 
-    /// True on the frame any of `keys` went up.
+    /// True during the update step that first sees any of `keys` go up.
     pub fn anyReleased(self: *const Input, keys: []const Key) bool {
         for (keys) |key| {
             if (self.wasReleased(key)) return true;
@@ -86,18 +94,18 @@ pub const Input = struct {
         switch (event.type) {
             c.SDL_EVENT_KEY_DOWN => {
                 if (!event.key.repeat) {
-                    if (keyFromScancode(event.key.scancode)) |key| self.pressed[@intFromEnum(key)] = true;
+                    if (keyFromScancode(event.key.scancode)) |key| self.pending_pressed[@intFromEnum(key)] = true;
                 }
             },
             c.SDL_EVENT_KEY_UP => {
-                if (keyFromScancode(event.key.scancode)) |key| self.released[@intFromEnum(key)] = true;
+                if (keyFromScancode(event.key.scancode)) |key| self.pending_released[@intFromEnum(key)] = true;
             },
             c.SDL_EVENT_MOUSE_MOTION => {
                 self.mouse_x = event.motion.x;
                 self.mouse_y = event.motion.y;
             },
             c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
-                if (event.button.button == c.SDL_BUTTON_LEFT) self.left_clicked = true;
+                if (event.button.button == c.SDL_BUTTON_LEFT) self.pending_left_click = true;
             },
             else => {},
         }
@@ -116,6 +124,7 @@ fn scancode(key: Key) c.SDL_Scancode {
         .a => c.SDL_SCANCODE_A,
         .s => c.SDL_SCANCODE_S,
         .d => c.SDL_SCANCODE_D,
+        .i => c.SDL_SCANCODE_I,
     };
 }
 
