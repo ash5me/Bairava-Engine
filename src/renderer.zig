@@ -6,10 +6,13 @@ const c = @import("sdl.zig").c;
 pub const Frame = struct {
     cmd: *c.SDL_GPUCommandBuffer,
     swapchain: *c.SDL_GPUTexture,
+    /// Swapchain size in pixels. This can differ from the window size on high-DPI displays.
+    width: u32,
+    height: u32,
 };
 
 /// Owns the GPU device and the window's swapchain. Each frame runs in this order:
-/// beginFrame, any uploads, beginPass, draws, endPass, endFrame.
+/// beginFrame, uploads, beginPass, draws, endPass, then endFrame.
 pub const Renderer = struct {
     window: *c.SDL_Window,
     device: *c.SDL_GPUDevice,
@@ -43,7 +46,8 @@ pub const Renderer = struct {
         return .{ .window = window, .device = device };
     }
 
-    /// The format the window's swapchain uses. Pipelines that render to the window must match it.
+    /// The format the window's swapchain uses. Textures and pipelines that draw
+    /// to the window or are copied into it must use this format.
     pub fn swapchainFormat(self: *const Renderer) c.SDL_GPUTextureFormat {
         return c.SDL_GetGPUSwapchainTextureFormat(self.device, self.window);
     }
@@ -62,18 +66,19 @@ pub const Renderer = struct {
             _ = c.SDL_SubmitGPUCommandBuffer(cmd);
             return null;
         }
-        return .{ .cmd = cmd, .swapchain = swapchain.? };
+        return .{ .cmd = cmd, .swapchain = swapchain.?, .width = w, .height = h };
     }
 
-    /// Starts a render pass that clears the swapchain to `clear`.
-    pub fn beginPass(frame: Frame, clear: c.SDL_FColor) ?*c.SDL_GPURenderPass {
+    /// Starts a render pass that clears `target` to `clear`.
+    /// The target can be the swapchain or any texture created with Texture.initTarget.
+    pub fn beginPass(cmd: *c.SDL_GPUCommandBuffer, target: *c.SDL_GPUTexture, clear: c.SDL_FColor) ?*c.SDL_GPURenderPass {
         var color_target = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
-        color_target.texture = frame.swapchain;
+        color_target.texture = target;
         color_target.clear_color = clear;
         color_target.load_op = c.SDL_GPU_LOADOP_CLEAR;
         color_target.store_op = c.SDL_GPU_STOREOP_STORE;
 
-        return c.SDL_BeginGPURenderPass(frame.cmd, &color_target, 1, null);
+        return c.SDL_BeginGPURenderPass(cmd, &color_target, 1, null);
     }
 
     pub fn endPass(pass: ?*c.SDL_GPURenderPass) void {

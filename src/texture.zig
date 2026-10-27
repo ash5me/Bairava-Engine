@@ -2,7 +2,7 @@ const std = @import("std");
 
 const c = @import("sdl.zig").c;
 
-/// A 2D RGBA texture and a nearest-neighbor sampler for it.
+/// A 2D texture and a nearest-neighbor sampler for it.
 /// Nearest filtering keeps pixel art sharp when it's scaled up.
 pub const Texture = struct {
     device: *c.SDL_GPUDevice,
@@ -15,28 +15,7 @@ pub const Texture = struct {
     pub fn initRgba8(device: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const u8) Texture {
         std.debug.assert(pixels.len == @as(usize, width) * height * 4);
 
-        var tex_info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
-        tex_info.type = c.SDL_GPU_TEXTURETYPE_2D;
-        tex_info.format = c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-        tex_info.usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER;
-        tex_info.width = width;
-        tex_info.height = height;
-        tex_info.layer_count_or_depth = 1;
-        tex_info.num_levels = 1;
-        const texture = c.SDL_CreateGPUTexture(device, &tex_info) orelse {
-            std.debug.panic("SDL_CreateGPUTexture failed: {s}", .{c.SDL_GetError()});
-        };
-
-        var samp_info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
-        samp_info.min_filter = c.SDL_GPU_FILTER_NEAREST;
-        samp_info.mag_filter = c.SDL_GPU_FILTER_NEAREST;
-        samp_info.mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
-        samp_info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-        samp_info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-        samp_info.address_mode_w = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-        const sampler = c.SDL_CreateGPUSampler(device, &samp_info) orelse {
-            std.debug.panic("SDL_CreateGPUSampler failed: {s}", .{c.SDL_GetError()});
-        };
+        const texture = createTexture(device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
 
         // Stage the pixels in an upload buffer, then copy them into the texture.
         var tb_info = std.mem.zeroes(c.SDL_GPUTransferBufferCreateInfo);
@@ -85,7 +64,19 @@ pub const Texture = struct {
         return .{
             .device = device,
             .texture = texture,
-            .sampler = sampler,
+            .sampler = createNearestSampler(device),
+            .width = width,
+            .height = height,
+        };
+    }
+
+    /// Creates an empty texture that can be drawn into and then sampled.
+    /// `format` must match the pipelines that draw into it.
+    pub fn initTarget(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat) Texture {
+        return .{
+            .device = device,
+            .texture = createTexture(device, width, height, format, c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | c.SDL_GPU_TEXTUREUSAGE_SAMPLER),
+            .sampler = createNearestSampler(device),
             .width = width,
             .height = height,
         };
@@ -96,9 +87,36 @@ pub const Texture = struct {
         return .{ .texture = self.texture, .sampler = self.sampler };
     }
 
-    /// Releases GPU resources. Call before the renderer's device is destroyed.
+    /// Releases GPU resources. Call before the device is destroyed.
     pub fn deinit(self: *Texture) void {
         c.SDL_ReleaseGPUSampler(self.device, self.sampler);
         c.SDL_ReleaseGPUTexture(self.device, self.texture);
     }
 };
+
+fn createTexture(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, usage: u32) *c.SDL_GPUTexture {
+    var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
+    info.type = c.SDL_GPU_TEXTURETYPE_2D;
+    info.format = format;
+    info.usage = usage;
+    info.width = width;
+    info.height = height;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    return c.SDL_CreateGPUTexture(device, &info) orelse {
+        std.debug.panic("SDL_CreateGPUTexture failed: {s}", .{c.SDL_GetError()});
+    };
+}
+
+fn createNearestSampler(device: *c.SDL_GPUDevice) *c.SDL_GPUSampler {
+    var info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
+    info.min_filter = c.SDL_GPU_FILTER_NEAREST;
+    info.mag_filter = c.SDL_GPU_FILTER_NEAREST;
+    info.mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    info.address_mode_w = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    return c.SDL_CreateGPUSampler(device, &info) orelse {
+        std.debug.panic("SDL_CreateGPUSampler failed: {s}", .{c.SDL_GetError()});
+    };
+}
