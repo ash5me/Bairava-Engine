@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 
 const c = @cImport({
     @cInclude("SDL3/SDL.h");
@@ -50,8 +51,24 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyWindow(window);
 
-    const device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, true, null) orelse {
-        std.debug.panic("SDL_CreateGPUDevice failed: {s}", .{c.SDL_GetError()});
+    // Request Vulkan 1.2 so the device accepts SPIR-V 1.5, which Slang emits by default.
+    // Version 1.2.0 is (1 << 22) | (2 << 12); Zig can't translate VK_MAKE_API_VERSION.
+    var vk_opts = std.mem.zeroes(c.SDL_GPUVulkanOptions);
+    vk_opts.vulkan_api_version = (1 << 22) | (2 << 12);
+
+    const props = c.SDL_CreateProperties();
+    if (props == 0) {
+        std.debug.panic("SDL_CreateProperties failed: {s}", .{c.SDL_GetError()});
+    }
+    defer c.SDL_DestroyProperties(props);
+
+    _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+    // Turn debug mode off for normal runs; it enables the validation layers and slows the app.
+    _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, build_options.gpu_debug);
+    _ = c.SDL_SetPointerProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER, &vk_opts);
+
+    const device = c.SDL_CreateGPUDeviceWithProperties(props) orelse {
+        std.debug.panic("SDL_CreateGPUDeviceWithProperties failed: {s}", .{c.SDL_GetError()});
     };
     defer c.SDL_DestroyGPUDevice(device);
 
