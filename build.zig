@@ -26,6 +26,11 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.linkLibrary(sdl.artifact("SDL3"));
     exe.root_module.addOptions("build_options", options);
+
+    // stb_image: the header is declared to Zig through @cImport, and this file compiles its implementation.
+    exe.root_module.addIncludePath(b.path("vendor"));
+    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
+
     b.installArtifact(exe);
 
     // Compile Slang shaders directly to SPIR-V (SPIR-V 1.5) into zig-out/shaders/.

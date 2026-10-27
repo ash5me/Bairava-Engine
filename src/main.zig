@@ -2,6 +2,7 @@ const std = @import("std");
 const build_options = @import("build_options");
 
 const c = @import("sdl.zig").c;
+const image = @import("image.zig");
 const input = @import("input.zig");
 const Input = input.Input;
 const renderer = @import("renderer.zig");
@@ -21,29 +22,6 @@ const quad = [_]Vertex{
     .{ .pos = .{ 0.5, 0.5 }, .uv = .{ 1.0, 0.0 }, .color = white },
     .{ .pos = .{ -0.5, 0.5 }, .uv = .{ 0.0, 0.0 }, .color = white },
 };
-
-const tex_size = 16;
-
-/// Builds a 16x16 grass-style tile with a dark border and 4x4 checker blocks.
-/// Nearest-neighbor sampling shows the texels as sharp squares.
-/// This is temporary and gets replaced by PNG loading in the next step.
-fn makeTestPattern() [tex_size * tex_size * 4]u8 {
-    const light = [4]u8{ 110, 190, 90, 255 };
-    const dark = [4]u8{ 70, 140, 60, 255 };
-    const border = [4]u8{ 40, 90, 40, 255 };
-
-    var pixels: [tex_size * tex_size * 4]u8 = undefined;
-    for (0..tex_size) |y| {
-        for (0..tex_size) |x| {
-            const is_border = x == 0 or y == 0 or x == tex_size - 1 or y == tex_size - 1;
-            const checker = ((x / 4) + (y / 4)) % 2 == 0;
-            const color = if (is_border) border else if (checker) light else dark;
-            const i = (y * tex_size + x) * 4;
-            @memcpy(pixels[i .. i + 4], &color);
-        }
-    }
-    return pixels;
-}
 
 /// Caps the frame time so a stall (dragging the window, hitting a breakpoint)
 /// doesn't make the next frame jump far ahead.
@@ -67,8 +45,12 @@ pub fn main() !void {
     var gpu = Renderer.init(window, build_options.gpu_debug, &quad);
     defer gpu.deinit();
 
-    const pixels = makeTestPattern();
-    var tile = Texture.initRgba8(gpu.device, tex_size, tex_size, &pixels);
+    var img = image.loadRgba8("assets/tile.png") catch |err| {
+        std.debug.panic("failed to load assets/tile.png: {s}", .{@errorName(err)});
+    };
+    defer img.deinit();
+
+    var tile = Texture.initRgba8(gpu.device, img.width, img.height, img.pixels);
     defer tile.deinit();
 
     var input_state = Input.init();
