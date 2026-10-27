@@ -15,7 +15,10 @@ const Rect = sprite.Rect;
 const Texture = @import("texture.zig").Texture;
 const world_mod = @import("world.zig");
 const World = world_mod.World;
-const tile_px = world_mod.tile_px;
+
+const player_width: f32 = 16.0;
+const player_height: f32 = 32.0;
+const walk_frame_seconds: f32 = 0.12;
 
 const window_w = 960;
 const window_h = 540;
@@ -49,11 +52,22 @@ fn fitScale(win_w: f32, win_h: f32) f32 {
     return @min(win_w / native_wf, win_h / native_hf);
 }
 
-/// Draws the player at whole native pixels so its edges stay sharp.
-fn drawPlayer(batch: *SpriteBatch, tile: *const Texture, x: f32, y: f32, cam: *const Camera) void {
-    const src = Rect{ .x = 0, .y = 0, .w = tile_px, .h = tile_px };
-    const dst = Rect{ .x = @round(x) - cam.x, .y = @round(y) - cam.y, .w = tile_px, .h = tile_px };
-    batch.drawSprite(tile, src, dst, .{ 1.0, 0.45, 0.45 });
+/// Draws one 16x32 warrior frame at whole native pixels so its edges stay sharp.
+/// Sheet rows: front/down, right, back/up (4 frames), left.
+fn drawPlayer(batch: *SpriteBatch, warrior: *const Texture, x: f32, y: f32, cam: *const Camera, row: u32, frame_index: u32) void {
+    const src = Rect{
+        .x = @as(f32, @floatFromInt(frame_index)) * player_width,
+        .y = @as(f32, @floatFromInt(row)) * player_height,
+        .w = player_width,
+        .h = player_height,
+    };
+    const dst = Rect{
+        .x = @round(x) - cam.x,
+        .y = @round(y) - cam.y,
+        .w = player_width,
+        .h = player_height,
+    };
+    batch.drawSprite(warrior, src, dst, white);
 }
 
 pub fn main() !void {
@@ -80,6 +94,14 @@ pub fn main() !void {
     var tile = Texture.initRgba8(gpu.device, img.width, img.height, img.pixels);
     defer tile.deinit();
 
+    var warrior_img = image.loadRgba8("assets/warrior_16x32.png") catch |err| {
+        std.debug.panic("failed to load assets/warrior_16x32.png: {s}", .{@errorName(err)});
+    };
+    defer warrior_img.deinit();
+
+    var warrior = Texture.initRgba8(gpu.device, warrior_img.width, warrior_img.height, warrior_img.pixels);
+    defer warrior.deinit();
+
     // The world is drawn into this target at the view's native size, then stretched to the window.
     // It's rebuilt whenever the view size changes.
     var target = Texture.initTarget(gpu.device, native_w, native_h, format);
@@ -100,8 +122,13 @@ pub fn main() !void {
     };
 
     // The player starts in the middle of the map.
-    var player_x = (level.widthPx() - tile_px) / 2.0;
-    var player_y = (level.heightPx() - tile_px) / 2.0;
+    var player_x = (level.widthPx() - player_width) / 2.0;
+    var player_y = (level.heightPx() - player_height) / 2.0;
+
+    // Facing rows: 0 = down/front, 1 = right, 2 = up/back, 3 = left.
+    var facing_row: u32 = 0;
+    var walk_timer: f32 = 0;
+    var walk_frame: u32 = 0;
 
     var last_ns = c.SDL_GetTicksNS();
     var title_timer: f32 = 0;
@@ -137,15 +164,39 @@ pub fn main() !void {
         if (input_state.held(c.SDL_SCANCODE_RIGHT) or input_state.held(c.SDL_SCANCODE_D)) dx += 1;
         if (input_state.held(c.SDL_SCANCODE_UP) or input_state.held(c.SDL_SCANCODE_W)) dy -= 1;
         if (input_state.held(c.SDL_SCANCODE_DOWN) or input_state.held(c.SDL_SCANCODE_S)) dy += 1;
+        // Update facing from input before normalization. Horizontal wins on diagonals.
+        if (dx < 0) {
+            facing_row = 3;
+        } else if (dx > 0) {
+            facing_row = 1;
+        } else if (dy < 0) {
+            facing_row = 2;
+        } else if (dy > 0) {
+            facing_row = 0;
+        }
+
+        const moving = dx != 0 or dy != 0;
+        const frame_count: u32 = if (facing_row == 2) 4 else 5;
+        if (moving) {
+            walk_timer += dt;
+            while (walk_timer >= walk_frame_seconds) {
+                walk_timer -= walk_frame_seconds;
+                walk_frame = (walk_frame + 1) % frame_count;
+            }
+        } else {
+            walk_timer = 0;
+            walk_frame = 0;
+        }
+
         if (dx != 0 and dy != 0) {
             const diagonal = 1.0 / @sqrt(2.0);
             dx *= diagonal;
             dy *= diagonal;
         }
 
-        // Keep the player inside the map.
-        player_x = std.math.clamp(player_x + dx * player_speed * dt, 0.0, level.widthPx() - tile_px);
-        player_y = std.math.clamp(player_y + dy * player_speed * dt, 0.0, level.heightPx() - tile_px);
+        // Keep the full 16x32 player inside the map.
+        player_x = std.math.clamp(player_x + dx * player_speed * dt, 0.0, level.widthPx() - player_width);
+        player_y = std.math.clamp(player_y + dy * player_speed * dt, 0.0, level.heightPx() - player_height);
 
         // Window size in pixels, which is also the swapchain size on high-DPI displays.
         var pw: c_int = 0;
@@ -173,7 +224,7 @@ pub fn main() !void {
         // Point the camera at the player's center, using the current view size.
         cam.view_w = view_wf;
         cam.view_h = view_hf;
-        cam.follow(player_x + tile_px / 2.0, player_y + tile_px / 2.0);
+        cam.follow(player_x + player_width / 2.0, player_y + player_height / 2.0);
 
         // Acquire the frame after the layout is known.
         const frame = gpu.beginFrame() orelse continue;
@@ -181,7 +232,11 @@ pub fn main() !void {
         // Pass 1: draw the visible world and the player into the view-sized target.
         world_batch.begin(view_wf, view_hf);
         level.draw(&world_batch, &tile, &cam);
-        drawPlayer(&world_batch, &tile, player_x, player_y, &cam);
+        // The back-facing row has only four frames; the other rows have five.
+        // Clamp the displayed index after a direction change so a stale frame 4
+        // can never sample the transparent fifth cell of the back-facing row.
+        const display_frame = if (moving) walk_frame % frame_count else 0;
+        drawPlayer(&world_batch, &warrior, player_x, player_y, &cam, facing_row, display_frame);
         world_batch.upload(frame.cmd);
         const world_pass = Renderer.beginPass(frame.cmd, target.texture, clear);
         world_batch.draw(world_pass);

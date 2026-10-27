@@ -70,9 +70,9 @@ zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 ├── shaders/
 │   └── triangle.slang         Sprite vertex and fragment shaders (the name is legacy)
 ├── assets/
-│   ├── tile.png               Tile texture, used for the map and the player
-│   ├── character.png          Character art on a checkerboard background
-│   └── character_clean.png    The same art with the checkerboard keyed out to alpha
+│   ├── tile.png               Tile texture used by the map
+│   ├── warrior.png            Original warrior artwork (kept unchanged)
+│   └── warrior_16x32.png      Runtime sprite sheet: 5 columns × 4 rows of 16×32 cells
 ├── scripts/
 │   └── key_checker.ps1        Windows tool that keys out a checkerboard background
 ├── vendor/                    stb_image.h and stb_image_impl.c
@@ -160,10 +160,13 @@ Each pass through the main loop does the following:
 
 **Gameplay**
 - Player movement with arrow keys or WASD, normalized diagonals, and map clamping.
+- A 16×32 South Indian warrior sprite loaded from `assets/warrior_16x32.png`, with separate player width and height constants.
+- Directional sprite selection for front/down, right, back/up, and left; horizontal input wins when moving diagonally.
+- Walk-frame timing with frame 0 used while idle; the back-facing row cycles through four frames.
 
 **Tooling**
 - `-Dgpu-debug` build option.
-- `scripts/key_checker.ps1`, which sets the checkerboard background to transparent. It flood-fills from the image border through the two most common gray colors, so enclosed areas of the same colors inside the character stay opaque. Run it from the project root, and it overwrites `assets/character_clean.png`.
+- `scripts/key_checker.ps1` is a legacy checkerboard-removal tool for the older character art. The current warrior runtime sheet is `assets/warrior_16x32.png`; `assets/warrior.png` is retained as the untouched source artwork.
 
 ### Module status
 
@@ -194,23 +197,7 @@ These estimates are rough. They measure how close each area is to something usab
 
 These are the natural extension points. Each one reuses existing code.
 
-**Draw the character sprite.** This is the next step. Load the image, upload it once, then queue it with the source rectangle for the frame you want. `drawSprite` already takes texel rectangles, so a sprite sheet needs no new code.
-
-```zig
-// Once, after the tile texture is set up. main returns !void, so try works.
-var char_img = try image.loadRgba8("assets/character_clean.png");
-defer char_img.deinit();
-var char_tex = Texture.initRgba8(gpu.device, char_img.width, char_img.height, char_img.pixels);
-defer char_tex.deinit();
-
-// Each frame, after the world tiles, in place of drawPlayer.
-// Replace the 16s with your frame size.
-const frame = Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
-const dst = Rect{ .x = @round(player_x) - cam.x, .y = @round(player_y) - cam.y, .w = 16, .h = 16 };
-world_batch.drawSprite(&char_tex, frame, dst, white);
-```
-
-**Animate.** Store a frame index and a timer on the entity, and compute the source rectangle from the index. The batch does not change.
+**Character sprite and animation.** The warrior is loaded once from `assets/warrior_16x32.png` and drawn through the existing `drawSprite` source-rectangle API. Each cell is 16×32 pixels. `main.zig` tracks a facing row, walk timer, and frame index; the back-facing row uses four frames, while the other rows use five. Frame 0 is selected while idle.
 
 **Add per-cell tile data.** `World` already knows its size and culls visible cells. Give it a `[]u16` of tile IDs with `cols * rows` entries. In `draw`, look up each cell's ID, convert it to a source rectangle in the tileset, and keep the same loop. The checkerboard tint is a stand-in for real data and can go.
 
@@ -252,7 +239,7 @@ world_batch.drawSprite(&char_tex, frame, dst, white);
 
 ### Phase 1: finish the vertical slice
 
-- [ ] Draw the character from `character_clean.png` in place of the tinted tile, with sprite-sheet frames.
+- [x] Draw the warrior from `assets/warrior_16x32.png` with 16×32 source frames and directional walk animation.
 - [ ] Fix one-shot input and add press and release detection.
 - [ ] Map keys to named actions.
 - [ ] Move the player and game state out of `main.zig`.
@@ -265,7 +252,7 @@ world_batch.drawSprite(&char_tex, frame, dst, white);
 - [ ] Tile collision with axis-separated movement.
 - [ ] Multiple layers: ground, decoration, and foreground.
 - [ ] Camera zoom, smoothing, and bounds.
-- [ ] Sprite animation.
+- [x] Basic directional sprite animation. More advanced animation state and per-entity animation data remain future work.
 
 ### Phase 3: engine infrastructure
 
@@ -293,7 +280,8 @@ world_batch.drawSprite(&char_tex, frame, dst, white);
 ## Conventions
 
 - Units: world, camera, and sprite positions are in native pixels, and time is `f32` seconds.
-- Paths are relative to the project root.
+- Paths are relative to the project root; run `zig build run` from the repository root so `assets/warrior_16x32.png` can be found.
+- `assets/warrior.png` is the original source art; the game loads the prepared 80×128 `assets/warrior_16x32.png` sheet instead.
 - Only `sdl.zig` imports SDL's C headers.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
 - Capacity limits are constants that panic when exceeded, so overflows are caught early.
