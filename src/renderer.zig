@@ -133,8 +133,9 @@ pub const Renderer = struct {
         };
     }
 
-    /// Clears the window and draws the vertex buffer. Skips the frame if the swapchain isn't available.
-    pub fn draw(self: *Renderer) void {
+    /// Clears the window to `clear` and draws the vertex buffer.
+    /// Skips the frame if the swapchain isn't available.
+    pub fn draw(self: *Renderer, clear: c.SDL_FColor) void {
         const cmd = c.SDL_AcquireGPUCommandBuffer(self.device) orelse return;
 
         var swapchain: ?*c.SDL_GPUTexture = null;
@@ -152,7 +153,7 @@ pub const Renderer = struct {
 
         var color_target = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
         color_target.texture = swapchain;
-        color_target.clear_color = .{ .r = 0.2, .g = 0.3, .b = 0.5, .a = 1.0 };
+        color_target.clear_color = clear;
         color_target.load_op = c.SDL_GPU_LOADOP_CLEAR;
         color_target.store_op = c.SDL_GPU_STOREOP_STORE;
 
