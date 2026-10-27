@@ -27,7 +27,8 @@ pub fn build(b: *std.Build) void {
         .{ "fragmentMain", "fragment", "triangle.frag.spv" },
     }) |s| {
         const compile = b.addSystemCommand(&.{
-            "slangc", "-target", "spirv", "-entry", s[0], "-stage", s[1],
+            "slangc", "-target", "spirv",  "-profile", "spirv_1_0",
+            "-entry", s[0],      "-stage", s[1],
         });
         compile.addFileArg(b.path("shaders/triangle.slang"));
         compile.addArg("-o");
