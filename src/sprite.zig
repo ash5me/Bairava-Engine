@@ -59,8 +59,18 @@ pub const SpriteBatch = struct {
         const frag = shader.loadSpirv(device, "zig-out/shaders/triangle.frag.spv", "main", c.SDL_GPU_SHADERSTAGE_FRAGMENT, .{ .samplers = 1 });
         defer c.SDL_ReleaseGPUShader(device, frag);
 
+        // Alpha blending, so transparent pixels show what's behind them.
         var color_desc = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
         color_desc.format = color_format;
+        color_desc.blend_state = .{
+            .enable_blend = true,
+            .src_color_blendfactor = c.SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+            .dst_color_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            .color_blend_op = c.SDL_GPU_BLENDOP_ADD,
+            .src_alpha_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE,
+            .dst_alpha_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            .alpha_blend_op = c.SDL_GPU_BLENDOP_ADD,
+        };
 
         var vb_desc = std.mem.zeroes(c.SDL_GPUVertexBufferDescription);
         vb_desc.slot = 0;
