@@ -7,12 +7,43 @@ const Input = input.Input;
 const renderer = @import("renderer.zig");
 const Vertex = renderer.Vertex;
 const Renderer = renderer.Renderer;
+const Texture = @import("texture.zig").Texture;
 
-const triangle = [_]Vertex{
-    .{ .pos = .{ 0.0, -0.5 }, .color = .{ 1.0, 0.0, 0.0 } },
-    .{ .pos = .{ 0.5, 0.5 }, .color = .{ 0.0, 1.0, 0.0 } },
-    .{ .pos = .{ -0.5, 0.5 }, .color = .{ 0.0, 0.0, 1.0 } },
+const white = [3]f32{ 1.0, 1.0, 1.0 };
+
+/// Two triangles forming a square centered on the screen.
+/// UV (0,0) is the top-left of the texture, and the texture row 0 is the top row of pixels.
+const quad = [_]Vertex{
+    .{ .pos = .{ -0.5, -0.5 }, .uv = .{ 0.0, 1.0 }, .color = white },
+    .{ .pos = .{ 0.5, -0.5 }, .uv = .{ 1.0, 1.0 }, .color = white },
+    .{ .pos = .{ 0.5, 0.5 }, .uv = .{ 1.0, 0.0 }, .color = white },
+    .{ .pos = .{ -0.5, -0.5 }, .uv = .{ 0.0, 1.0 }, .color = white },
+    .{ .pos = .{ 0.5, 0.5 }, .uv = .{ 1.0, 0.0 }, .color = white },
+    .{ .pos = .{ -0.5, 0.5 }, .uv = .{ 0.0, 0.0 }, .color = white },
 };
+
+const tex_size = 16;
+
+/// Builds a 16x16 grass-style tile with a dark border and 4x4 checker blocks.
+/// Nearest-neighbor sampling shows the texels as sharp squares.
+/// This is temporary and gets replaced by PNG loading in the next step.
+fn makeTestPattern() [tex_size * tex_size * 4]u8 {
+    const light = [4]u8{ 110, 190, 90, 255 };
+    const dark = [4]u8{ 70, 140, 60, 255 };
+    const border = [4]u8{ 40, 90, 40, 255 };
+
+    var pixels: [tex_size * tex_size * 4]u8 = undefined;
+    for (0..tex_size) |y| {
+        for (0..tex_size) |x| {
+            const is_border = x == 0 or y == 0 or x == tex_size - 1 or y == tex_size - 1;
+            const checker = ((x / 4) + (y / 4)) % 2 == 0;
+            const color = if (is_border) border else if (checker) light else dark;
+            const i = (y * tex_size + x) * 4;
+            @memcpy(pixels[i .. i + 4], &color);
+        }
+    }
+    return pixels;
+}
 
 /// Caps the frame time so a stall (dragging the window, hitting a breakpoint)
 /// doesn't make the next frame jump far ahead.
@@ -33,8 +64,12 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyWindow(window);
 
-    var gpu = Renderer.init(window, build_options.gpu_debug, &triangle);
+    var gpu = Renderer.init(window, build_options.gpu_debug, &quad);
     defer gpu.deinit();
+
+    const pixels = makeTestPattern();
+    var tile = Texture.initRgba8(gpu.device, tex_size, tex_size, &pixels);
+    defer tile.deinit();
 
     var input_state = Input.init();
 
@@ -74,7 +109,7 @@ pub fn main() !void {
         if (input_state.left_clicked) clear = default_clear;
         input_state.endFrame();
 
-        gpu.draw(clear);
+        gpu.draw(clear, &tile);
 
         // Window title: FPS and mouse position, refreshed a few times a second.
         frames += 1;

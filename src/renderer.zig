@@ -2,10 +2,12 @@ const std = @import("std");
 
 const c = @import("sdl.zig").c;
 const shader = @import("shader.zig");
+const Texture = @import("texture.zig").Texture;
 
 /// Vertex layout shared by the CPU-side data and the pipeline's vertex inputs.
 pub const Vertex = extern struct {
     pos: [2]f32,
+    uv: [2]f32,
     color: [3]f32,
 };
 
@@ -44,8 +46,9 @@ pub const Renderer = struct {
         }
 
         // Slang writes each entry point as "main" in the SPIR-V output.
-        const vert = shader.loadSpirv(device, "zig-out/shaders/triangle.vert.spv", "main", c.SDL_GPU_SHADERSTAGE_VERTEX);
-        const frag = shader.loadSpirv(device, "zig-out/shaders/triangle.frag.spv", "main", c.SDL_GPU_SHADERSTAGE_FRAGMENT);
+        // The fragment shader samples one texture, which takes one sampler slot.
+        const vert = shader.loadSpirv(device, "zig-out/shaders/triangle.vert.spv", "main", c.SDL_GPU_SHADERSTAGE_VERTEX, .{});
+        const frag = shader.loadSpirv(device, "zig-out/shaders/triangle.frag.spv", "main", c.SDL_GPU_SHADERSTAGE_FRAGMENT, .{ .samplers = 1 });
 
         // Size from the slice's bytes. @sizeOf(@TypeOf(slice)) would give the pointer size.
         const bytes = std.mem.sliceAsBytes(vertices);
@@ -100,7 +103,8 @@ pub const Renderer = struct {
 
         var vb_attrs = [_]c.SDL_GPUVertexAttribute{
             .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "pos") },
-            .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "color") },
+            .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
+            .{ .location = 2, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "color") },
         };
 
         var pipeline_info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
@@ -133,9 +137,9 @@ pub const Renderer = struct {
         };
     }
 
-    /// Clears the window to `clear` and draws the vertex buffer.
+    /// Clears the window to `clear`, then draws the vertex buffer sampling `texture`.
     /// Skips the frame if the swapchain isn't available.
-    pub fn draw(self: *Renderer, clear: c.SDL_FColor) void {
+    pub fn draw(self: *Renderer, clear: c.SDL_FColor, texture: *const Texture) void {
         const cmd = c.SDL_AcquireGPUCommandBuffer(self.device) orelse return;
 
         var swapchain: ?*c.SDL_GPUTexture = null;
@@ -160,6 +164,10 @@ pub const Renderer = struct {
         const pass = c.SDL_BeginGPURenderPass(cmd, &color_target, 1, null);
         c.SDL_BindGPUGraphicsPipeline(pass, self.pipeline);
         c.SDL_BindGPUVertexBuffers(pass, 0, &self.vb_binding, 1);
+
+        const sampler_binding = texture.binding();
+        c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler_binding, 1);
+
         c.SDL_DrawGPUPrimitives(pass, self.vertex_count, 1, 0, 0);
         c.SDL_EndGPURenderPass(pass);
 
