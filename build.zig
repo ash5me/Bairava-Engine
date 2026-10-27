@@ -23,17 +23,18 @@ pub fn build(b: *std.Build) void {
 
     // Compile Slang shaders to SPIR-V into zig-out/shaders/
     inline for (.{
-        .{ "vertexMain", "vertex", "triangle.vert.spv" },
-        .{ "fragmentMain", "fragment", "triangle.frag.spv" },
+        .{ "vertexMain", "vertex", "triangle.vert" },
+        .{ "fragmentMain", "fragment", "triangle.frag" },
     }) |s| {
         const compile = b.addSystemCommand(&.{
-            "slangc", "-target", "spirv",  "-profile", "spirv_1_0",
+            "slangc", "-target", "spirv",  "-emit-spirv-via-glsl",
             "-entry", s[0],      "-stage", s[1],
         });
         compile.addFileArg(b.path("shaders/triangle.slang"));
         compile.addArg("-o");
-        const spv = compile.addOutputFileArg(s[2]);
-        const install = b.addInstallFile(spv, "shaders/" ++ s[2]);
+        const spv = compile.addOutputFileArg(s[2] ++ ".spv");
+
+        const install = b.addInstallFile(spv, "shaders/" ++ s[2] ++ ".spv");
         b.getInstallStep().dependOn(&install.step);
     }
 
