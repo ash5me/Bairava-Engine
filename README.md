@@ -4,7 +4,7 @@ A 2D pixel-art game engine in progress, written in Zig. It draws a tile map at a
 
 The package is named `zig_sdl3_slang` in `build.zig.zon`, the executable is `my-game`, and the window title is `My Game`.
 
-**Status:** early prototype. The rendering path works end to end. Gameplay systems such as entities, collision, audio, and UI have not been started.
+**Status:** early prototype. The rendering path works end to end, and one animated character walks a tile map while the camera follows. Gameplay systems such as entities, collision, audio, and UI have not been started.
 
 ## Contents
 
@@ -102,7 +102,7 @@ Each pass through the main loop does the following:
 2. Drain the SDL event queue. Quit requests, F11, and mouse events are handled here.
 3. Clear one-shot input state (`Input.endFrame`).
 4. Read held movement keys, normalize diagonal movement, move the player at 80 px/s, and clamp the player to the map. Esc ends the loop.
-5. Read the window size in pixels, then compute `scale = min(win_w / 320, win_h / 180)` and the view size `floor(window / scale)`.
+5. Read the window size in pixels, then compute `scale = min(win_w / 320, win_h / 180)` and the view size `floor(window / scale + 0.01)`. The 0.01 keeps float rounding from dropping a whole native pixel.
 6. If the view size changed, wait for the GPU to go idle and recreate the native target.
 7. Point the camera at the player's center. The camera position snaps to whole pixels.
 8. Acquire a command buffer and swapchain texture. Skip the frame if either is unavailable.
@@ -123,9 +123,9 @@ Each pass through the main loop does the following:
 | Name | Version | Used for | License |
 |---|---|---|---|
 | Zig | 0.16.0-dev, pinned by `minimum_zig_version` | Language, build system, standard library | MIT |
-| SDL3 | 3.4.2, via a Zig build wrapper on Codeberg (`brodo/SDL`) | Window, events, keyboard state, SDL_GPU API, file loading, timing, memory | zlib |
+| SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard state, SDL_GPU API, file loading, timing, memory | zlib |
 | stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8 | Public domain or MIT |
-| Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/triangle.slang` to SPIR-V 1.5 | Apache 2.0 with LLVM exception |
+| Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/triangle.slang` to SPIR-V; no explicit profile is set (see Known issues) | Apache 2.0 with LLVM exception |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
 | PowerShell and System.Drawing | Windows | `scripts/key_checker.ps1` | Windows built-in |
 
@@ -219,11 +219,11 @@ These are the natural extension points. Each one reuses existing code.
 
 2. **Mouse coordinates are in the wrong space for gameplay.** `motion.x` and `motion.y` are window-space values, but the render size comes from `SDL_GetWindowSizeInPixels`. On high-DPI displays these differ. Convert window coordinates to pixels, divide by the scale to get view pixels, then add the camera position to get world coordinates.
 
-3. **Asset and shader paths depend on the working directory.** Running the executable from another folder panics on the first load. Resolve paths relative to the executable, or embed the compiled shaders.
+3. **Asset and shader paths depend on the working directory.** Running the executable from another folder panics on the first load. The asset paths are set in `main.zig`, and the shader paths are hardcoded in `sprite.zig`. Both are relative to the working directory. Resolve paths relative to the executable, or embed the compiled shaders.
 
 4. **A minimized window spins the CPU.** When the window has zero pixel size, the loop `continue`s without waiting. Add an `SDL_Delay`, or use `SDL_WaitEvent`, in that branch.
 
-5. **The backend is assumed to be Vulkan.** The device accepts SPIR-V only, and the renderer sets Vulkan options. This works on the current machine. Other backends (D3D12, Metal) need DXIL or MSL shaders, which are on the roadmap.
+5. **The backend is assumed to be Vulkan.** The device accepts SPIR-V only, and the renderer sets Vulkan options. This works on the current machine. Other backends (D3D12, Metal) need DXIL or MSL shaders, which are on the roadmap. The sampler in `triangle.slang` is bound with the Vulkan-specific `[vk::binding(0, 2)]` attribute, so the binding layout will need attention when those targets are added.
 
 6. **Names don't match.** The package is `zig_sdl3_slang`, the executable is `my-game`, the window is `My Game`, and the sprite shader is `triangle.slang`. Choose one scheme and rename.
 
@@ -234,6 +234,10 @@ These are the natural extension points. Each one reuses existing code.
 9. **Texture uploads block.** `Texture.initRgba8` waits for the GPU to go idle. That is fine at load time, but it must not run every frame.
 
 10. **Fixed batch limits.** `SpriteBatch` panics above 8192 sprites or 256 texture switches in one frame. These limits fail loudly on purpose, but they will need revisiting once there are many textures or large levels.
+
+11. **The package file list omits build inputs.** `build.zig.zon` lists only `build.zig`, `build.zig.zon`, and `src` in `.paths`. A project that depends on this package would not receive `shaders/` or `vendor/`, which the build needs. Add those paths, or defer this until the package is meant for reuse.
+
+12. **The SPIR-V version is not pinned.** `build.zig` and `renderer.zig` both say the shaders are SPIR-V 1.5, but the `slangc` command passes no `-profile` flag, so the output depends on the installed Slang version's default. SPIR-V 1.5 is the version that matches the Vulkan 1.2 request made at runtime, so the two should be set together. Add `-profile spirv_1_5` to the command, or change the comment if another version is intended.
 
 ## Roadmap
 
@@ -251,8 +255,8 @@ These are the natural extension points. Each one reuses existing code.
 - [ ] Store tile IDs per cell and per layer, loaded from a file (a Tiled export or a simple custom format).
 - [ ] Tile collision with axis-separated movement.
 - [ ] Multiple layers: ground, decoration, and foreground.
-- [ ] Camera zoom, smoothing, and bounds.
-- [x] Basic directional sprite animation. More advanced animation state and per-entity animation data remain future work.
+- [ ] Camera zoom and smoothing. Edge clamping already works.
+- [ ] Advanced animation state and per-entity animation data. Basic directional walk animation is done (see Phase 1).
 
 ### Phase 3: engine infrastructure
 
