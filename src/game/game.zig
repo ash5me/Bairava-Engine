@@ -7,6 +7,8 @@ const controls = @import("controls.zig");
 const Level = @import("level.zig").Level;
 const Player = @import("player.zig").Player;
 
+const log = engine.log.scoped("game");
+
 pub const Game = struct {
     level: Level,
     player: Player,
@@ -15,9 +17,11 @@ pub const Game = struct {
 
     pub fn init(ctx: *engine.Context) Game {
         const level = Level{ .cols = config.level_cols, .rows = config.level_rows };
+        const player = Player.init(level.widthPx(), level.heightPx());
+        log.info("level {d}x{d} tiles, player starts at ({d:.0}, {d:.0})", .{ config.level_cols, config.level_rows, player.x, player.y });
         return .{
             .level = level,
-            .player = Player.init(level.widthPx(), level.heightPx()),
+            .player = player,
             .tile = ctx.loadTexture("assets/tile.png"),
             .warrior = ctx.loadTexture("assets/warrior_16x32.png"),
         };
@@ -31,7 +35,10 @@ pub const Game = struct {
     /// Runs at the fixed update rate. `ctx.dt` is the length of the step.
     pub fn update(self: *Game, ctx: *engine.Context) void {
         const input = ctx.input;
-        if (controls.pressed(input, .quit)) ctx.running = false;
+        if (controls.pressed(input, .quit)) {
+            log.info("quit action pressed", .{});
+            ctx.running = false;
+        }
         if (controls.pressed(input, .toggle_scale)) {
             ctx.scale_mode = switch (ctx.scale_mode) {
                 .fit => .integer,

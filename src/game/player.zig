@@ -109,6 +109,10 @@ pub const Player = struct {
         // Keep the whole sprite inside the map.
         self.x = std.math.clamp(self.x + dx * speed * dt, 0.0, map_w - width);
         self.y = std.math.clamp(self.y + dy * speed * dt, 0.0, map_h - height);
+
+        // Invariants: the walk index stays inside its row, and the position stays a real number.
+        engine.log.assert(self.frame < frame_count, @src(), "frame {d} is outside its row of {d} frames", .{ self.frame, frame_count });
+        engine.log.assert(std.math.isFinite(self.x) and std.math.isFinite(self.y), @src(), "player position is not finite: ({d}, {d})", .{ self.x, self.y });
     }
 
     /// Queues the current frame at the blended position, relative to the camera.

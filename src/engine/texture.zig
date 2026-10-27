@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const c = @import("sdl.zig").c;
+const logging = @import("log.zig");
 
 /// A 2D texture and a nearest-neighbor sampler for it.
 /// Nearest filtering keeps pixel art sharp when it's scaled up.
@@ -13,7 +14,8 @@ pub const Texture = struct {
 
     /// Uploads tightly packed RGBA8 pixels (4 bytes per pixel, row 0 at the top).
     pub fn initRgba8(device: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const u8) Texture {
-        std.debug.assert(pixels.len == @as(usize, width) * height * 4);
+        const expected_len = @as(usize, width) * height * 4;
+        logging.assert(pixels.len == expected_len, @src(), "pixel buffer is {d} bytes, expected {d} for a {d}x{d} texture", .{ pixels.len, expected_len, width, height });
 
         const texture = createTexture(device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
 

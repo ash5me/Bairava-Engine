@@ -10,6 +10,7 @@ The package is named `zig_sdl3_slang` in `build.zig.zon`, the executable is `my-
 
 - [Requirements](#requirements)
 - [Building and running](#building-and-running)
+- [Debugging](#debugging)
 - [Controls](#controls)
 - [Project structure](#project-structure)
 - [How it works](#how-it-works)
@@ -40,6 +41,18 @@ zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 
 `zig build` installs `zig-out/bin/my-game(.exe)` and the compiled shaders in `zig-out/shaders/`.
 
+## Debugging
+
+Logs print to stderr, so `zig build run` shows them in the terminal. Each line has a timestamp, a level, and a scope:
+
+```
+[    1523ms] INFO  engine: window 960x540, native view 320x180, 60 update steps per second
+```
+
+Levels, from least to most severe, are `debug`, `info`, `warn`, and `err`. Debug builds show every level. Other builds show `info` and up. To change the threshold, set `engine.log.min_level` in `main.zig`.
+
+Assertions check invariants. A failed one prints the file and line, then panics with a stack trace. They run in Debug and ReleaseSafe builds and are compiled out in ReleaseFast and ReleaseSmall. Use `engine.log.assert(ok, @src(), "message {d}", .{value})` for a condition that should hold, and `engine.log.fail(@src(), "message", .{})` for code that should never run.
+
 ## Controls
 
 | Input | Action |
@@ -69,7 +82,8 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── image.zig          Decodes image files to RGBA8 with stb_image
 │   │   ├── sprite.zig         Batched textured quads, sprite pipeline, vertex upload
 │   │   ├── camera.zig         View position, follow target, edge clamping
-│   │   └── input.zig          Key enum, held, pressed, and released state, mouse events
+│   │   ├── input.zig          Key enum, held, pressed, and released state, mouse events
+│   │   └── log.zig            Logging and assertions for debugging
 │   ├── game/                  Gameplay code. Uses the engine only through engine/engine.zig.
 │   │   ├── game.zig           Game state, asset loading, update and draw
 │   │   ├── controls.zig       Named actions and the keys bound to them
@@ -186,6 +200,7 @@ These estimates are rough. They measure how close each area is to something usab
 |---|---|---|---|---|
 | Platform | `sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
 | Engine | `engine/engine.zig` | Prototype | 60% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
+| Logging and assertions | `engine/log.zig` | Functional | 70% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Missing: log file output, profiling zones. |
 | Gameplay | `game/` | Prototype | 15% | Player with directional walk animation, one test level, and movement and quit actions bound in `game/controls.zig`. No entities, rules, or level files. |
 | Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Missing: device-lost recovery, other backends' shader formats, pass helpers. |
 | Shaders | `shader.zig` | Basic | 50% | Loads SPIR-V from disk. Missing: embedding, reflection, hot reload. Uniform buffer count is supported but unused. |
@@ -277,6 +292,7 @@ These are the natural extension points. Each one reuses existing code.
 - [ ] Audio through SDL3 audio streams.
 - [ ] Text rendering and basic UI widgets.
 - [ ] On-screen debug overlay with a frame-time graph, replacing the title stats.
+- [ ] Profiling zones (for example Tracy), and log file output.
 - [ ] Settings file for resolution, fullscreen, vsync, and key bindings.
 - [ ] Unit tests wired into `zig build test`.
 
@@ -298,6 +314,7 @@ These are the natural extension points. Each one reuses existing code.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
 - Capacity limits are constants that panic when exceeded, so overflows are caught early.
+- Log with `engine.log.scoped`, and check invariants with `engine.log.assert`. Don't use `std.debug.assert`, which is undefined behavior in release builds.
 - GPU objects are released by their `deinit`. Resources in the engine loop and in the game's `deinit` are released with `defer`, in reverse order of creation.
 - Comments explain why. Public items have doc comments.
 

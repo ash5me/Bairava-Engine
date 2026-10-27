@@ -10,7 +10,10 @@ const build_options = @import("build_options");
 
 const c = @import("sdl.zig").c;
 const image = @import("image.zig");
+const logging = @import("log.zig");
 const Renderer = @import("renderer.zig").Renderer;
+
+const elog = logging.scoped("engine");
 
 pub const Camera = @import("camera.zig").Camera;
 pub const Input = @import("input.zig").Input;
@@ -18,6 +21,8 @@ pub const Key = @import("input.zig").Key;
 pub const Rect = @import("sprite.zig").Rect;
 pub const SpriteBatch = @import("sprite.zig").SpriteBatch;
 pub const Texture = @import("texture.zig").Texture;
+/// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
+pub const log = logging;
 
 /// How the native view is fitted to the window.
 pub const ScaleMode = enum {
@@ -66,6 +71,7 @@ pub const Context = struct {
             std.debug.panic("failed to load {s}: {s}", .{ path, @errorName(err) });
         };
         defer img.deinit();
+        elog.debug("loaded texture {s} ({d}x{d})", .{ path, img.width, img.height });
         return Texture.initRgba8(self.device, img.width, img.height, img.pixels);
     }
 };
@@ -99,7 +105,7 @@ fn fitScale(win_w: f32, win_h: f32, native_w: f32, native_h: f32) f32 {
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 pub fn run(comptime Game: type, config: Config) void {
-    std.debug.assert(config.update_hz > 0);
+    logging.assert(config.update_hz > 0, @src(), "update rate must be positive, got {d}", .{config.update_hz});
     const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
 
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
@@ -111,11 +117,17 @@ pub fn run(comptime Game: type, config: Config) void {
         std.debug.panic("SDL_CreateWindow failed: {s}", .{c.SDL_GetError()});
     };
     defer c.SDL_DestroyWindow(window);
+    elog.info("window {d}x{d}, native view {d}x{d}, {d} update steps per second", .{
+        config.window_w, config.window_h, config.native_w, config.native_h, config.update_hz,
+    });
 
     var gpu = Renderer.init(window, build_options.gpu_debug);
     defer gpu.deinit();
 
     const format = gpu.swapchainFormat();
+    const gpu_debug_label: []const u8 = if (build_options.gpu_debug) "on" else "off";
+    elog.info("GPU device ready, validation {s}, swapchain format {d}", .{ gpu_debug_label, format });
+
     const native_wf: f32 = @floatFromInt(config.native_w);
     const native_hf: f32 = @floatFromInt(config.native_h);
     const clear = c.SDL_FColor{
@@ -142,11 +154,13 @@ pub fn run(comptime Game: type, config: Config) void {
     var ctx = Context{ .device = gpu.device, .input = &input_state, .scale_mode = config.scale_mode };
     var game = Game.init(&ctx);
     defer game.deinit();
+    var last_mode = ctx.scale_mode;
 
     var last_ns = c.SDL_GetTicksNS();
     var accumulator: f32 = 0;
     var title_timer: f32 = 0;
     var frames: u32 = 0;
+    var total_frames: u64 = 0;
     var title_buf: [160:0]u8 = undefined;
 
     while (ctx.running) {
@@ -159,7 +173,10 @@ pub fn run(comptime Game: type, config: Config) void {
         // in Input until an update step takes them.
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
-            if (event.type == c.SDL_EVENT_QUIT) ctx.running = false;
+            if (event.type == c.SDL_EVENT_QUIT) {
+                elog.info("quit requested by the window", .{});
+                ctx.running = false;
+            }
             if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F11 and !event.key.repeat) {
                 const fullscreen = (c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_FULLSCREEN) != 0;
                 _ = c.SDL_SetWindowFullscreen(window, !fullscreen);
@@ -170,14 +187,25 @@ pub fn run(comptime Game: type, config: Config) void {
         // Fixed-timestep updates. Run whole steps while the accumulated time covers one, so game
         // logic advances at the same rate on any display. Stop early if the game quits.
         accumulator += frame_dt;
+        var steps: u32 = 0;
         while (accumulator >= fixed_dt and ctx.running) {
             input_state.latch();
             ctx.dt = fixed_dt;
             game.update(&ctx);
             accumulator -= fixed_dt;
+            steps += 1;
         }
+        if (steps > 4) {
+            elog.debug("{d} update steps in one frame, so the frame took {d:.1} ms", .{ steps, frame_dt * 1000.0 });
+        }
+        if (ctx.scale_mode != last_mode) {
+            elog.info("scale mode: {s}", .{@tagName(ctx.scale_mode)});
+            last_mode = ctx.scale_mode;
+        }
+
         // The leftover time as a fraction of a step. Drawing blends between the last two updates by this amount.
         const alpha = @min(accumulator / fixed_dt, 1.0);
+        logging.assert(alpha >= 0.0 and alpha <= 1.0, @src(), "blend factor {d} is outside 0 to 1", .{alpha});
 
         // Window size in pixels, which is also the swapchain size on high-DPI displays.
         var pw: c_int = 0;
@@ -192,6 +220,7 @@ pub fn run(comptime Game: type, config: Config) void {
         const fit = fitScale(win_wf, win_hf, native_wf, native_hf);
         const pixel_perfect = ctx.scale_mode == .integer and fit >= 1.0;
         const scale: f32 = if (pixel_perfect) @floor(fit) else fit;
+        const mode_label: []const u8 = if (pixel_perfect) "integer" else "fit";
 
         // The view is the part of the world the window shows. The 0.01 keeps float rounding
         // from dropping a whole native pixel.
@@ -199,12 +228,16 @@ pub fn run(comptime Game: type, config: Config) void {
         const view_h: u32 = @intFromFloat(@floor(win_hf / scale + 0.01));
         const view_wf: f32 = @floatFromInt(view_w);
         const view_hf: f32 = @floatFromInt(view_h);
+        logging.assert(view_w >= config.native_w and view_h >= config.native_h, @src(), "view {d}x{d} is smaller than the native view {d}x{d}", .{
+            view_w, view_h, config.native_w, config.native_h,
+        });
 
         if (target.width != view_w or target.height != view_h) {
             // Wait first, because the old target may still be in use by the GPU.
             _ = c.SDL_WaitForGPUIdle(gpu.device);
             target.deinit();
             target = Texture.initTarget(gpu.device, view_w, view_h, format);
+            elog.debug("native target is now {d}x{d} at {d:.2} scale ({s})", .{ view_w, view_h, scale, mode_label });
         }
 
         cam.view_w = view_wf;
@@ -253,10 +286,10 @@ pub fn run(comptime Game: type, config: Config) void {
 
         // Window title: FPS, sprite count, draw calls, scale, scale mode, and view size, refreshed a few times a second.
         frames += 1;
+        total_frames += 1;
         title_timer += frame_dt;
         if (title_timer >= title_interval) {
             const fps = @as(f32, @floatFromInt(frames)) / title_timer;
-            const mode_label: []const u8 = if (pixel_perfect) "integer" else "fit";
             const title = std.fmt.bufPrintZ(&title_buf, "{s} | {d:.0} fps | {d} sprites | {d} draw calls | {d:.0}% {s} | view {d}x{d}", .{
                 config.title, fps, world_batch.sprite_count, world_batch.draw_calls + screen_batch.draw_calls, scale * 100.0, mode_label, view_w, view_h,
             }) catch null;
@@ -265,4 +298,5 @@ pub fn run(comptime Game: type, config: Config) void {
             title_timer = 0;
         }
     }
+    elog.info("main loop ended after {d} frames", .{total_frames});
 }
