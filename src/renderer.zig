@@ -1,27 +1,22 @@
 const std = @import("std");
 
 const c = @import("sdl.zig").c;
-const shader = @import("shader.zig");
-const Texture = @import("texture.zig").Texture;
 
-/// Vertex layout shared by the CPU-side data and the pipeline's vertex inputs.
-pub const Vertex = extern struct {
-    pos: [2]f32,
-    uv: [2]f32,
-    color: [3]f32,
+/// A frame in progress: the command buffer and the swapchain texture it draws to.
+pub const Frame = struct {
+    cmd: *c.SDL_GPUCommandBuffer,
+    swapchain: *c.SDL_GPUTexture,
 };
 
+/// Owns the GPU device and the window's swapchain. Each frame runs in this order:
+/// beginFrame, any uploads, beginPass, draws, endPass, endFrame.
 pub const Renderer = struct {
     window: *c.SDL_Window,
     device: *c.SDL_GPUDevice,
-    pipeline: *c.SDL_GPUGraphicsPipeline,
-    vertex_buffer: *c.SDL_GPUBuffer,
-    vb_binding: c.SDL_GPUBufferBinding,
-    vertex_count: u32,
 
-    /// Creates the GPU device, uploads `vertices`, and builds the pipeline.
+    /// Creates the GPU device and claims the window for it.
     /// `window` must outlive the returned Renderer.
-    pub fn init(window: *c.SDL_Window, gpu_debug: bool, vertices: []const Vertex) Renderer {
+    pub fn init(window: *c.SDL_Window, gpu_debug: bool) Renderer {
         // Request Vulkan 1.2 so the device accepts SPIR-V 1.5, which Slang emits by default.
         // Version 1.2.0 is (1 << 22) | (2 << 12); Zig can't translate VK_MAKE_API_VERSION.
         var vk_opts = std.mem.zeroes(c.SDL_GPUVulkanOptions);
@@ -45,139 +40,53 @@ pub const Renderer = struct {
             std.debug.panic("SDL_ClaimWindowForGPUDevice failed: {s}", .{c.SDL_GetError()});
         }
 
-        // Slang writes each entry point as "main" in the SPIR-V output.
-        // The fragment shader samples one texture, which takes one sampler slot.
-        const vert = shader.loadSpirv(device, "zig-out/shaders/triangle.vert.spv", "main", c.SDL_GPU_SHADERSTAGE_VERTEX, .{});
-        const frag = shader.loadSpirv(device, "zig-out/shaders/triangle.frag.spv", "main", c.SDL_GPU_SHADERSTAGE_FRAGMENT, .{ .samplers = 1 });
-
-        // Size from the slice's bytes. @sizeOf(@TypeOf(slice)) would give the pointer size.
-        const bytes = std.mem.sliceAsBytes(vertices);
-        const size: u32 = @intCast(bytes.len);
-
-        // GPU-side vertex buffer.
-        var buf_info = std.mem.zeroes(c.SDL_GPUBufferCreateInfo);
-        buf_info.usage = c.SDL_GPU_BUFFERUSAGE_VERTEX;
-        buf_info.size = size;
-        const vertex_buffer = c.SDL_CreateGPUBuffer(device, &buf_info) orelse {
-            std.debug.panic("SDL_CreateGPUBuffer failed: {s}", .{c.SDL_GetError()});
-        };
-
-        // CPU-visible staging buffer used to upload the vertices.
-        var tb_info = std.mem.zeroes(c.SDL_GPUTransferBufferCreateInfo);
-        tb_info.usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        tb_info.size = size;
-        const transfer = c.SDL_CreateGPUTransferBuffer(device, &tb_info) orelse {
-            std.debug.panic("SDL_CreateGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
-        };
-
-        const mapped = c.SDL_MapGPUTransferBuffer(device, transfer, false) orelse {
-            std.debug.panic("SDL_MapGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
-        };
-        const dst: [*]u8 = @ptrCast(mapped);
-        @memcpy(dst[0..bytes.len], bytes);
-        c.SDL_UnmapGPUTransferBuffer(device, transfer);
-
-        // Copy staging buffer -> vertex buffer, then wait for it to finish.
-        const upload_cmd = c.SDL_AcquireGPUCommandBuffer(device) orelse {
-            std.debug.panic("SDL_AcquireGPUCommandBuffer failed: {s}", .{c.SDL_GetError()});
-        };
-        const copy_pass = c.SDL_BeginGPUCopyPass(upload_cmd);
-        const src_loc = c.SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer, .offset = 0 };
-        const dst_region = c.SDL_GPUBufferRegion{ .buffer = vertex_buffer, .offset = 0, .size = size };
-        c.SDL_UploadToGPUBuffer(copy_pass, &src_loc, &dst_region, false);
-        c.SDL_EndGPUCopyPass(copy_pass);
-        if (!c.SDL_SubmitGPUCommandBuffer(upload_cmd)) {
-            std.debug.panic("SDL_SubmitGPUCommandBuffer failed: {s}", .{c.SDL_GetError()});
-        }
-        _ = c.SDL_WaitForGPUIdle(device);
-        c.SDL_ReleaseGPUTransferBuffer(device, transfer);
-
-        // Pipeline: describe the vertex layout, then the shaders and output format.
-        var color_desc = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
-        color_desc.format = c.SDL_GetGPUSwapchainTextureFormat(device, window);
-
-        var vb_desc = std.mem.zeroes(c.SDL_GPUVertexBufferDescription);
-        vb_desc.slot = 0;
-        vb_desc.pitch = @sizeOf(Vertex);
-        vb_desc.input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX;
-
-        var vb_attrs = [_]c.SDL_GPUVertexAttribute{
-            .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "pos") },
-            .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
-            .{ .location = 2, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "color") },
-        };
-
-        var pipeline_info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
-        pipeline_info.vertex_shader = vert;
-        pipeline_info.fragment_shader = frag;
-        pipeline_info.vertex_input_state.vertex_buffer_descriptions = &vb_desc;
-        pipeline_info.vertex_input_state.num_vertex_buffers = 1;
-        pipeline_info.vertex_input_state.vertex_attributes = &vb_attrs;
-        pipeline_info.vertex_input_state.num_vertex_attributes = @intCast(vb_attrs.len);
-        pipeline_info.primitive_type = c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-        pipeline_info.depth_stencil_state.compare_op = c.SDL_GPU_COMPAREOP_ALWAYS;
-        pipeline_info.target_info.num_color_targets = 1;
-        pipeline_info.target_info.color_target_descriptions = &color_desc;
-
-        const pipeline = c.SDL_CreateGPUGraphicsPipeline(device, &pipeline_info) orelse {
-            std.debug.panic("SDL_CreateGPUGraphicsPipeline failed: {s}", .{c.SDL_GetError()});
-        };
-
-        // The pipeline holds the compiled shaders, so the shader objects can go now.
-        c.SDL_ReleaseGPUShader(device, vert);
-        c.SDL_ReleaseGPUShader(device, frag);
-
-        return .{
-            .window = window,
-            .device = device,
-            .pipeline = pipeline,
-            .vertex_buffer = vertex_buffer,
-            .vb_binding = .{ .buffer = vertex_buffer, .offset = 0 },
-            .vertex_count = @intCast(vertices.len),
-        };
+        return .{ .window = window, .device = device };
     }
 
-    /// Clears the window to `clear`, then draws the vertex buffer sampling `texture`.
-    /// Skips the frame if the swapchain isn't available.
-    pub fn draw(self: *Renderer, clear: c.SDL_FColor, texture: *const Texture) void {
-        const cmd = c.SDL_AcquireGPUCommandBuffer(self.device) orelse return;
+    /// The format the window's swapchain uses. Pipelines that render to the window must match it.
+    pub fn swapchainFormat(self: *const Renderer) c.SDL_GPUTextureFormat {
+        return c.SDL_GetGPUSwapchainTextureFormat(self.device, self.window);
+    }
+
+    /// Acquires a command buffer and the swapchain texture.
+    /// Returns null when the frame should be skipped, such as while the window is minimized.
+    pub fn beginFrame(self: *Renderer) ?Frame {
+        const cmd = c.SDL_AcquireGPUCommandBuffer(self.device) orelse return null;
 
         var swapchain: ?*c.SDL_GPUTexture = null;
         var w: u32 = 0;
         var h: u32 = 0;
-        if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(cmd, self.window, &swapchain, &w, &h)) {
+        const acquired = c.SDL_WaitAndAcquireGPUSwapchainTexture(cmd, self.window, &swapchain, &w, &h);
+        if (!acquired or swapchain == null) {
+            // Submit the empty command buffer so SDL can release it.
             _ = c.SDL_SubmitGPUCommandBuffer(cmd);
-            return;
+            return null;
         }
-        if (swapchain == null) {
-            // Window is minimized; nothing to draw into this frame.
-            _ = c.SDL_SubmitGPUCommandBuffer(cmd);
-            return;
-        }
+        return .{ .cmd = cmd, .swapchain = swapchain.? };
+    }
 
+    /// Starts a render pass that clears the swapchain to `clear`.
+    pub fn beginPass(frame: Frame, clear: c.SDL_FColor) ?*c.SDL_GPURenderPass {
         var color_target = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
-        color_target.texture = swapchain;
+        color_target.texture = frame.swapchain;
         color_target.clear_color = clear;
         color_target.load_op = c.SDL_GPU_LOADOP_CLEAR;
         color_target.store_op = c.SDL_GPU_STOREOP_STORE;
 
-        const pass = c.SDL_BeginGPURenderPass(cmd, &color_target, 1, null);
-        c.SDL_BindGPUGraphicsPipeline(pass, self.pipeline);
-        c.SDL_BindGPUVertexBuffers(pass, 0, &self.vb_binding, 1);
-
-        const sampler_binding = texture.binding();
-        c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler_binding, 1);
-
-        c.SDL_DrawGPUPrimitives(pass, self.vertex_count, 1, 0, 0);
-        c.SDL_EndGPURenderPass(pass);
-
-        _ = c.SDL_SubmitGPUCommandBuffer(cmd);
+        return c.SDL_BeginGPURenderPass(frame.cmd, &color_target, 1, null);
     }
 
-    /// Releases GPU resources. Call before destroying the window.
+    pub fn endPass(pass: ?*c.SDL_GPURenderPass) void {
+        c.SDL_EndGPURenderPass(pass);
+    }
+
+    /// Submits the frame's commands to the GPU.
+    pub fn endFrame(frame: Frame) void {
+        _ = c.SDL_SubmitGPUCommandBuffer(frame.cmd);
+    }
+
+    /// Releases the device. Destroy anything created from it first.
     pub fn deinit(self: *Renderer) void {
-        c.SDL_ReleaseGPUGraphicsPipeline(self.device, self.pipeline);
-        c.SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
         c.SDL_ReleaseWindowFromGPUDevice(self.device, self.window);
         c.SDL_DestroyGPUDevice(self.device);
     }
