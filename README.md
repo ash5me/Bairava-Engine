@@ -2,6 +2,8 @@
 
 A 2D pixel-art game engine in progress, written in Zig. It draws a tile map at a fixed native resolution, scales it to any window size with nearest-neighbor filtering, and lets a player walk around while a camera follows. Rendering goes through SDL3's GPU API, with shaders written in Slang and compiled to SPIR-V.
 
+⚠️ The engine is not stable for production use (yet).
+
 The package is named `zig_sdl3_slang` in `build.zig.zon`, the executable is `my-game`, and the window title is `My Game`.
 
 **Status:** early prototype. The rendering path works end to end, and one animated character walks a tile map while the camera follows. Gameplay systems such as entities, collision, audio, and UI have not been started.
