@@ -29,16 +29,16 @@ const max_vertices = max_sprites * vertices_per_sprite;
 /// The sprite shaders. build.zig compiles them and embeds the code under the `decl` names in its
 /// `shader_entries` table. The resource counts sit here, beside the pipeline that binds them.
 const vertex_source = shader.Source{
-    .name = "triangle.vert",
+    .name = "default.vert",
     .entry = "vertexMain",
     .stage = c.SDL_GPU_SHADERSTAGE_VERTEX,
-    .code = .{ .spirv = embedded.triangle_vert, .dxil = embedded.triangle_vert_dxil },
+    .code = .{ .spirv = embedded.default_vert, .dxil = embedded.default_vert_dxil },
 };
 const fragment_source = shader.Source{
-    .name = "triangle.frag",
+    .name = "default.frag",
     .entry = "fragmentMain",
     .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
-    .code = .{ .spirv = embedded.triangle_frag, .dxil = embedded.triangle_frag_dxil },
+    .code = .{ .spirv = embedded.default_frag, .dxil = embedded.default_frag_dxil },
     // The fragment shader samples one texture, which takes one sampler slot.
     .resources = .{ .samplers = 1 },
 };
@@ -95,7 +95,7 @@ pub const SpriteBatch = struct {
         vb_desc.pitch = @sizeOf(Vertex);
         vb_desc.input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
-        // Locations must match the [vk::location] values in shaders/triangle.slang.
+        // Locations must match the [vk::location] values in shaders/default.slang.
         var vb_attrs = [_]c.SDL_GPUVertexAttribute{
             .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "pos") },
             .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },

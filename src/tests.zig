@@ -6,4 +6,5 @@ test {
     _ = @import("engine/hash_map.zig");
     _ = @import("engine/assets.zig");
     _ = @import("engine/math.zig");
+    _ = @import("engine/view.zig");
 }

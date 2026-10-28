@@ -36,7 +36,7 @@ pub const Renderer = struct {
         _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
         // Ask for DXIL only when this build embeds it (-Ddxil=true). Without it the device would
         // accept a format the game has no code for.
-        if (embedded.triangle_vert_dxil.len != 0) {
+        if (embedded.default_vert_dxil.len != 0) {
             _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, true);
         }
         _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, gpu_debug);

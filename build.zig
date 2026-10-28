@@ -80,23 +80,23 @@ fn addCglm(b: *std.Build, module: *std.Build.Module) void {
     }
 }
 
-/// One entry point of shaders/triangle.slang. To add a shader, add a row here, then declare a
+/// One entry point of shaders/default.slang. To add a shader, add a row here, then declare a
 /// `shader.Source` in the code that uses it.
 const ShaderEntry = struct {
     /// Function name in the Slang source.
     entry: []const u8,
     /// Stage name that slangc expects: "vertex" or "fragment".
     stage: []const u8,
-    /// Output file name without an extension, such as "triangle.vert".
+    /// Output file name without an extension, such as "default.vert".
     file: []const u8,
-    /// Declaration name in the generated `embedded_shaders` module, such as "triangle_vert".
+    /// Declaration name in the generated `embedded_shaders` module, such as "default_vert".
     /// A target's `suffix` is added to this name, so each format gets its own declaration.
     decl: []const u8,
 };
 
 const shader_entries = [_]ShaderEntry{
-    .{ .entry = "vertexMain", .stage = "vertex", .file = "triangle.vert", .decl = "triangle_vert" },
-    .{ .entry = "fragmentMain", .stage = "fragment", .file = "triangle.frag", .decl = "triangle_frag" },
+    .{ .entry = "vertexMain", .stage = "vertex", .file = "default.vert", .decl = "default_vert" },
+    .{ .entry = "fragmentMain", .stage = "fragment", .file = "default.frag", .decl = "default_frag" },
 };
 
 /// One output format for every shader entry point.
@@ -168,7 +168,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "my-game",
+        .name = "Semkootru",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -208,7 +208,7 @@ pub fn build(b: *std.Build) void {
                 compile.addArgs(t.args);
                 if (t.define) |d| compile.addArg(d);
                 compile.addArgs(&.{ "-entry", s.entry, "-stage", s.stage });
-                compile.addFileArg(b.path("shaders/triangle.slang"));
+                compile.addFileArg(b.path("shaders/default.slang"));
                 compile.addArg("-o");
                 const out = compile.addOutputFileArg(s.file ++ "." ++ t.ext);
                 _ = shader_files.addCopyFile(out, s.file ++ "." ++ t.ext);

@@ -4,7 +4,7 @@
 const engine = @import("../engine/engine.zig");
 
 /// Window title. The engine appends play stats to it.
-pub const title: [:0]const u8 = "My Game";
+pub const title: [:0]const u8 = "Semkootru";
 pub const window_w: c_int = 960;
 pub const window_h: c_int = 540;
 /// The smallest view the art is designed for, in native pixels.

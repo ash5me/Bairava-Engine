@@ -4,7 +4,7 @@ A 2D pixel-art game engine in progress, written in Zig. It draws a tile map at a
 
 ⚠️ The engine is not stable for production use (yet).
 
-The package is named `zig_sdl3_slang` in `build.zig.zon`, the executable is `my-game`, and the window title is `My Game`.
+The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`, and the window title is `Semkootru`.
 
 **Status:** early prototype. The rendering path works end to end, and one animated character walks a tile map while the camera follows. Gameplay systems such as entities, collision, audio, and UI have not been started.
 
@@ -43,7 +43,7 @@ zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
 zig build test                     # run unit tests (no GPU or SDL needed)
 ```
 
-`zig build` installs `zig-out/bin/my-game(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written.
+`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written.
 
 ## Debugging
 
@@ -102,7 +102,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   ├── root.zig               Unused template file from `zig init`
 │   └── tests.zig              Test root for `zig build test`. Pure modules only: string, hash_map, assets, math.
 ├── shaders/
-│   └── triangle.slang         Sprite vertex and fragment shaders (the name is legacy). Compiled once per target, and `-DDXIL_TARGET` selects the D3D12 sampler layout
+│   └── default.slang          Sprite vertex and fragment shaders. Compiled once per target, and `-DDXIL_TARGET` selects the D3D12 sampler layout
 ├── assets/
 │   ├── tile.png               Tile texture used by the map
 │   ├── warrior.png            Original warrior artwork (kept unchanged)
@@ -161,7 +161,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard state, SDL_GPU API, file loading, timing, memory | zlib |
 | stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8 | Public domain or MIT |
 | cglm | 0.9.7, vendored in `vendor/cglm/`: headers, the 46 C sources its CMake lists, and its license | Vector and matrix math, the pixel projection, and transforms | MIT |
-| Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/triangle.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
+| Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
 | Direct3D 12 | System driver, selected by SDL_GPU | Optional GPU backend that runs the DXIL shaders | Driver, not bundled |
 | PowerShell and System.Drawing | Windows | `scripts/key_checker.ps1` | Windows built-in |
@@ -260,7 +260,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add input actions.** Add a name to `Action` in `game/controls.zig`, bind its keys in `keysFor`, and query it with `controls.held`, `controls.pressed`, or `controls.released`. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input.zig` and map it to its SDL scancode.
 
-**Add a shader or pipeline.** Add the entry point to `shaders/triangle.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `sprite.zig` with the stage, resource counts, and embedded code for both formats (for example `.code = .{ .spirv = embedded.triangle_vert, .dxil = embedded.triangle_vert_dxil }`; the DXIL slice is empty unless the build used `-Ddxil=true`). If the shader samples a texture, follow the `DXIL_TARGET` split in `triangle.slang`, since Vulkan and D3D12 declare samplers differently. Load it with `shader.load` and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
+**Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `sprite.zig` with the stage, resource counts, and embedded code for both formats (for example `.code = .{ .spirv = embedded.default_vert, .dxil = embedded.default_vert_dxil }`; the DXIL slice is empty unless the build used `-Ddxil=true`). If the shader samples a texture, follow the `DXIL_TARGET` split in `default.slang`, since Vulkan and D3D12 declare samplers differently. Load it with `shader.load` and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
 
 **Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
 
@@ -276,9 +276,9 @@ These are the natural extension points. Each one reuses existing code.
 
 3. **Fixed: a minimized window spun the CPU.** A zero-size window, or a frame with no swapchain, used to restart the loop without waiting. Both cases now sleep for 16 ms first, so a minimized window idles.
 
-4. **Vulkan is the default backend. Direct3D 12 is opt-in, and Metal isn't supported.** SPIR-V shaders are always built, and the renderer always sets Vulkan 1.2 options. `zig build -Ddxil=true` also compiles DXIL (`sm_6_0`) and tells the device to accept it. `shader.pickFormat` then takes the first format the device accepts, with SPIR-V ahead of DXIL. Metal needs MSL shaders, which don't exist yet. `triangle.slang` declares its sampler two ways: a combined `Sampler2D` at `[vk::binding(0, 2)]` for Vulkan, and separate `t0` and `s0` registers in space 2 for DXIL, chosen by the `-DDXIL_TARGET` define that `build.zig` passes. Vertex locations are explicit and match the attributes in `sprite.zig`.
+4. **Vulkan is the default backend. Direct3D 12 is opt-in, and Metal isn't supported.** SPIR-V shaders are always built, and the renderer always sets Vulkan 1.2 options. `zig build -Ddxil=true` also compiles DXIL (`sm_6_0`) and tells the device to accept it. `shader.pickFormat` then takes the first format the device accepts, with SPIR-V ahead of DXIL. Metal needs MSL shaders, which don't exist yet. `default.slang` declares its sampler two ways: a combined `Sampler2D` at `[vk::binding(0, 2)]` for Vulkan, and separate `t0` and `s0` registers in space 2 for DXIL, chosen by the `-DDXIL_TARGET` define that `build.zig` passes. Vertex locations are explicit and match the attributes in `sprite.zig`.
 
-5. **Names don't match.** The package is `zig_sdl3_slang`, the executable is `my-game`, the window is `My Game`, and the sprite shader is `triangle.slang`. Choose one scheme and rename.
+5. **Fixed: names didn't match.** The package is `Bairava` in `build.zig.zon`, the executable and window are `Semkootru`, and the sprite shader is `default.slang`.
 
 6. **`root.zig` is template code.** Its functions and test are not used by the game, and `zig build test` runs `src/tests.zig`, which doesn't import it. Delete the file or move real tests into it.
 

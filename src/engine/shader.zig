@@ -53,7 +53,7 @@ pub const Code = struct {
 /// One shader program: its name for error messages, its compiled code, the stage it runs in, and
 /// the resources it reads. Declare these as constants beside the code that binds them.
 pub const Source = struct {
-    /// Name for error messages, such as "triangle.vert".
+    /// Name for error messages, such as "default.vert".
     name: []const u8,
     /// The entry function's name in the Slang source, such as "vertexMain".
     entry: [:0]const u8,
