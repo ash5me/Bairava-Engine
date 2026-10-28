@@ -11,8 +11,11 @@ pub const Texture = struct {
     sampler: *c.SDL_GPUSampler,
     width: u32,
     height: u32,
+    /// Signaled by the GPU once the upload copy is finished. Null for targets, which have nothing to upload.
+    upload_fence: ?*c.SDL_GPUFence = null,
 
-    /// Uploads tightly packed RGBA8 pixels (4 bytes per pixel, row 0 at the top).
+    /// Uploads tightly packed RGBA8 pixels (4 bytes per pixel, row 0 at the top). The copy is queued,
+    /// and this returns without waiting for the GPU. `isReady` says when the texture can be sampled.
     pub fn initRgba8(device: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const u8) Texture {
         const expected_len = @as(usize, width) * height * 4;
         logging.assert(pixels.len == expected_len, @src(), "pixel buffer is {d} bytes, expected {d} for a {d}x{d} texture", .{ pixels.len, expected_len, width, height });
@@ -58,10 +61,12 @@ pub const Texture = struct {
         };
         c.SDL_UploadToGPUTexture(copy_pass, &src, &region, false);
         c.SDL_EndGPUCopyPass(copy_pass);
-        if (!c.SDL_SubmitGPUCommandBuffer(cmd)) {
-            std.debug.panic("SDL_SubmitGPUCommandBuffer failed: {s}", .{c.SDL_GetError()});
-        }
-        _ = c.SDL_WaitForGPUIdle(device);
+        // Submit without waiting. The fence tells isReady when the copy is done. The transfer buffer is
+        // released when this function returns, which is safe because SDL frees a released buffer only
+        // after the GPU has finished with it.
+        const fence = c.SDL_SubmitGPUCommandBufferAndAcquireFence(cmd) orelse {
+            std.debug.panic("SDL_SubmitGPUCommandBufferAndAcquireFence failed: {s}", .{c.SDL_GetError()});
+        };
 
         return .{
             .device = device,
@@ -69,6 +74,7 @@ pub const Texture = struct {
             .sampler = createNearestSampler(device),
             .width = width,
             .height = height,
+            .upload_fence = fence,
         };
     }
 
@@ -89,8 +95,16 @@ pub const Texture = struct {
         return .{ .texture = self.texture, .sampler = self.sampler };
     }
 
+    /// True once the GPU has finished uploading the texture, so sampling it is safe. Targets have no
+    /// upload, so they are always ready.
+    pub fn isReady(self: *const Texture) bool {
+        const fence = self.upload_fence orelse return true;
+        return c.SDL_QueryGPUFence(self.device, fence);
+    }
+
     /// Releases GPU resources. Call before the device is destroyed.
     pub fn deinit(self: *Texture) void {
+        if (self.upload_fence) |fence| c.SDL_ReleaseGPUFence(self.device, fence);
         c.SDL_ReleaseGPUSampler(self.device, self.sampler);
         c.SDL_ReleaseGPUTexture(self.device, self.texture);
     }

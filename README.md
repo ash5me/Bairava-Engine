@@ -65,7 +65,7 @@ Assertions check invariants. A failed one prints the file and line, then panics 
 | Esc | Quit |
 | F11 | Toggle fullscreen |
 | I | Toggle integer scale |
-| Left mouse button | Captured but not used yet (see Known issues) |
+| Left mouse button | Captured as `Input.left_clicked`, but no action uses it yet. Clicks don't record a position (see Known issues, item 1). |
 
 Keys are bound to named actions in `game/controls.zig`.
 
@@ -186,13 +186,13 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 
 **Textures and images**
 - PNG decoding through stb_image, converted to RGBA8.
-- Texture upload through a transfer buffer.
+- Texture upload through a transfer buffer, queued without waiting for the GPU.
 - Render-target textures in the swapchain format.
 - Nearest-neighbor sampler with clamp-to-edge addressing.
 - Assets installed beside the executable and loaded through `SDL_GetBasePath`, so the game runs from any directory.
 
 **2D rendering**
-- Sprite batching: quads buffered per frame, one draw call per run of the same texture, alpha blending, tint, and source rectangles.
+- Sprite batching: quads buffered per frame, one draw call per run of the same texture, alpha blending, tint, source rectangles, and no fixed sprite or texture-switch limit.
 - Tile world rendering with view culling and a one-tile margin.
 - Camera follow with edge clamping, pixel snapping, and centering when the world is smaller than the view.
 - The two-pass pixel-art pipeline: native target, then stretch to the window.
@@ -226,13 +226,13 @@ These estimates are rough. They measure how close each area is to something usab
 | Gameplay | `game/` | Prototype | 15% | Player with directional walk animation, one test level, and movement and quit actions bound in `game/controls.zig`. No entities, rules, or level files. |
 | Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Asks the device for DXIL only when the build embeds it. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, Metal support, pass helpers. |
 | Shaders | `shader.zig` | Basic | 55% | Picks the first shader format the device accepts (SPIR-V, then DXIL) and creates GPU shaders from code embedded at build time. DXIL is optional (`-Ddxil=true`). Per-shader entry points and resource counts are declared in `sprite.zig`. Missing: MSL, reflection. Uniform buffer count is supported but unused. |
-| Textures | `texture.zig` | Solid base | 70% | Synchronous upload that waits for GPU idle. Missing: atlases, async uploads, unload and reload. |
+| Textures | `texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: atlases, unload and reload. |
 | Images | `image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
 | Math | `math.zig` | Functional | 60% | cglm wrappers: identity, mul, invert, transpose, translate, scale, rotate, ortho, perspective, look-at, point and vector transforms, 3D vector helpers, and quaternions (slerp, look rotation, billboard). 18 tests. Only the 2D parts are used so far. |
 | Strings | `string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
 | Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, checked against `std.StringHashMap`. Missing: removal. |
 | Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. Missing: loading, caching, unloading. |
-| Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Missing: index buffer, rotation, flip, origin, alpha tint, z-order, growable capacity. |
+| Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Storage grows with each frame. Missing: index buffer, rotation, flip, origin, alpha tint, z-order. |
 | Camera | `camera.zig` | Functional | 50% | Follow, clamp, and pixel snap. Missing: smoothing, dead zone, zoom, shake. |
 | Level | `game/level.zig` | Early | 25% | One uniform layer drawn with culling. No tile data, multiple layers, loading, or collision. |
 | Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but have no position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `src/tests.zig`. |
@@ -282,9 +282,9 @@ These are the natural extension points. Each one reuses existing code.
 
 6. **`root.zig` is template code.** Its functions and test are not used by the game, and `zig build test` runs `src/tests.zig`, which doesn't import it. Delete the file or move real tests into it.
 
-7. **Texture uploads block.** `Texture.initRgba8` waits for the GPU to go idle. That is fine at load time, but it must not run every frame.
+7. **Fixed: texture uploads blocked.** `Texture.initRgba8` used to wait for the GPU to go idle. It now queues the copy and returns. `Texture.isReady` reports when the copy finishes, and `SpriteBatch.draw` skips a texture until then, so a texture can be loaded at any time.
 
-8. **Fixed batch limits.** `SpriteBatch` panics above 8192 sprites or 256 texture switches in one frame. These limits fail loudly on purpose, but they will need revisiting once there are many textures or large levels.
+8. **Fixed: sprite batches had hard limits.** `SpriteBatch` used to panic above 8192 sprites or 256 texture switches in one frame. Its vertex storage, batch list, and GPU buffers now double when they fill. The one ceiling left is SDL's 32-bit buffer size, about 25 million sprites in one frame.
 
 9. **Fixed: the package file list omitted build inputs.** `.paths` in `build.zig.zon` now includes `shaders` and `vendor`, which the build needs. `assets` stays out, since the build doesn't read it.
 
@@ -314,11 +314,11 @@ These are the natural extension points. Each one reuses existing code.
 ### Phase 3: engine infrastructure
 
 - [ ] Texture atlas with packing at build time.
-- [ ] Index buffer for quads (4 vertices instead of 6) and a growable vertex buffer.
+- [ ] Index buffer for quads (4 vertices instead of 6). The vertex buffer already grows.
 - [ ] Sprite flip, rotation, origin, per-sprite alpha, and z-order.
 - [ ] Entity system: an array of structs first, ECS later if the number of entity types requires it.
 - [ ] Asset manager with caching. Executable-relative paths already work.
-- [ ] Asynchronous texture uploads.
+- [x] Asynchronous texture uploads.
 - [x] Shader embedding at build time.
 - [ ] Audio through SDL3 audio streams.
 - [ ] Text rendering and basic UI widgets.

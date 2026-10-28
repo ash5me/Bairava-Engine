@@ -7,6 +7,8 @@ const std = @import("std");
 const c = @import("engine/sdl.zig").c;
 const input = @import("engine/input.zig");
 const renderer = @import("engine/renderer.zig");
+const sprite = @import("engine/sprite.zig");
+const Texture = @import("engine/texture.zig").Texture;
 
 test {
     _ = @import("engine/string.zig");
@@ -268,4 +270,105 @@ test "colorTargetInfo leaves the fields it does not use at zero" {
     try std.testing.expectEqual(@as(u32, 0), info.layer_or_depth_plane);
     try std.testing.expect(info.resolve_texture == null);
     try std.testing.expect(!info.cycle);
+}
+
+/// A texture for the sprite tests. Sprites read only its size, so the GPU handles stay undefined and
+/// are never used.
+fn testTexture(width: u32, height: u32) Texture {
+    return .{ .device = undefined, .texture = undefined, .sampler = undefined, .width = width, .height = height };
+}
+
+/// A sprite batch with no GPU objects. `begin` and `drawSprite` use only the CPU-side fields, so the
+/// tests can fill it without a device. Its storage starts empty and grows on the heap.
+fn testBatch(no_vertices: *[0]sprite.Vertex, no_batches: *[0]sprite.Batch) sprite.SpriteBatch {
+    return .{
+        .device = undefined,
+        .pipeline = undefined,
+        .vertex_buffer = undefined,
+        .vb_binding = undefined,
+        .upload_buffer = undefined,
+        .vertices = no_vertices,
+        .batches = no_batches,
+    };
+}
+
+/// Frees the storage a test batch grew into. A batch that never grew still points at the empty
+/// arrays on the test's stack, which have length 0, so they are skipped.
+fn freeTestBatch(batch: *sprite.SpriteBatch) void {
+    if (batch.vertices.len != 0) std.heap.page_allocator.free(batch.vertices);
+    if (batch.batches.len != 0) std.heap.page_allocator.free(batch.batches);
+}
+
+test "drawSprite keeps every sprite of a frame, past the old 8192 limit" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    const count: u32 = 9000;
+    var i: u32 = 0;
+    while (i < count) : (i += 1) {
+        // Each sprite gets its own tint, so the last vertices can be checked against their sprite.
+        const tint = @as(f32, @floatFromInt(i)) / 10000.0;
+        batch.drawSprite(&tex, quad, quad, .{ tint, tint, tint });
+    }
+    try std.testing.expectEqual(count, batch.sprite_count);
+    try std.testing.expectEqual(count * 6, batch.vertex_count);
+    const last_tint = @as(f32, @floatFromInt(count - 1)) / 10000.0;
+    try std.testing.expectApproxEqAbs(last_tint, batch.vertices[batch.vertex_count - 1].color[0], 1e-6);
+}
+
+test "drawSprite batches past the old 256 texture-switch limit" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex_a = testTexture(16, 16);
+    const tex_b = testTexture(32, 32);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    var i: u32 = 0;
+    while (i < 600) : (i += 1) {
+        // Alternating textures makes every sprite start a new batch.
+        const tex = if (i % 2 == 0) &tex_a else &tex_b;
+        batch.drawSprite(tex, quad, quad, .{ 1, 1, 1 });
+    }
+    try std.testing.expectEqual(@as(u32, 600), batch.batch_count);
+    var b: u32 = 0;
+    while (b < 600) : (b += 1) {
+        try std.testing.expectEqual(b * 6, batch.batches[b].first_vertex);
+        try std.testing.expectEqual(@as(u32, 6), batch.batches[b].vertex_count);
+    }
+    try std.testing.expect(batch.batches[599].texture == &tex_b);
+}
+
+test "begin starts a new frame but keeps the storage a frame grew" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    var i: u32 = 0;
+    while (i < 3000) : (i += 1) batch.drawSprite(&tex, quad, quad, .{ 1, 1, 1 });
+    const grown = batch.vertices.len;
+    try std.testing.expect(grown >= 3000 * 6);
+
+    // A new frame reuses the grown storage instead of shrinking and growing again.
+    batch.begin(320, 180);
+    try std.testing.expectEqual(@as(u32, 0), batch.sprite_count);
+    try std.testing.expectEqual(@as(u32, 0), batch.batch_count);
+    try std.testing.expectEqual(grown, batch.vertices.len);
+}
+
+test "a texture with no upload is ready at once" {
+    // Only the fence-free path is tested here. Waiting on a real upload needs a GPU.
+    const tex = testTexture(16, 16);
+    try std.testing.expect(tex.isReady());
 }
