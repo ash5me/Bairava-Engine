@@ -21,6 +21,8 @@ pub const Key = @import("input.zig").Key;
 pub const Rect = @import("sprite.zig").Rect;
 pub const SpriteBatch = @import("sprite.zig").SpriteBatch;
 pub const Texture = @import("texture.zig").Texture;
+/// Maps window, view, and world coordinates. `Context.mouseWorld` uses it.
+pub const view = @import("view.zig");
 /// Vector and matrix math, backed by cglm.
 pub const math = @import("math.zig");
 /// Validated fixed-capacity strings for names and paths.
@@ -71,6 +73,18 @@ pub const Context = struct {
     running: bool = true,
     /// How the native view is fitted to the window. The game may change this at any time.
     scale_mode: ScaleMode = .fit,
+    /// Where the native view was drawn in the window, from the last frame. Mouse positions are
+    /// mapped through this, so they match what the player saw.
+    layout: view.Layout,
+    /// The camera as the game last drew with it. Read it through `mouseWorld`.
+    camera: *const Camera,
+
+    /// The mouse position in world pixels, as the player sees it. It is the cursor's place in the
+    /// view drawn last frame, plus that frame's camera position. Use this in `update` rather than
+    /// `input.mouse_x`, which is in window points.
+    pub fn mouseWorld(self: *const Context) view.Point {
+        return view.windowToWorld(self.layout, self.camera, .{ .x = self.input.mouse_x, .y = self.input.mouse_y });
+    }
 
     /// Loads an image and uploads it as a texture. Panics if the file is missing or can't be
     /// decoded. Paths are relative to the working directory.
@@ -163,7 +177,14 @@ pub fn run(comptime Game: type, config: Config) void {
     // The game sets the world size every frame, so the camera starts without one.
     var cam = Camera{ .view_w = native_wf, .view_h = native_hf, .world_w = 0, .world_h = 0 };
 
-    var ctx = Context{ .device = gpu.device, .input = &input_state, .scale_mode = config.scale_mode };
+    // Before the first frame is drawn, assume the view fills the window at its native size.
+    var ctx = Context{
+        .device = gpu.device,
+        .input = &input_state,
+        .scale_mode = config.scale_mode,
+        .layout = .{ .dst_w = native_wf, .dst_h = native_hf, .view_w = native_wf, .view_h = native_hf },
+        .camera = &cam,
+    };
     var game = Game.init(&ctx);
     defer game.deinit();
     var last_mode = ctx.scale_mode;
@@ -295,6 +316,16 @@ pub fn run(comptime Game: type, config: Config) void {
                 .h = content_h,
             };
         }
+        // Record where the view landed, so the next update maps mouse positions with the same rectangle.
+        ctx.layout = .{
+            .pixel_density = c.SDL_GetWindowPixelDensity(window),
+            .dst_x = dst_rect.x,
+            .dst_y = dst_rect.y,
+            .dst_w = dst_rect.w,
+            .dst_h = dst_rect.h,
+            .view_w = view_wf,
+            .view_h = view_hf,
+        };
         const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
         screen_batch.begin(win_wf, win_hf);
         screen_batch.drawSprite(&target, view_rect, dst_rect, white);

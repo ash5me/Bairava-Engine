@@ -86,6 +86,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── sprite.zig         Batched textured quads, sprite pipeline, vertex upload
 │   │   ├── camera.zig         View position, follow target, edge clamping
 │   │   ├── input.zig          Key enum, held, pressed, and released state, mouse events
+│   │   ├── view.zig           Window-to-view and view-to-world mapping for the mouse
 │   │   ├── log.zig            Logging and assertions for debugging
 │   │   ├── math.zig           cglm wrappers: projection, transforms, normalization. The only cglm import.
 │   │   ├── string.zig         Validated fixed-capacity Name and Path types
@@ -149,6 +150,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - **Sprite destinations** are in view pixels, so world positions have the camera subtracted. `SpriteBatch` multiplies them by the projection from `math.ortho2d`, which gives normalized device coordinates with y pointing up.
 - **Sprite sources** are in texels. `drawSprite` converts them to 0 to 1 UV coordinates.
 - **Tint** is an RGB multiplier. There is no alpha tint.
+- **Mouse** positions from SDL are in window points. `Context.mouseWorld` converts them to world pixels, using the layout and camera of the last frame drawn.
 
 ## Libraries and tools
 
@@ -196,6 +198,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - cglm for vectors and matrices, wrapped in `math.zig`. The sprite projection and diagonal normalization use it.
 - Validated names and paths (`string.zig`), a hash map keyed by names (`hash_map.zig`), and an asset table that gives each name a dense id (`assets.zig`).
 - `zig build test` runs unit tests for these modules without SDL or a GPU.
+- Mouse mapping from window points to view and world pixels in `view.zig`, through `Context.mouseWorld`.
 
 **Gameplay**
 - Player movement with arrow keys or WASD, normalized diagonals, and map clamping.
@@ -228,7 +231,8 @@ These estimates are rough. They measure how close each area is to something usab
 | Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Missing: index buffer, rotation, flip, origin, alpha tint, z-order, growable capacity. |
 | Camera | `camera.zig` | Functional | 50% | Follow, clamp, and pixel snap. Missing: smoothing, dead zone, zoom, shake. |
 | Level | `game/level.zig` | Early | 25% | One uniform layer drawn with culling. No tile data, multiple layers, loading, or collision. |
-| Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but not usable yet, and mouse position is in window space (see Known issues). No gamepad or text input. |
+| Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but have no position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. |
+| View mapping | `view.zig` | Functional | 60% | Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math, tested without a window. |
 | Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, cglm, shaders, the run step, and the test step. Missing: asset install step, other shader targets. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
 | Tests | `src/tests.zig` | Functional | 40% | Unit tests for the pure modules, run by `zig build test`. Missing: tests for SDL-facing code. |
@@ -262,7 +266,7 @@ These are the natural extension points. Each one reuses existing code.
 
 ## Known issues
 
-1. **Mouse coordinates are in the wrong space for gameplay.** `motion.x` and `motion.y` are window-space values, but the render size comes from `SDL_GetWindowSizeInPixels`. On high-DPI displays these differ. Convert window coordinates to pixels, divide by the scale to get view pixels, then add the camera position to get world coordinates.
+1. **Fixed: mouse coordinates were in window points, not world pixels.** `Context.mouseWorld` converts the mouse position from points to pixels, maps it through the rectangle the view was drawn into (which covers the scale, centering, and rounding), and adds the camera position. Both the layout and the camera come from the last frame drawn, so an update sees what the player saw. Clicks don't store a position yet, so a click handler reads the cursor's last known position.
 
 2. **Asset and shader paths depend on the working directory.** Running the executable from another folder panics on the first load. The asset paths are listed in `game/config.zig`, and the shader paths are hardcoded in `engine/sprite.zig`. Both are relative to the working directory. Resolve paths relative to the executable, or embed the compiled shaders.
 
@@ -332,7 +336,7 @@ These are the natural extension points. Each one reuses existing code.
 - Paths are relative to the project root; run `zig build run` from the repository root so `assets/warrior_16x32.png` can be found.
 - `assets/warrior.png` is the original source art; the game loads the prepared 80×128 `assets/warrior_16x32.png` sheet instead.
 - Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
-- `math.zig`, `string.zig`, `hash_map.zig`, and `assets.zig` don't import SDL or `log.zig`, so `zig build test` runs without a GPU. Keep new pure code the same way when you can.
+- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, and `view.zig` don't import SDL or `log.zig`, so `zig build test` runs without a GPU. Keep new pure code the same way when you can.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
