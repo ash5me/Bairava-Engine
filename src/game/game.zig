@@ -70,6 +70,9 @@ pub const Game = struct {
                 .integer => .fit,
             };
         }
+        if (controls.pressed(input, .zoom_in)) ctx.zoomBy(config.zoom_step);
+        if (controls.pressed(input, .zoom_out)) ctx.zoomBy(1.0 / config.zoom_step);
+        if (controls.pressed(input, .zoom_reset)) ctx.resetZoom();
 
         // Each movement action contributes one unit on its axis.
         var dx: f32 = 0;

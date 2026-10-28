@@ -11,6 +11,9 @@ pub const Action = enum {
     move_down,
     quit,
     toggle_scale,
+    zoom_in,
+    zoom_out,
+    zoom_reset,
 };
 
 // An action is active when any of its keys is.
@@ -20,6 +23,9 @@ const move_up_keys = [_]engine.Key{ .up, .w };
 const move_down_keys = [_]engine.Key{ .down, .s };
 const quit_keys = [_]engine.Key{.escape};
 const toggle_scale_keys = [_]engine.Key{.i};
+const zoom_in_keys = [_]engine.Key{ .equal, .keypad_plus };
+const zoom_out_keys = [_]engine.Key{ .minus, .keypad_minus };
+const zoom_reset_keys = [_]engine.Key{.zero};
 
 /// The keys bound to an action. The switch has no default, so an action without a binding
 /// is a compile error.
@@ -31,6 +37,9 @@ pub fn keysFor(action: Action) []const engine.Key {
         .move_down => &move_down_keys,
         .quit => &quit_keys,
         .toggle_scale => &toggle_scale_keys,
+        .zoom_in => &zoom_in_keys,
+        .zoom_out => &zoom_out_keys,
+        .zoom_reset => &zoom_reset_keys,
     };
 }
 

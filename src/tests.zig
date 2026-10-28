@@ -41,6 +41,11 @@ const key_scancodes = [_]struct { key: Key, code: c.SDL_Scancode }{
     .{ .key = .s, .code = c.SDL_SCANCODE_S },
     .{ .key = .d, .code = c.SDL_SCANCODE_D },
     .{ .key = .i, .code = c.SDL_SCANCODE_I },
+    .{ .key = .equal, .code = c.SDL_SCANCODE_EQUALS },
+    .{ .key = .minus, .code = c.SDL_SCANCODE_MINUS },
+    .{ .key = .zero, .code = c.SDL_SCANCODE_0 },
+    .{ .key = .keypad_plus, .code = c.SDL_SCANCODE_KP_PLUS },
+    .{ .key = .keypad_minus, .code = c.SDL_SCANCODE_KP_MINUS },
 };
 
 /// A key event as SDL fills one in. `repeat` marks an auto-repeated key-down.
@@ -642,6 +647,59 @@ test "a rate of zero snaps the camera to its target" {
     cam.follow(0, 0);
     cam.followSmooth(500, 500, 1.0 / 60.0, 0);
     try std.testing.expectEqual(@as(f32, 480), cam.x);
+}
+
+test "a zoomed-in view is clamped inside the world at its smaller size" {
+    // At zoom 2 the view is 160x90 in a 320x180 world, so its corner can reach at most (160, 90).
+    var cam = camera.Camera{ .view_w = 160, .view_h = 90, .world_w = 320, .world_h = 180 };
+    cam.follow(300, 170);
+    try std.testing.expectEqual(@as(f32, 160), cam.x);
+    try std.testing.expectEqual(@as(f32, 90), cam.y);
+}
+
+test "approachZoom eases toward the target and reaches it" {
+    var cam = camera.Camera{ .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    cam.approachZoom(2.0, 1.0 / 60.0, 8);
+    try std.testing.expect(cam.zoom > 1 and cam.zoom < 2);
+    var i: u32 = 0;
+    while (i < 600) : (i += 1) cam.approachZoom(2.0, 1.0 / 60.0, 8);
+    try std.testing.expectApproxEqAbs(@as(f32, 2), cam.zoom, 1e-4);
+}
+
+test "approachZoom covers the same distance at any frame rate" {
+    var slow = camera.Camera{ .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    var fast = slow;
+    var i: u32 = 0;
+    while (i < 30) : (i += 1) slow.approachZoom(3.0, 1.0 / 30.0, 6);
+    i = 0;
+    while (i < 120) : (i += 1) fast.approachZoom(3.0, 1.0 / 120.0, 6);
+    try std.testing.expectApproxEqAbs(slow.zoom, fast.zoom, 1e-3);
+}
+
+test "approachZoom covers the same ratio in the same time at any starting zoom" {
+    // Going from 1x to 2x and from 2x to 4x is the same ratio, so after the same time the second
+    // camera is exactly twice the first.
+    var from_one = camera.Camera{ .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    var from_two = from_one;
+    from_two.zoom = 2.0;
+    var i: u32 = 0;
+    while (i < 10) : (i += 1) {
+        from_one.approachZoom(2.0, 1.0 / 60.0, 8);
+        from_two.approachZoom(4.0, 1.0 / 60.0, 8);
+    }
+    try std.testing.expectApproxEqAbs(from_one.zoom * 2.0, from_two.zoom, 1e-4);
+}
+
+test "a zoom rate of zero snaps to the target" {
+    var cam = camera.Camera{ .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    cam.approachZoom(0.5, 1.0 / 60.0, 0);
+    try std.testing.expectEqual(@as(f32, 0.5), cam.zoom);
+}
+
+test "zoomTarget multiplies the target and keeps it within the bounds" {
+    try std.testing.expectApproxEqAbs(@as(f32, 1.25), camera.Camera.zoomTarget(1.0, 1.25, 0.5, 4.0), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), camera.Camera.zoomTarget(3.5, 1.25, 0.5, 4.0), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), camera.Camera.zoomTarget(0.5, 0.8, 0.5, 4.0), 1e-6);
 }
 
 const walk_clip = animation.Clip{ .row = 2, .frame_count = 4, .frame_time = 0.25, .looping = true };

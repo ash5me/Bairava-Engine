@@ -1,5 +1,5 @@
-//! Maps mouse positions from window space to view and world space. This is pure math with no
-//! SDL, so `zig build test` covers it without a window.
+//! Fits the native view to the window, and maps mouse positions from window space to view and
+//! world space. This is pure math with no SDL, so `zig build test` covers it without a window.
 //!
 //! SDL reports mouse positions in window points. On high-DPI displays one point is several
 //! physical pixels, and the swapchain is sized in pixels. The engine stretches the native view
@@ -31,6 +31,55 @@ pub const Layout = struct {
     view_w: f32,
     view_h: f32,
 };
+
+/// How the native view is fitted to the window.
+pub const ScaleMode = enum {
+    /// Fill the window exactly. The view grows or shrinks with the window, and some native
+    /// pixels cover one more screen pixel than others.
+    fit,
+    /// Use a whole-number multiple of the view, so every native pixel is the same size. The
+    /// result is centered, and any leftover edge pixels are black.
+    integer,
+};
+
+/// How the native view is drawn into the window for one frame.
+pub const Fit = struct {
+    /// Window pixels per view pixel. Integer mode makes this a whole number.
+    scale: f32,
+    /// Size of the view in view pixels, rounded down. The view is stretched over the window at
+    /// `scale`, and its size is the part of the world the window shows.
+    view_w: u32,
+    view_h: u32,
+    /// True when integer mode applies, which means `scale` is a whole number.
+    pixel_perfect: bool,
+};
+
+/// Works out how the view fits the window for one frame. `native_w` and `native_h` are the
+/// reference view size from the game config, and `zoom` multiplies the scale. At zoom 1 the native
+/// size fits the window on its limiting axis, and the other axis shows more of the world when the
+/// window's shape differs. Zoom above 1 shows less of the world at a larger size, and zoom below 1
+/// shows more.
+///
+/// Integer mode uses whole-number scales, so every native pixel is the same size. It applies only
+/// when the window holds at least one native view, and otherwise falls back to fit. Its scale is
+/// the zoomed scale rounded to a whole number, and it is never below 1.
+pub fn chooseFit(win_w: f32, win_h: f32, native_w: f32, native_h: f32, mode: ScaleMode, zoom: f32) Fit {
+    const fit = @min(win_w / native_w, win_h / native_h);
+    const pixel_perfect = mode == .integer and fit >= 1.0;
+    const scale: f32 = if (pixel_perfect)
+        @max(1.0, @round(@floor(fit) * zoom))
+    else
+        fit * zoom;
+    // The 0.01 keeps float rounding from dropping a whole view pixel.
+    const view_w: u32 = @intFromFloat(@floor(win_w / scale + 0.01));
+    const view_h: u32 = @intFromFloat(@floor(win_h / scale + 0.01));
+    return .{
+        .scale = scale,
+        .view_w = view_w,
+        .view_h = view_h,
+        .pixel_perfect = pixel_perfect,
+    };
+}
 
 /// Converts a mouse position in window points to view pixels, with (0, 0) at the view's top-left
 /// corner. Positions outside the view, such as the black bars in integer mode, map to coordinates
@@ -113,4 +162,70 @@ test "windowToWorld adds the camera position to the view position" {
     const p = windowToWorld(layout, &camera, .{ .x = 480, .y = 270 });
     try std.testing.expectApproxEqAbs(@as(f32, 260), p.x, 1e-4);
     try std.testing.expectApproxEqAbs(@as(f32, 140), p.y, 1e-4);
+}
+
+test "chooseFit at zoom 1 gives the view the window always had" {
+    // A 960x540 window is exactly 3x the 320x180 native view.
+    const fit = chooseFit(960, 540, 320, 180, .fit, 1.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 3), fit.scale, 1e-4);
+    try std.testing.expectEqual(@as(u32, 320), fit.view_w);
+    try std.testing.expectEqual(@as(u32, 180), fit.view_h);
+    try std.testing.expect(!fit.pixel_perfect);
+}
+
+test "chooseFit rounds the view size down when the window is not a whole multiple" {
+    // A 1000-pixel window at zoom 1 is 3x, which gives a 333-pixel view.
+    const fit = chooseFit(1000, 540, 320, 180, .fit, 1.0);
+    try std.testing.expectEqual(@as(u32, 333), fit.view_w);
+    try std.testing.expectEqual(@as(u32, 180), fit.view_h);
+}
+
+test "zooming in twice as far doubles the scale and halves the view" {
+    const fit = chooseFit(960, 540, 320, 180, .fit, 2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 6), fit.scale, 1e-4);
+    try std.testing.expectEqual(@as(u32, 160), fit.view_w);
+    try std.testing.expectEqual(@as(u32, 90), fit.view_h);
+}
+
+test "zooming out shows more of the world at a fractional scale" {
+    const fit = chooseFit(960, 540, 320, 180, .fit, 0.5);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.5), fit.scale, 1e-4);
+    try std.testing.expectEqual(@as(u32, 640), fit.view_w);
+    try std.testing.expectEqual(@as(u32, 360), fit.view_h);
+}
+
+test "integer mode keeps the zoomed scale whole" {
+    // 3x at zoom 1.25 is 3.75, which rounds to 4x, so the view is 240x135.
+    const fit = chooseFit(960, 540, 320, 180, .integer, 1.25);
+    try std.testing.expectApproxEqAbs(@as(f32, 4), fit.scale, 1e-4);
+    try std.testing.expectEqual(@as(u32, 240), fit.view_w);
+    try std.testing.expectEqual(@as(u32, 135), fit.view_h);
+    try std.testing.expect(fit.pixel_perfect);
+}
+
+test "integer mode never zooms out past one screen pixel per view pixel" {
+    // A 320x180 window is exactly one native view, so the base scale is 1. A zoom of 0.25 rounds
+    // to 0, which is raised to 1, so the view stays at the native size.
+    const fit = chooseFit(320, 180, 320, 180, .integer, 0.25);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), fit.scale, 1e-4);
+    try std.testing.expectEqual(@as(u32, 320), fit.view_w);
+    try std.testing.expectEqual(@as(u32, 180), fit.view_h);
+    try std.testing.expect(fit.pixel_perfect);
+}
+
+test "integer mode falls back to fit when the window cannot hold one native view" {
+    // 300x170 is smaller than 320x180 on both axes, so the scale is fractional and not whole.
+    const fit = chooseFit(300, 170, 320, 180, .integer, 1.0);
+    try std.testing.expect(!fit.pixel_perfect);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.9375), fit.scale, 1e-4);
+}
+
+test "at zoom 2 the window center maps to the camera's view center" {
+    // The view is 160x90 at zoom 2, stretched over the window. The window center is the view center,
+    // (80, 45), and adding the camera position at (100, 50) gives the world point.
+    const layout = Layout{ .dst_w = 960, .dst_h = 540, .view_w = 160, .view_h = 90 };
+    const camera = Camera{ .x = 100, .y = 50, .view_w = 160, .view_h = 90, .world_w = 640, .world_h = 384 };
+    const p = windowToWorld(layout, &camera, .{ .x = 480, .y = 270 });
+    try std.testing.expectApproxEqAbs(@as(f32, 180), p.x, 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 95), p.y, 1e-4);
 }

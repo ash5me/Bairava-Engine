@@ -13,6 +13,10 @@ pub const Camera = struct {
     /// False until the camera has been placed once. The first placement jumps, so the view doesn't
     /// glide in from the corner of the world when the game starts.
     placed: bool = false,
+    /// The zoom the view is drawn at. 1 is the normal view. Above 1 the view shows less of the
+    /// world, with each pixel larger. Below 1 it shows more. The engine sets `view_w` and `view_h`
+    /// from this each frame, so clamping and culling already follow the zoom.
+    zoom: f32 = 1.0,
 
     /// Centers the view on a world point, clamped so the view never shows past the world edges.
     pub fn follow(self: *Camera, target_x: f32, target_y: f32) void {
@@ -32,6 +36,25 @@ pub const Camera = struct {
         const t = 1.0 - @exp(-rate * dt);
         self.x += (goalX(self, target_x) - self.x) * t;
         self.y += (goalY(self, target_y) - self.y) * t;
+    }
+
+    /// Eases `zoom` toward `target`. The steps are geometric, so going from 1x to 2x takes as long
+    /// as going from 2x to 4x. `rate` is how fast the zoom closes the gap, per second, as in
+    /// `followSmooth`, and a rate of zero or less snaps. `target` must be positive.
+    pub fn approachZoom(self: *Camera, target: f32, dt: f32, rate: f32) void {
+        if (rate <= 0) {
+            self.zoom = target;
+            return;
+        }
+        const t = 1.0 - @exp(-rate * dt);
+        // Moving the logarithm of the zoom keeps each zoom step the same size on screen.
+        self.zoom *= @exp((@log(target) - @log(self.zoom)) * t);
+    }
+
+    /// The zoom target after multiplying `current` by `factor`, kept within `lo` and `hi`. A factor
+    /// above 1 zooms in, and a factor below 1 zooms out.
+    pub fn zoomTarget(current: f32, factor: f32, lo: f32, hi: f32) f32 {
+        return std.math.clamp(current * factor, lo, hi);
     }
 
     /// The screen x of a world x, in whole native pixels from the view's left edge. It rounds once,

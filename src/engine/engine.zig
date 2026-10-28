@@ -21,7 +21,8 @@ pub const Key = @import("input.zig").Key;
 pub const Rect = @import("sprite.zig").Rect;
 pub const SpriteBatch = @import("sprite.zig").SpriteBatch;
 pub const Texture = @import("texture.zig").Texture;
-/// Maps window, view, and world coordinates. `Context.mouseWorld` uses it.
+/// Fits the native view to the window, and maps window, view, and world coordinates.
+/// `Context.mouseWorld` uses the mapping.
 pub const view = @import("view.zig");
 /// Vector and matrix math, backed by cglm.
 pub const math = @import("math.zig");
@@ -38,15 +39,8 @@ pub const animation = @import("animation.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = logging;
 
-/// How the native view is fitted to the window.
-pub const ScaleMode = enum {
-    /// Fill the window exactly. The view grows or shrinks with the window, and some native
-    /// pixels cover one more screen pixel than others.
-    fit,
-    /// Use a whole-number multiple of the view, so every native pixel is the same size. The
-    /// result is centered, and any leftover edge pixels are black.
-    integer,
-};
+/// How the native view is fitted to the window. See `view.chooseFit`.
+pub const ScaleMode = view.ScaleMode;
 
 /// Settings the game passes to `run`.
 pub const Config = struct {
@@ -54,8 +48,9 @@ pub const Config = struct {
     title: [:0]const u8,
     window_w: c_int,
     window_h: c_int,
-    /// The smallest view the game is designed for, in native pixels. Larger windows show
-    /// more of the world instead of bigger pixels.
+    /// The reference view size, in native pixels. At zoom 1 the view fits the window on its
+    /// limiting axis, so the view is exactly this size on that axis. The other axis shows more of
+    /// the world when the window's shape differs.
     native_w: u32,
     native_h: u32,
     /// Background color behind the world, as RGB from 0 to 1.
@@ -64,6 +59,12 @@ pub const Config = struct {
     update_hz: u32,
     /// Scale mode at startup. The game can change it later through `Context`.
     scale_mode: ScaleMode = .fit,
+    /// Smallest and largest zoom the game may ask for. 1 is the normal view, so the bounds must
+    /// include it. Below 1 the view shows more of the world, and above 1 it shows less, larger.
+    zoom_min: f32,
+    zoom_max: f32,
+    /// How fast the camera eases to a new zoom, per second. Zero snaps.
+    zoom_rate: f32,
 };
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
@@ -77,6 +78,12 @@ pub const Context = struct {
     running: bool = true,
     /// How the native view is fitted to the window. The game may change this at any time.
     scale_mode: ScaleMode = .fit,
+    /// The zoom the game is aiming for, where 1 is the normal view. The camera eases toward it each
+    /// frame. Change it with `zoomBy` or `resetZoom`, which keep it within the bounds.
+    zoom_target: f32 = 1.0,
+    /// The zoom bounds from Config. `zoomBy` keeps `zoom_target` between them.
+    zoom_min: f32,
+    zoom_max: f32,
     /// Where the native view was drawn in the window, from the last frame. Mouse positions are
     /// mapped through this, so they match what the player saw.
     layout: view.Layout,
@@ -91,6 +98,17 @@ pub const Context = struct {
     /// `input.mouse_x`, which is in window points.
     pub fn mouseWorld(self: *const Context) view.Point {
         return view.windowToWorld(self.layout, self.camera, .{ .x = self.input.mouse_x, .y = self.input.mouse_y });
+    }
+
+    /// Multiplies the zoom target by `factor`, within the zoom bounds. Use a factor above 1 to zoom
+    /// in and one below 1 to zoom out. The camera eases to the new zoom over the next frames.
+    pub fn zoomBy(self: *Context, factor: f32) void {
+        self.zoom_target = Camera.zoomTarget(self.zoom_target, factor, self.zoom_min, self.zoom_max);
+    }
+
+    /// Aims the zoom back at the normal view.
+    pub fn resetZoom(self: *Context) void {
+        self.zoom_target = 1.0;
     }
 
     /// Loads an image and uploads it as a texture. `relative` is relative to the executable's
@@ -152,14 +170,10 @@ const max_full_path = 1024;
 const white = [3]f32{ 1.0, 1.0, 1.0 };
 const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
 
-/// The scale at which the native view fits the window on its limiting axis.
-fn fitScale(win_w: f32, win_h: f32, native_w: f32, native_h: f32) f32 {
-    return @min(win_w / native_w, win_h / native_h);
-}
-
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 pub fn run(comptime Game: type, config: Config) void {
     logging.assert(config.update_hz > 0, @src(), "update rate must be positive, got {d}", .{config.update_hz});
+    logging.assert(config.zoom_min > 0 and config.zoom_min <= 1.0 and config.zoom_max >= 1.0, @src(), "zoom bounds {d} to {d} must be positive and include 1", .{ config.zoom_min, config.zoom_max });
     const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
 
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
@@ -215,6 +229,8 @@ pub fn run(comptime Game: type, config: Config) void {
         .device = gpu.device,
         .input = &input_state,
         .scale_mode = config.scale_mode,
+        .zoom_min = config.zoom_min,
+        .zoom_max = config.zoom_max,
         .layout = .{ .dst_w = native_wf, .dst_h = native_hf, .view_w = native_wf, .view_h = native_hf },
         .camera = &cam,
         .base_path = base_path,
@@ -287,29 +303,26 @@ pub fn run(comptime Game: type, config: Config) void {
         const win_wf: f32 = @floatFromInt(pw);
         const win_hf: f32 = @floatFromInt(ph);
 
-        // Choose the scale. Integer mode needs the window to hold at least one native view, so the
-        // view never shrinks below its native size. Smaller windows fall back to fit.
-        const fit = fitScale(win_wf, win_hf, native_wf, native_hf);
-        const pixel_perfect = ctx.scale_mode == .integer and fit >= 1.0;
-        const scale: f32 = if (pixel_perfect) @floor(fit) else fit;
-        const mode_label: []const u8 = if (pixel_perfect) "integer" else "fit";
+        // Ease the camera's zoom toward the zoom the game asked for. This runs before the view is
+        // sized, so this frame is drawn at the zoom it has reached.
+        cam.approachZoom(ctx.zoom_target, frame_dt, config.zoom_rate);
 
-        // The view is the part of the world the window shows. The 0.01 keeps float rounding
-        // from dropping a whole native pixel.
-        const view_w: u32 = @intFromFloat(@floor(win_wf / scale + 0.01));
-        const view_h: u32 = @intFromFloat(@floor(win_hf / scale + 0.01));
+        // Choose the scale and the view size for this zoom. The fallback rules for integer mode live
+        // in view.chooseFit.
+        const fit = view.chooseFit(win_wf, win_hf, native_wf, native_hf, ctx.scale_mode, cam.zoom);
+        const mode_label: []const u8 = if (fit.pixel_perfect) "integer" else "fit";
+        const view_w = fit.view_w;
+        const view_h = fit.view_h;
         const view_wf: f32 = @floatFromInt(view_w);
         const view_hf: f32 = @floatFromInt(view_h);
-        logging.assert(view_w >= config.native_w and view_h >= config.native_h, @src(), "view {d}x{d} is smaller than the native view {d}x{d}", .{
-            view_w, view_h, config.native_w, config.native_h,
-        });
+        logging.assert(view_w >= 1 and view_h >= 1, @src(), "view {d}x{d} is empty", .{ view_w, view_h });
 
         if (target.width != view_w or target.height != view_h) {
             // Wait first, because the old target may still be in use by the GPU.
             _ = c.SDL_WaitForGPUIdle(gpu.device);
             target.deinit();
             target = Texture.initTarget(gpu.device, view_w, view_h, format);
-            elog.debug("native target is now {d}x{d} at {d:.2} scale ({s})", .{ view_w, view_h, scale, mode_label });
+            elog.debug("native target is now {d}x{d} at {d:.2} scale ({s})", .{ view_w, view_h, fit.scale, mode_label });
         }
 
         cam.view_w = view_wf;
@@ -341,9 +354,9 @@ pub fn run(comptime Game: type, config: Config) void {
         // Pass 2: stretch the target onto the window. Fit mode covers the whole window. Integer
         // mode covers a centered whole-number multiple of the view, and the edges stay black.
         var dst_rect = Rect{ .x = 0, .y = 0, .w = win_wf, .h = win_hf };
-        if (pixel_perfect) {
-            const content_w = view_wf * scale;
-            const content_h = view_hf * scale;
+        if (fit.pixel_perfect) {
+            const content_w = view_wf * fit.scale;
+            const content_h = view_hf * fit.scale;
             dst_rect = Rect{
                 .x = @floor((win_wf - content_w) / 2.0),
                 .y = @floor((win_hf - content_h) / 2.0),
@@ -371,14 +384,14 @@ pub fn run(comptime Game: type, config: Config) void {
 
         Renderer.endFrame(frame);
 
-        // Window title: FPS, sprite count, draw calls, scale, scale mode, and view size, refreshed a few times a second.
+        // Window title: FPS, sprite count, draw calls, scale, scale mode, zoom, and view size, refreshed a few times a second.
         frames += 1;
         total_frames += 1;
         title_timer += frame_dt;
         if (title_timer >= title_interval) {
             const fps = @as(f32, @floatFromInt(frames)) / title_timer;
-            const title = std.fmt.bufPrintZ(&title_buf, "{s} | {d:.0} fps | {d} sprites | {d} draw calls | {d:.0}% {s} | view {d}x{d}", .{
-                config.title, fps, world_batch.sprite_count, world_batch.draw_calls + screen_batch.draw_calls, scale * 100.0, mode_label, view_w, view_h,
+            const title = std.fmt.bufPrintZ(&title_buf, "{s} | {d:.0} fps | {d} sprites | {d} draw calls | {d:.0}% {s} | zoom {d:.2}x | view {d}x{d}", .{
+                config.title, fps, world_batch.sprite_count, world_batch.draw_calls + screen_batch.draw_calls, fit.scale * 100.0, mode_label, cam.zoom, view_w, view_h,
             }) catch null;
             if (title) |t| _ = c.SDL_SetWindowTitle(window, t.ptr);
             frames = 0;

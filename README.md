@@ -1,6 +1,6 @@
 # Bairava
 
-A 2D pixel-art game engine in progress, written in Zig. It draws a tile map at a fixed native resolution, scales it to any window size with nearest-neighbor filtering, and lets a player walk around while a camera follows. Rendering goes through SDL3's GPU API, with shaders written in Slang and compiled to SPIR-V, and optionally to DXIL for Direct3D 12.
+A 2D pixel-art game engine in progress, written in Zig. It draws a tile map at a fixed native resolution, scales it to any window size with nearest-neighbor filtering, and lets a player walk around while a camera follows and zooms. Rendering goes through SDL3's GPU API, with shaders written in Slang and compiled to SPIR-V, and optionally to DXIL for Direct3D 12.
 
 ⚠️ The engine is not stable for production use (yet).
 
@@ -65,6 +65,9 @@ Assertions check invariants. A failed one prints the file and line, then panics 
 | Esc | Quit |
 | F11 | Toggle fullscreen |
 | I | Toggle integer scale |
+| = or keypad + | Zoom in |
+| - or keypad - | Zoom out |
+| 0 | Reset zoom to 1× |
 | Left mouse button | Captured as `Input.left_clicked`, but no action uses it yet. Clicks don't record a position (see Known issues, item 1). |
 
 Keys are bound to named actions in `game/controls.zig`.
@@ -85,10 +88,10 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── texture.zig        2D textures, render targets, nearest-neighbor sampler
 │   │   ├── image.zig          Decodes image files to RGBA8 with stb_image
 │   │   ├── sprite.zig         Batched textured quads, sprite pipeline, vertex upload
-│   │   ├── camera.zig         View position, follow target, smoothing, edge clamping
+│   │   ├── camera.zig         View position, follow target, smoothing, edge clamping, zoom easing
 │   │   ├── animation.zig      Sprite-sheet clips and the animator that plays them
 │   │   ├── input.zig          Key enum, held, pressed, and released state, mouse events
-│   │   ├── view.zig           Window-to-view and view-to-world mapping for the mouse
+│   │   ├── view.zig           Fits the view to the window for each zoom and scale mode, and maps mouse positions from window to view and world
 │   │   ├── log.zig            Logging and assertions for debugging
 │   │   ├── math.zig           cglm wrappers: projection, transforms, normalization. The only cglm import.
 │   │   ├── string.zig         Validated fixed-capacity Name and Path types
@@ -100,7 +103,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── controls.zig       Named actions and the keys bound to them
 │   │   ├── player.zig         Player position, facing, walk clips, drawing
 │   │   ├── level.zig          Level: loads the tile map, draws one layer at a time with view culling
-│   │   └── config.zig         Title, window and native sizes, level path, background color, update rate, scale mode, camera rate, asset list
+│   │   └── config.zig         Title, window and native sizes, level path, background color, update rate, scale mode, camera rate, zoom limits and step, asset list
 │   ├── root.zig               Unused template file from `zig init`
 │   └── tests.zig              Test root for `zig build test`: every unit test. Pure modules, plus input and renderer, which import SDL. Opens no window.
 ├── shaders/
@@ -129,7 +132,9 @@ world tiles + player ──► pass 1: sprite batch ──► native target (vie
                                                   swapchain (window pixels)
 ```
 
-The native view is never smaller than 320x180 pixels. The window's aspect ratio decides which axis fits exactly: on the limiting axis the view is exactly 320 or 180 pixels, and the other axis shows more of the world. In fit mode the window therefore never has black bars. At the default 960x540 window the scale is exactly 3x, which is the cleanest case for pixel art. Other sizes give fractional scales, so some native pixels cover three screen pixels and others cover four. The default fit mode accepts that trade-off. Integer mode uses a whole-number multiple of the view size, so every native pixel is the same size. The result is centered, and thin black bars fill any leftover space at the edges. Set `scale_mode` in `game/config.zig`, or press I to toggle it. Integer mode needs a window at least as large as one native view. Below that, it falls back to fit.
+At zoom 1 the native view is never smaller than 320x180 pixels. The window's aspect ratio decides which axis fits exactly: on the limiting axis the view is exactly 320 or 180 pixels, and the other axis shows more of the world. In fit mode the window therefore never has black bars. At the default 960x540 window the scale is exactly 3x, which is the cleanest case for pixel art. Other sizes give fractional scales, so some native pixels cover three screen pixels and others cover four. The default fit mode accepts that trade-off. Integer mode uses a whole-number multiple of the view size, so every native pixel is the same size. The result is centered, and thin black bars fill any leftover space at the edges. Set `scale_mode` in `game/config.zig`, or press I to toggle it. Integer mode needs a window at least as large as one native view. Below that, it falls back to fit.
+
+Zoom multiplies the scale, and the view size follows from it. At zoom 2 the scale doubles and the view is half as large, so each world pixel is twice as big. At zoom 0.5 the view is twice as large. The camera, culling, and mouse mapping all read the view size, so they work at any zoom. In integer mode the zoomed scale is rounded to a whole number, never below 1, so every native pixel is still the same size.
 
 ### Frame lifecycle
 
@@ -138,9 +143,9 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 1. Measure the frame time since the last frame, capped at 0.1 s.
 2. Drain the SDL event queue. The engine handles quit requests and F11. Key and mouse events update the held state, and presses, releases, and clicks wait in `Input` for the next update step.
 3. Add the frame time to an accumulator. While it holds at least one fixed step (1/60 s by default), latch the pending input so it reaches exactly one update, run game `update` with `ctx.dt` set to that step, and subtract the step. Stop early if the game sets `running` to false.
-4. Game `update`: read actions from `game/controls.zig`. Quit and scale toggle act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and solid tiles stop the player's feet on each axis, so the player slides along walls.
+4. Game `update`: read actions from `game/controls.zig`. Quit, scale toggle, and zoom act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and solid tiles stop the player's feet on each axis, so the player slides along walls.
 5. Compute `alpha`, the leftover fraction of a step, from 0 to 1. Drawing blends between the last two updates with it, so motion stays smooth when the display rate and update rate differ.
-6. Read the window size in pixels. If either side is zero, the window is minimized, so sleep for 16 ms (`idle_sleep_ms` in `engine/engine.zig`) and start the next frame. Otherwise, choose the scale for the current scale mode (see Rendering model), then compute the view size. The native view is 320×180 in `game/config.zig`.
+6. Read the window size in pixels. If either side is zero, the window is minimized, so sleep for 16 ms (`idle_sleep_ms` in `engine/engine.zig`) and start the next frame. Otherwise, ease the camera's zoom toward the zoom the game asked for, choose the scale for the current scale mode and zoom (see Rendering model), then compute the view size. The reference native view is 320×180 in `game/config.zig`.
 7. If the view size changed, wait for the GPU to go idle and recreate the native target.
 8. Acquire a command buffer and swapchain texture. If either is unavailable, sleep for the same 16 ms and start the next frame, so a minimized window doesn't spin.
 9. Pass 1: game `draw` points the camera at the player's blended center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target.
@@ -154,6 +159,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - **Sprite destinations** are in view pixels, so world positions have the camera subtracted. `SpriteBatch` multiplies them by the projection from `math.ortho2d`, which gives normalized device coordinates with y pointing up.
 - **Sprite sources** are in texels. `drawSprite` converts them to 0 to 1 UV coordinates.
 - **Tint** is an RGB multiplier. There is no alpha tint.
+- **Zoom** changes the view size, not the world units. At zoom 2 the view covers half as many world pixels, so the camera, culling, and mouse mapping need no zoom-specific code.
 - **Mouse** positions from SDL are in window points. `Context.mouseWorld` converts them to world pixels, using the layout and camera of the last frame drawn.
 
 ## Libraries and tools
@@ -198,6 +204,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Sprite batching: quads buffered per frame, one draw call per run of the same texture, alpha blending, tint, source rectangles, and no fixed sprite or texture-switch limit.
 - Tile world rendering with view culling and a one-tile margin.
 - Camera follow with frame-rate-independent smoothing, edge clamping, pixel snapping, and centering when the world is smaller than the view.
+- Camera zoom from keys. Each press multiplies or divides the zoom by 1.25, and the camera eases to the new zoom in logarithmic steps. Zoom changes the view size, so the camera, culling, and mouse mapping work unchanged. Integer mode rounds the zoomed scale to a whole number.
 - The two-pass pixel-art pipeline: native target, then stretch to the window.
 - Fit and integer scale modes, set in `game/config.zig` or toggled with I.
 
@@ -226,7 +233,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Area | File | Status | Est. done | Notes |
 |---|---|---|---|---|
 | Platform | `sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
-| Engine | `engine/engine.zig` | Prototype | 60% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
+| Engine | `engine/engine.zig` | Prototype | 65% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, camera zoom, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
 | Logging and assertions | `engine/log.zig` | Functional | 70% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Missing: log file output, profiling zones. |
 | Gameplay | `game/` | Prototype | 20% | Player with directional walk clips, one level loaded from `assets/maps/level1.txt` and drawn in layers, and movement and quit actions bound in `game/controls.zig`. No entities or rules. |
 | Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Asks the device for DXIL only when the build embeds it. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, Metal support, pass helpers. |
@@ -238,12 +245,12 @@ These estimates are rough. They measure how close each area is to something usab
 | Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, checked against `std.StringHashMap`. Missing: removal. |
 | Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. Missing: loading, caching, unloading. |
 | Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Storage grows with each frame. Missing: index buffer, rotation, flip, origin, alpha tint, z-order. |
-| Camera | `camera.zig` | Functional | 65% | Follow, frame-rate-independent smoothing, clamp, and per-sprite pixel rounding. Missing: zoom, dead zone, shake. |
+| Camera | `camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
 | Animation | `animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
 | Level | `game/level.zig` | Early | 50% | Tile map drawn one layer at a time with culling, in ground, decoration, player, foreground order. Solid tiles block the player. No tile animation. |
 | Tile map | `engine/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |
 | Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but have no position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `src/tests.zig`. |
-| View mapping | `view.zig` | Functional | 60% | Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
+| View mapping | `view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
 | Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, cglm, embedded shaders (SPIR-V, and DXIL with `-Ddxil=true`), the run step, and the test step. Installs `assets/` beside the executable. Missing: a Metal (MSL) shader target. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
 | Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, camera, animation, input, and renderer. Missing: tests that open a window or create a GPU device. |
@@ -263,7 +270,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add collision to an entity.** Give the entity a `tilemap.Box` and call `TileMap.moveBox` with its movement each update, the same way `Player.update` does. Map edges count as solid, so they act as walls.
 
-**Add camera effects.** The camera is a position and a view size. `followSmooth` eases toward the clamped target, and `camera_rate` in `game/config.zig` sets how fast. Shake is an offset applied after `follow`. Zoom changes the native view size that `engine/engine.zig` uses in `fitScale`, and the rest of the pipeline handles any view size. Zooming in also needs the engine's check that the view is never smaller than the native size relaxed, because a zoomed-in view is smaller.
+**Add camera effects.** The camera is a position and a view size. `followSmooth` eases toward the clamped target, and `camera_rate` in `game/config.zig` sets how fast. Shake is an offset applied after `follow`. Zoom is already in place: `Context.zoomBy` and `resetZoom` set the target, `engine/engine.zig` eases `Camera.zoom` toward it each frame, and `view.chooseFit` turns the zoom into a scale and a view size. Drawing and culling read the view size, so they need no changes. To change the limits or the step, edit `zoom_min`, `zoom_max`, `zoom_step`, and `zoom_rate` in `game/config.zig`.
 
 **Add input actions.** Add a name to `Action` in `game/controls.zig`, bind its keys in `keysFor`, and query it with `controls.held`, `controls.pressed`, or `controls.released`. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input.zig` and map it to its SDL scancode.
 
@@ -299,6 +306,8 @@ These are the natural extension points. Each one reuses existing code.
 
 11. **Fixed: `view.zig`'s tests didn't run.** `src/tests.zig` imports `view.zig`, so its five tests run with `zig build test`.
 
+12. **Zoom recreates the native target.** A zoom step that changes the view size rebuilds the native target and waits for the GPU to go idle, as a window resize does. Zoom eases over a fraction of a second, so one zoom can cause several rebuilds. The target is small, so this should be cheap, but it has not been measured. In fit mode a fractional zoom leaves some native pixels one screen pixel larger than others, as fit mode already does. Integer mode rounds zoom to whole scales, so its steps are coarser than fit mode's, and at a base scale of 1 it cannot zoom out at all.
+
 ## Roadmap
 
 ### Phase 1: finish the vertical slice
@@ -315,7 +324,7 @@ These are the natural extension points. Each one reuses existing code.
 - [x] Store tile IDs per cell and per layer, loaded from a simple custom text format. Importing Tiled exports is not started.
 - [x] Tile collision with axis-separated movement.
 - [x] Multiple layers: ground, decoration, and foreground. The player is drawn between decoration and foreground.
-- [ ] Camera zoom. Smoothing and edge clamping are done.
+- [x] Camera zoom. Eased, bounded by `zoom_min` and `zoom_max`, and bound to keys.
 - [x] Advanced animation state and per-entity animation data. Clips and an animator per entity are done. Blending between clips and animation events are not.
 
 ### Phase 3: engine infrastructure
