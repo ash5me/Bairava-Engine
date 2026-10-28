@@ -1,5 +1,6 @@
 //! The player: position, facing, walk animation, and drawing. This is gameplay code. The engine
-//! sees only the sprites it queues, and the tile map that the player collides with.
+//! sees only the sprites it queues, the tile map that the player collides with, and the animation
+//! clips the player plays.
 
 const std = @import("std");
 const engine = @import("../engine/engine.zig");
@@ -16,13 +17,30 @@ const speed: f32 = 80.0;
 /// Time each walk frame is shown, in seconds.
 const walk_frame_seconds: f32 = 0.12;
 
-// Sheet rows, by facing.
-const row_down: u32 = 0;
-const row_right: u32 = 1;
-const row_up: u32 = 2;
-const row_left: u32 = 3;
-
 const white = [3]f32{ 1.0, 1.0, 1.0 };
+
+/// Which way the player faces. Each facing is one row of the sheet, in this order.
+const Facing = enum(u32) {
+    down,
+    right,
+    up,
+    left,
+};
+
+/// The clip for a facing. Walking plays the facing's row, which has five frames, or four for the
+/// back-facing row. Standing still holds the row's first frame.
+fn clipFor(facing: Facing, moving: bool) engine.animation.Clip {
+    const row: u32 = @intFromEnum(facing);
+    if (!moving) {
+        return .{ .row = row, .frame_count = 1, .frame_time = walk_frame_seconds, .looping = true };
+    }
+    return .{
+        .row = row,
+        .frame_count = if (facing == .up) 4 else 5,
+        .frame_time = walk_frame_seconds,
+        .looping = true,
+    };
+}
 
 /// A point in native pixels.
 pub const Point = struct {
@@ -37,18 +55,22 @@ pub const Player = struct {
     /// Top-left corner as of the update before that. Drawing blends between the two.
     prev_x: f32,
     prev_y: f32,
-    /// Sheet row for the current facing.
-    row: u32 = row_down,
-    /// Sheet column to draw this frame.
-    frame: u32 = 0,
-    walk_timer: f32 = 0,
-    walk_frame: u32 = 0,
+    /// Direction the player last moved in. It stays put when the player stops.
+    facing: Facing = .down,
+    /// Plays the walk and idle clips.
+    anim: engine.animation.Animator,
 
     /// A player whose feet fill the given tile. The game starts the player on the map's spawn cell.
     pub fn standingOn(col: u32, row: u32) Player {
         const x = @as(f32, @floatFromInt(col)) * engine.tilemap.tile_px;
         const y = @as(f32, @floatFromInt(row)) * engine.tilemap.tile_px - collide_top;
-        return .{ .x = x, .y = y, .prev_x = x, .prev_y = y };
+        return .{
+            .x = x,
+            .y = y,
+            .prev_x = x,
+            .prev_y = y,
+            .anim = engine.animation.Animator.init(clipFor(.down, false)),
+        };
     }
 
     /// Top-left corner to draw at, blended between the last two updates. `alpha` is 0 at the
@@ -78,30 +100,20 @@ pub const Player = struct {
 
         // Facing comes from the raw input, before normalization. Horizontal wins on diagonals.
         if (dx < 0) {
-            self.row = row_left;
+            self.facing = .left;
         } else if (dx > 0) {
-            self.row = row_right;
+            self.facing = .right;
         } else if (dy < 0) {
-            self.row = row_up;
+            self.facing = .up;
         } else if (dy > 0) {
-            self.row = row_down;
+            self.facing = .down;
         }
 
+        // Switching clips restarts them, so a new walk begins at its first frame. Holding the same
+        // clip keeps its place.
         const moving = dx != 0 or dy != 0;
-        // The back-facing row has four frames; the other rows have five.
-        const frame_count: u32 = if (self.row == row_up) 4 else 5;
-        if (moving) {
-            self.walk_timer += dt;
-            while (self.walk_timer >= walk_frame_seconds) {
-                self.walk_timer -= walk_frame_seconds;
-                self.walk_frame = (self.walk_frame + 1) % frame_count;
-            }
-        } else {
-            self.walk_timer = 0;
-            self.walk_frame = 0;
-        }
-        // After a turn, the walk index can sit past the end of a shorter row, so wrap it.
-        self.frame = if (moving) self.walk_frame % frame_count else 0;
+        self.anim.play(clipFor(self.facing, moving));
+        self.anim.update(dt);
 
         // Diagonal input is normalized so it isn't faster. Cardinal input already has length 1,
         // and zero input stays zero.
@@ -118,8 +130,6 @@ pub const Player = struct {
         self.x = feet.x;
         self.y = feet.y - collide_top;
 
-        // Invariants: the walk index stays inside its row, and the position stays a real number.
-        engine.log.assert(self.frame < frame_count, @src(), "frame {d} is outside its row of {d} frames", .{ self.frame, frame_count });
         engine.log.assert(std.math.isFinite(self.x) and std.math.isFinite(self.y), @src(), "player position is not finite: ({d}, {d})", .{ self.x, self.y });
     }
 
@@ -127,8 +137,8 @@ pub const Player = struct {
     pub fn draw(self: *const Player, batch: *engine.SpriteBatch, sheet: *const engine.Texture, cam: *const engine.Camera, alpha: f32) void {
         const pos = self.drawPosition(alpha);
         const src = engine.Rect{
-            .x = @as(f32, @floatFromInt(self.frame)) * width,
-            .y = @as(f32, @floatFromInt(self.row)) * height,
+            .x = @as(f32, @floatFromInt(self.anim.frame())) * width,
+            .y = @as(f32, @floatFromInt(self.anim.clip.row)) * height,
             .w = width,
             .h = height,
         };

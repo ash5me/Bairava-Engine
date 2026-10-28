@@ -31,8 +31,10 @@ pub const strings = @import("string.zig");
 pub const hash_map = @import("hash_map.zig");
 /// Asset names, ids, and validated paths.
 pub const assets = @import("assets.zig");
-/// Tile maps: the map file format, solid tiles, and box movement against them.
+/// Tile maps: the map file format, layers, solid tiles, and box movement against them.
 pub const tilemap = @import("tilemap.zig");
+/// Sprite-sheet animation: clips that name a row of frames, and an animator that plays them.
+pub const animation = @import("animation.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = logging;
 
@@ -130,6 +132,9 @@ pub const DrawContext = struct {
     view_h: f32,
     /// Blend factor between the last two updates. 0 is the previous update, and 1 is the latest.
     alpha: f32,
+    /// Seconds since the previous frame, capped like the update loop's frame time. Smoothing that
+    /// should not depend on the frame rate uses it.
+    dt: f32,
 };
 
 /// Longest frame time the loop will use. A longer stall is cut short, so the game slows down
@@ -325,6 +330,7 @@ pub fn run(comptime Game: type, config: Config) void {
             .view_w = view_wf,
             .view_h = view_hf,
             .alpha = alpha,
+            .dt = frame_dt,
         };
         game.draw(&draw_ctx);
         world_batch.upload(frame.cmd);

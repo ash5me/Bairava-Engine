@@ -45,8 +45,15 @@ pub const Level = struct {
         return tileset.width / engine.tilemap.tile_size;
     }
 
-    /// Queues the tiles that overlap the camera's view. Each cell draws the tile its ID names.
-    pub fn draw(self: *const Level, batch: *engine.SpriteBatch, tileset: *const engine.Texture, cam: *const engine.Camera) void {
+    /// Queues the tiles of one layer that overlap the camera's view. Each cell draws the tile its
+    /// ID names. Empty cells draw nothing.
+    pub fn drawLayer(
+        self: *const Level,
+        batch: *engine.SpriteBatch,
+        tileset: *const engine.Texture,
+        cam: *const engine.Camera,
+        layer: engine.tilemap.Layer,
+    ) void {
         const across = tilesAcross(tileset);
         // One extra tile on each side, so edge tiles never pop in while scrolling.
         const first_col = clampIndex(@floor(cam.x / tile_px) - 1, self.map.cols);
@@ -58,7 +65,7 @@ pub const Level = struct {
         while (row < last_row) : (row += 1) {
             var col = first_col;
             while (col < last_col) : (col += 1) {
-                const id: u32 = self.map.idAt(@intCast(col), @intCast(row)) orelse continue;
+                const id: u32 = self.map.idAt(layer, @intCast(col), @intCast(row)) orelse continue;
                 const src = engine.Rect{
                     .x = @as(f32, @floatFromInt(id % across)) * tile_px,
                     .y = @as(f32, @floatFromInt(id / across)) * tile_px,

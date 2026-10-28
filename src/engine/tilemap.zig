@@ -1,16 +1,24 @@
 //! A grid of tile IDs with collision. This is pure code with no SDL or logging, so `zig build test`
 //! covers it without a window.
 //!
+//! A map has up to three layers: ground, decoration, and foreground. The game draws them in that
+//! order, and it draws the player between decoration and foreground, so foreground tiles can cover
+//! the player. A cell can hold a tile on each layer. Whether a tile blocks movement depends only on
+//! its ID, and a cell blocks movement when any of its layers holds a blocking ID.
+//!
 //! Map file format, read by `TileMap.parse`:
 //!
 //!     # Comments start with '#'. Blank lines are ignored.
 //!     size <cols> <rows>          required, both at least 1
 //!     solid <id> [<id> ...]       optional, any number of lines; these IDs block movement
 //!     spawn <col> <row>           required, the cell where the player starts
-//!     tiles                       required, after the header
-//!     <id> <id> ...               one line per row, each with exactly <cols> IDs
+//!     layer <name>                ground, decoration, or foreground; each name at most once
+//!     <entry> <entry> ...         one line per row, each with exactly <cols> entries
 //!
-//! An ID is a number from 0 to 255. It picks a tile from the tile texture.
+//! The header lines (`size`, `solid`, `spawn`) come before the first `layer` line. Every row line
+//! belongs to the `layer` line above it. Layers may appear in any order. A layer the file leaves
+//! out is empty, but the file needs at least one layer. An entry is a tile ID from 0 to 254, which
+//! picks a tile from the tile texture, or `.` for a cell with no tile on that layer.
 
 const std = @import("std");
 
@@ -18,18 +26,35 @@ const std = @import("std");
 pub const tile_size: u32 = 16;
 pub const tile_px: f32 = @floatFromInt(tile_size);
 
+/// The entry for a cell with no tile on a layer. Files write it as `.`, so no tile ID equals it.
+pub const empty: u8 = 255;
+
+/// The layers of a map, in the order the game draws them.
+pub const Layer = enum(u8) {
+    ground,
+    decoration,
+    foreground,
+};
+
+/// Every layer, in draw order.
+pub const all_layers = [_]Layer{ .ground, .decoration, .foreground };
+
+/// How many layers a map has.
+pub const layer_count: usize = all_layers.len;
+
 pub const ParseError = error{
-    /// A line has an unknown keyword, the wrong number of values, or an empty `solid` list.
+    /// A line has an unknown keyword, the wrong number of values, an empty `solid` list, or a
+    /// layer name that is unknown or repeated.
     BadHeader,
-    /// A value is not a number, or an ID is above 255.
+    /// A value is not a number, an ID is above 255, or an ID is 255, which means an empty cell.
     BadNumber,
-    /// `size` is missing, or `tiles` comes before it.
+    /// `size` is missing, or a `layer` line comes before it.
     MissingSize,
-    /// `spawn` is missing, or `tiles` comes before it.
+    /// `spawn` is missing, or a `layer` line comes before it.
     MissingSpawn,
-    /// There is no `tiles` line.
-    MissingTiles,
-    /// A row has the wrong number of IDs, or the map has the wrong number of rows.
+    /// There is no `layer` line.
+    MissingLayer,
+    /// A row has the wrong number of entries, or a layer has the wrong number of rows.
     BadRow,
     /// The spawn cell is outside the map.
     SpawnOutside,
@@ -58,7 +83,9 @@ pub const Box = struct {
 pub const TileMap = struct {
     cols: u32,
     rows: u32,
-    /// Tile IDs, row by row, top row first. The map owns them. `deinit` frees them.
+    /// Entries for every layer, one layer after another in `Layer` order, each row by row, top row
+    /// first. An entry is `empty` when its layer has no tile in that cell. The map owns them, and
+    /// `deinit` frees them.
     tiles: []u8,
     /// Which IDs block movement, indexed by ID.
     solid: [256]bool,
@@ -76,37 +103,41 @@ pub const TileMap = struct {
         };
         var have_size = false;
         var have_spawn = false;
-        var in_tiles = false;
-        var row: u32 = 0;
-        // The tile storage is allocated at the `tiles` line, which comes after `size`, so the size is known.
+        // Allocated at the first `layer` line, when the size is known, and freed on any later error.
         var storage: []u8 = undefined;
         var allocated = false;
         errdefer {
             if (allocated) allocator.free(storage);
         }
+        var current: ?Layer = null;
+        var seen = [_]bool{false} ** layer_count;
+        // Rows read so far in the current layer.
+        var row: u32 = 0;
 
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |raw| {
             const line = std.mem.trim(u8, raw, " \t\r");
             if (line.len == 0 or line[0] == '#') continue;
 
-            if (in_tiles) {
-                // Every line after `tiles` is one row of IDs.
-                if (row >= map.rows) return error.BadRow;
-                var values = std.mem.tokenizeAny(u8, line, " \t");
-                var col: u32 = 0;
-                while (values.next()) |word| : (col += 1) {
-                    if (col >= map.cols) return error.BadRow;
-                    const index = @as(usize, row) * @as(usize, map.cols) + @as(usize, col);
-                    storage[index] = try parseId(word);
-                }
-                if (col != map.cols) return error.BadRow;
-                row += 1;
-                continue;
-            }
-
             var words = std.mem.tokenizeAny(u8, line, " \t");
             const keyword = words.next() orelse continue;
+
+            // Inside a layer, every line up to the next `layer` line is one row of entries.
+            if (current) |layer| {
+                if (!std.mem.eql(u8, keyword, "layer")) {
+                    if (row >= map.rows) return error.BadRow;
+                    var col: u32 = 0;
+                    var entries = std.mem.tokenizeAny(u8, line, " \t");
+                    while (entries.next()) |word| : (col += 1) {
+                        if (col >= map.cols) return error.BadRow;
+                        storage[storageIndex(layer, map.cols, map.rows, col, row)] = try parseEntry(word);
+                    }
+                    if (col != map.cols) return error.BadRow;
+                    row += 1;
+                    continue;
+                }
+            }
+
             if (std.mem.eql(u8, keyword, "size")) {
                 const cols = try parseCount(words.next());
                 const rows = try parseCount(words.next());
@@ -127,20 +158,30 @@ pub const TileMap = struct {
                 if (words.next() != null) return error.BadHeader;
                 map.spawn = .{ .col = col, .row = spawn_row };
                 have_spawn = true;
-            } else if (std.mem.eql(u8, keyword, "tiles")) {
-                if (words.next() != null) return error.BadHeader;
+            } else if (std.mem.eql(u8, keyword, "layer")) {
+                // The layer above must have all its rows before the next one starts.
+                if (current != null and row != map.rows) return error.BadRow;
                 if (!have_size) return error.MissingSize;
                 if (!have_spawn) return error.MissingSpawn;
-                storage = try allocator.alloc(u8, @as(usize, map.cols) * @as(usize, map.rows));
-                allocated = true;
-                in_tiles = true;
+                const layer = try parseLayer(words.next());
+                if (words.next() != null) return error.BadHeader;
+                if (seen[@intFromEnum(layer)]) return error.BadHeader;
+                seen[@intFromEnum(layer)] = true;
+                if (!allocated) {
+                    const cells = @as(usize, map.cols) * @as(usize, map.rows) * layer_count;
+                    storage = try allocator.alloc(u8, cells);
+                    allocated = true;
+                    @memset(storage, empty);
+                }
+                current = layer;
+                row = 0;
             } else {
                 return error.BadHeader;
             }
         }
 
-        if (!in_tiles) return error.MissingTiles;
-        if (row != map.rows) return error.BadRow;
+        if (!allocated) return error.MissingLayer;
+        if (current != null and row != map.rows) return error.BadRow;
         if (map.spawn.col >= map.cols or map.spawn.row >= map.rows) return error.SpawnOutside;
         map.tiles = storage;
         return map;
@@ -151,25 +192,39 @@ pub const TileMap = struct {
         allocator.free(self.tiles);
     }
 
-    /// The ID at a cell, or null when the cell is outside the map.
-    pub fn idAt(self: *const TileMap, col: i32, row: i32) ?u8 {
+    /// The tile ID on one layer at a cell. Null when the cell is outside the map, or when that
+    /// layer has no tile there.
+    pub fn idAt(self: *const TileMap, layer: Layer, col: i32, row: i32) ?u8 {
         if (col < 0 or row < 0) return null;
         const c: u32 = @intCast(col);
         const r: u32 = @intCast(row);
         if (c >= self.cols or r >= self.rows) return null;
-        return self.tiles[@as(usize, r) * @as(usize, self.cols) + @as(usize, c)];
+        const id = self.tiles[storageIndex(layer, self.cols, self.rows, c, r)];
+        if (id == empty) return null;
+        return id;
     }
 
-    /// True when a cell blocks movement. Cells outside the map are solid, so the map's edge is a wall.
+    /// True when a cell blocks movement, which happens when any layer in it holds a solid tile.
+    /// Cells outside the map are solid, so the map's edge is a wall.
     pub fn isSolid(self: *const TileMap, col: i32, row: i32) bool {
-        const id = self.idAt(col, row) orelse return true;
-        return self.solid[id];
+        if (col < 0 or row < 0) return true;
+        const c: u32 = @intCast(col);
+        const r: u32 = @intCast(row);
+        if (c >= self.cols or r >= self.rows) return true;
+        for (all_layers) |layer| {
+            const id = self.tiles[storageIndex(layer, self.cols, self.rows, c, r)];
+            if (id != empty and self.solid[id]) return true;
+        }
+        return false;
     }
 
-    /// The largest ID in the map. The game compares it with its tileset, to catch IDs that name no tile.
+    /// The largest tile ID in the map, ignoring empty cells. The game compares it with its tileset,
+    /// to catch IDs that name no tile.
     pub fn largestId(self: *const TileMap) u8 {
         var largest: u8 = 0;
-        for (self.tiles) |id| largest = @max(largest, id);
+        for (self.tiles) |id| {
+            if (id != empty) largest = @max(largest, id);
+        }
         return largest;
     }
 
@@ -248,6 +303,14 @@ pub const TileMap = struct {
     }
 };
 
+/// Where a cell's entry sits in `TileMap.tiles`. Layers are stored one after another, and each
+/// layer is stored row by row.
+fn storageIndex(layer: Layer, cols: u32, rows: u32, col: u32, row: u32) usize {
+    const cells = @as(usize, cols) * @as(usize, rows);
+    const offset = @as(usize, @intFromEnum(layer)) * cells;
+    return offset + @as(usize, row) * @as(usize, cols) + @as(usize, col);
+}
+
 /// The pixel position of the edge at the start of cell `index`.
 fn tileEdge(index: i32) f32 {
     return @as(f32, @floatFromInt(index)) * tile_px;
@@ -268,6 +331,22 @@ fn parseCount(word: ?[]const u8) ParseError!u32 {
     return std.fmt.parseInt(u32, text, 10) catch return error.BadNumber;
 }
 
+fn parseLayer(word: ?[]const u8) ParseError!Layer {
+    const name = word orelse return error.BadHeader;
+    if (std.mem.eql(u8, name, "ground")) return .ground;
+    if (std.mem.eql(u8, name, "decoration")) return .decoration;
+    if (std.mem.eql(u8, name, "foreground")) return .foreground;
+    return error.BadHeader;
+}
+
+/// One entry in a row: `.` for an empty cell, or a tile ID.
+fn parseEntry(word: []const u8) ParseError!u8 {
+    if (std.mem.eql(u8, word, ".")) return empty;
+    return parseId(word);
+}
+
 fn parseId(word: []const u8) ParseError!u8 {
-    return std.fmt.parseInt(u8, word, 10) catch return error.BadNumber;
+    const id = std.fmt.parseInt(u8, word, 10) catch return error.BadNumber;
+    if (id == empty) return error.BadNumber;
+    return id;
 }

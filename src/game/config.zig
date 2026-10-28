@@ -16,6 +16,9 @@ pub const clear_rgb = [3]f32{ 0.2, 0.3, 0.5 };
 pub const update_hz: u32 = 60;
 /// Starting scale mode. Press I in game to toggle between fit and integer.
 pub const scale_mode: engine.ScaleMode = .fit;
+/// How fast the camera catches up with the player, as a rate per second. Higher is snappier. Zero
+/// turns smoothing off, so the camera snaps to the player.
+pub const camera_rate: f32 = 10.0;
 /// One asset the game loads at startup: the name code uses to refer to it, and its path relative to
 /// the project root.
 pub const Asset = struct {

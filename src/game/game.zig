@@ -82,15 +82,19 @@ pub const Game = struct {
         self.player.update(dx, dy, ctx.dt, &self.level.map);
     }
 
-    /// Runs once per frame. `dc.alpha` blends the player between the last two updates.
+    /// Runs once per frame. `dc.alpha` blends the player between the last two updates. The camera
+    /// eases toward the player using the frame time, so its speed doesn't depend on the frame rate.
     pub fn draw(self: *Game, dc: *const engine.DrawContext) void {
         const center = self.player.drawCenter(dc.alpha);
         dc.cam.world_w = self.level.widthPx();
         dc.cam.world_h = self.level.heightPx();
-        dc.cam.follow(center.x, center.y);
+        dc.cam.followSmooth(center.x, center.y, dc.dt, config.camera_rate);
 
-        self.level.draw(dc.batch, &self.tile, dc.cam);
+        // Draw order: ground, decoration, the player, and then foreground, which can cover the player.
+        self.level.drawLayer(dc.batch, &self.tile, dc.cam, .ground);
+        self.level.drawLayer(dc.batch, &self.tile, dc.cam, .decoration);
         self.player.draw(dc.batch, &self.warrior, dc.cam, dc.alpha);
+        self.level.drawLayer(dc.batch, &self.tile, dc.cam, .foreground);
     }
 };
 

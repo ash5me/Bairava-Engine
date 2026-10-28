@@ -10,6 +10,8 @@ const renderer = @import("engine/renderer.zig");
 const sprite = @import("engine/sprite.zig");
 const Texture = @import("engine/texture.zig").Texture;
 const tilemap = @import("engine/tilemap.zig");
+const camera = @import("engine/camera.zig");
+const animation = @import("engine/animation.zig");
 
 test {
     _ = @import("engine/string.zig");
@@ -382,7 +384,7 @@ const room_text =
     \\size 6 6
     \\solid 1
     \\spawn 1 1
-    \\tiles
+    \\layer ground
     \\1 1 1 1 1 1
     \\1 0 0 0 0 1
     \\1 0 0 1 0 1
@@ -401,37 +403,81 @@ test "parse reads the header and the tile IDs row by row" {
     try std.testing.expectEqual(@as(u32, 1), map.spawn.row);
     try std.testing.expect(map.solid[1]);
     try std.testing.expect(!map.solid[0]);
-    try std.testing.expectEqual(@as(?u8, 1), map.idAt(3, 2));
-    try std.testing.expectEqual(@as(?u8, 0), map.idAt(2, 2));
+    try std.testing.expectEqual(@as(?u8, 1), map.idAt(.ground, 3, 2));
+    try std.testing.expectEqual(@as(?u8, 0), map.idAt(.ground, 2, 2));
+    try std.testing.expectEqual(@as(?u8, null), map.idAt(.ground, 6, 2));
 }
 
 test "parse skips comments and blank lines and accepts CRLF line endings" {
     const allocator = std.testing.allocator;
-    const text = "# a comment\r\n\r\nsize 1 2\r\nsolid 1\r\n# spawn comes next\r\nspawn 0 1\r\ntiles\r\n0\r\n1\r\n";
+    const text = "# a comment\r\n\r\nsize 1 2\r\nsolid 1\r\n# spawn comes next\r\nspawn 0 1\r\nlayer ground\r\n0\r\n1\r\n";
     const map = try tilemap.TileMap.parse(allocator, text);
     defer map.deinit(allocator);
-    try std.testing.expectEqual(@as(?u8, 0), map.idAt(0, 0));
-    try std.testing.expectEqual(@as(?u8, 1), map.idAt(0, 1));
+    try std.testing.expectEqual(@as(?u8, 0), map.idAt(.ground, 0, 0));
+    try std.testing.expectEqual(@as(?u8, 1), map.idAt(.ground, 0, 1));
     try std.testing.expectEqual(@as(u32, 1), map.spawn.row);
+}
+
+test "each layer keeps its own tiles, in any order, and a dot is an empty cell" {
+    const allocator = std.testing.allocator;
+    const text =
+        \\size 2 1
+        \\spawn 0 0
+        \\layer decoration
+        \\. 5
+        \\layer ground
+        \\0 0
+    ;
+    const map = try tilemap.TileMap.parse(allocator, text);
+    defer map.deinit(allocator);
+    try std.testing.expectEqual(@as(?u8, 0), map.idAt(.ground, 0, 0));
+    try std.testing.expectEqual(@as(?u8, null), map.idAt(.decoration, 0, 0));
+    try std.testing.expectEqual(@as(?u8, 5), map.idAt(.decoration, 1, 0));
+    // A layer the file leaves out is empty everywhere.
+    try std.testing.expectEqual(@as(?u8, null), map.idAt(.foreground, 1, 0));
+}
+
+test "a solid tile on any layer blocks its cell" {
+    const allocator = std.testing.allocator;
+    const text =
+        \\size 3 1
+        \\solid 7
+        \\spawn 0 0
+        \\layer ground
+        \\0 0 0
+        \\layer decoration
+        \\. 7 .
+    ;
+    const map = try tilemap.TileMap.parse(allocator, text);
+    defer map.deinit(allocator);
+    try std.testing.expect(!map.isSolid(0, 0));
+    try std.testing.expect(map.isSolid(1, 0));
+    try std.testing.expect(!map.isSolid(2, 0));
 }
 
 test "parse rejects malformed maps, and frees what it had allocated" {
     // testing.allocator fails the test if anything is left allocated. So every error after the
-    // `tiles` line must free the tile storage.
+    // first `layer` line must free the tile storage.
     const allocator = std.testing.allocator;
     const expectErr = std.testing.expectError;
-    try expectErr(error.MissingSize, tilemap.TileMap.parse(allocator, "spawn 0 0\ntiles\n0\n"));
-    try expectErr(error.MissingSpawn, tilemap.TileMap.parse(allocator, "size 1 1\ntiles\n0\n"));
-    try expectErr(error.MissingTiles, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\n"));
-    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\ntiles\nx\n"));
-    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\ntiles\n256\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 2 1\nspawn 0 0\ntiles\n0\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\ntiles\n0 0\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 2\nspawn 0 0\ntiles\n0\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\ntiles\n0\n0\n"));
-    try expectErr(error.SpawnOutside, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 1 0\ntiles\n0\n"));
-    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlevel 3\ntiles\n0\n"));
-    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 0 1\nspawn 0 0\ntiles\n"));
+    try expectErr(error.MissingSize, tilemap.TileMap.parse(allocator, "spawn 0 0\nlayer ground\n0\n"));
+    try expectErr(error.MissingSpawn, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\n0\n"));
+    try expectErr(error.MissingLayer, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\n"));
+    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\nx\n"));
+    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n256\n"));
+    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n255\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 2 1\nspawn 0 0\nlayer ground\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n0 0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 2\nspawn 0 0\nlayer ground\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n0\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\nlayer decoration\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n0\nlayer decoration\n"));
+    try expectErr(error.SpawnOutside, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 1 0\nlayer ground\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlevel 3\nlayer ground\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\n0\nlayer ground\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 0 1\nspawn 0 0\nlayer ground\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer sky\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n0\nlayer ground\n0\n"));
 }
 
 test "cells outside the map are solid, so the map's edge is a wall" {
@@ -446,11 +492,15 @@ test "cells outside the map are solid, so the map's edge is a wall" {
     try std.testing.expect(!map.isSolid(1, 1));
 }
 
-test "largestId reports the highest tile ID in the map" {
+test "largestId reports the highest tile ID in the map, and ignores empty cells" {
     const allocator = std.testing.allocator;
     const map = try tilemap.TileMap.parse(allocator, room_text);
     defer map.deinit(allocator);
     try std.testing.expectEqual(@as(u8, 1), map.largestId());
+
+    const sparse = try tilemap.TileMap.parse(allocator, "size 2 1\nspawn 0 0\nlayer foreground\n. 3\n");
+    defer sparse.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 3), sparse.largestId());
 }
 
 test "a box moves its full distance across open floor" {
@@ -522,4 +572,111 @@ test "a box flush against a wall cannot step into it" {
     defer map.deinit(allocator);
     const moved = map.moveBox(.{ .x = 32, .y = 32, .w = 16, .h = 16 }, 0.5, 0);
     try std.testing.expectApproxEqAbs(@as(f32, 32), moved.x, 1e-4);
+}
+
+test "follow centers the view and clamps it inside the world" {
+    var cam = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 100, .world_h = 100 };
+    cam.follow(50, 50);
+    try std.testing.expectEqual(@as(f32, 30), cam.x);
+    try std.testing.expectEqual(@as(f32, 30), cam.y);
+    cam.follow(5, 99);
+    try std.testing.expectEqual(@as(f32, 0), cam.x);
+    try std.testing.expectEqual(@as(f32, 60), cam.y);
+}
+
+test "the first followSmooth places the camera at once, so the view doesn't glide in" {
+    var cam = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 100, .world_h = 100 };
+    cam.followSmooth(50, 50, 1.0 / 60.0, 10);
+    try std.testing.expectEqual(@as(f32, 30), cam.x);
+    try std.testing.expectEqual(@as(f32, 30), cam.y);
+}
+
+test "followSmooth eases toward the target and gets there over time" {
+    var cam = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    cam.follow(0, 0);
+    // A target at 500 centers the view at 480.
+    cam.followSmooth(500, 500, 1.0 / 60.0, 10);
+    try std.testing.expect(cam.smooth_x > 0 and cam.smooth_x < 480);
+    var i: u32 = 0;
+    while (i < 600) : (i += 1) cam.followSmooth(500, 500, 1.0 / 60.0, 10);
+    try std.testing.expectApproxEqAbs(@as(f32, 480), cam.smooth_x, 0.01);
+    // The drawn position is the smoothed one, rounded to whole pixels.
+    try std.testing.expectEqual(@round(cam.smooth_x), cam.x);
+}
+
+test "followSmooth covers the same distance at any frame rate" {
+    var slow = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    var fast = slow;
+    slow.follow(0, 0);
+    fast.follow(0, 0);
+    var i: u32 = 0;
+    while (i < 30) : (i += 1) slow.followSmooth(500, 500, 1.0 / 30.0, 6);
+    i = 0;
+    while (i < 120) : (i += 1) fast.followSmooth(500, 500, 1.0 / 120.0, 6);
+    try std.testing.expectApproxEqAbs(slow.smooth_x, fast.smooth_x, 1e-3);
+}
+
+test "a rate of zero snaps the camera to its target" {
+    var cam = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    cam.follow(0, 0);
+    cam.followSmooth(500, 500, 1.0 / 60.0, 0);
+    try std.testing.expectEqual(@as(f32, 480), cam.x);
+}
+
+const walk_clip = animation.Clip{ .row = 2, .frame_count = 4, .frame_time = 0.25, .looping = true };
+
+test "an animator advances one frame each frame_time" {
+    var anim = animation.Animator.init(walk_clip);
+    try std.testing.expectEqual(@as(u32, 0), anim.frame());
+    anim.update(0.25);
+    try std.testing.expectEqual(@as(u32, 1), anim.frame());
+    anim.update(0.25);
+    try std.testing.expectEqual(@as(u32, 2), anim.frame());
+}
+
+test "a looping clip starts over after its last frame" {
+    var anim = animation.Animator.init(walk_clip);
+    var i: u32 = 0;
+    while (i < 4) : (i += 1) anim.update(0.25);
+    try std.testing.expectEqual(@as(u32, 0), anim.frame());
+    anim.update(0.25);
+    try std.testing.expectEqual(@as(u32, 1), anim.frame());
+}
+
+test "a clip that does not loop holds its last frame" {
+    var clip = walk_clip;
+    clip.looping = false;
+    var anim = animation.Animator.init(clip);
+    var i: u32 = 0;
+    while (i < 10) : (i += 1) anim.update(0.25);
+    try std.testing.expectEqual(@as(u32, 3), anim.frame());
+}
+
+test "playing the clip that is already playing keeps its place" {
+    var anim = animation.Animator.init(walk_clip);
+    anim.update(0.5);
+    anim.play(walk_clip);
+    try std.testing.expectEqual(@as(u32, 2), anim.frame());
+
+    // A different clip starts from its first frame.
+    var idle = walk_clip;
+    idle.frame_count = 1;
+    anim.play(idle);
+    try std.testing.expectEqual(@as(u32, 0), anim.frame());
+    try std.testing.expectEqual(@as(f32, 0), anim.time);
+}
+
+test "a single-frame clip always shows its first frame" {
+    var clip = walk_clip;
+    clip.frame_count = 1;
+    var anim = animation.Animator.init(clip);
+    anim.update(3.0);
+    try std.testing.expectEqual(@as(u32, 0), anim.frame());
+}
+
+test "a looping animator keeps its time inside one play-through" {
+    var anim = animation.Animator.init(walk_clip);
+    var i: u32 = 0;
+    while (i < 1000) : (i += 1) anim.update(0.1);
+    try std.testing.expect(anim.time >= 0 and anim.time < walk_clip.duration());
 }
