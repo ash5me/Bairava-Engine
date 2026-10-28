@@ -9,6 +9,7 @@ const input = @import("engine/input.zig");
 const renderer = @import("engine/renderer.zig");
 const sprite = @import("engine/sprite.zig");
 const Texture = @import("engine/texture.zig").Texture;
+const tilemap = @import("engine/tilemap.zig");
 
 test {
     _ = @import("engine/string.zig");
@@ -371,4 +372,154 @@ test "a texture with no upload is ready at once" {
     // Only the fence-free path is tested here. Waiting on a real upload needs a GPU.
     const tex = testTexture(16, 16);
     try std.testing.expect(tex.isReady());
+}
+
+// ---- Tile maps (engine/tilemap.zig) ----
+
+/// A 6x6 room. Walls form the border, plus one wall at column 3, row 2. Open floor is columns 1 to 4
+/// in rows 1 to 4, so the spawn cell (1, 1) is open.
+const room_text =
+    \\size 6 6
+    \\solid 1
+    \\spawn 1 1
+    \\tiles
+    \\1 1 1 1 1 1
+    \\1 0 0 0 0 1
+    \\1 0 0 1 0 1
+    \\1 0 0 0 0 1
+    \\1 0 0 0 0 1
+    \\1 1 1 1 1 1
+;
+
+test "parse reads the header and the tile IDs row by row" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 6), map.cols);
+    try std.testing.expectEqual(@as(u32, 6), map.rows);
+    try std.testing.expectEqual(@as(u32, 1), map.spawn.col);
+    try std.testing.expectEqual(@as(u32, 1), map.spawn.row);
+    try std.testing.expect(map.solid[1]);
+    try std.testing.expect(!map.solid[0]);
+    try std.testing.expectEqual(@as(?u8, 1), map.idAt(3, 2));
+    try std.testing.expectEqual(@as(?u8, 0), map.idAt(2, 2));
+}
+
+test "parse skips comments and blank lines and accepts CRLF line endings" {
+    const allocator = std.testing.allocator;
+    const text = "# a comment\r\n\r\nsize 1 2\r\nsolid 1\r\n# spawn comes next\r\nspawn 0 1\r\ntiles\r\n0\r\n1\r\n";
+    const map = try tilemap.TileMap.parse(allocator, text);
+    defer map.deinit(allocator);
+    try std.testing.expectEqual(@as(?u8, 0), map.idAt(0, 0));
+    try std.testing.expectEqual(@as(?u8, 1), map.idAt(0, 1));
+    try std.testing.expectEqual(@as(u32, 1), map.spawn.row);
+}
+
+test "parse rejects malformed maps, and frees what it had allocated" {
+    // testing.allocator fails the test if anything is left allocated. So every error after the
+    // `tiles` line must free the tile storage.
+    const allocator = std.testing.allocator;
+    const expectErr = std.testing.expectError;
+    try expectErr(error.MissingSize, tilemap.TileMap.parse(allocator, "spawn 0 0\ntiles\n0\n"));
+    try expectErr(error.MissingSpawn, tilemap.TileMap.parse(allocator, "size 1 1\ntiles\n0\n"));
+    try expectErr(error.MissingTiles, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\n"));
+    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\ntiles\nx\n"));
+    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\ntiles\n256\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 2 1\nspawn 0 0\ntiles\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\ntiles\n0 0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 2\nspawn 0 0\ntiles\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\ntiles\n0\n0\n"));
+    try expectErr(error.SpawnOutside, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 1 0\ntiles\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlevel 3\ntiles\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 0 1\nspawn 0 0\ntiles\n"));
+}
+
+test "cells outside the map are solid, so the map's edge is a wall" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    try std.testing.expect(map.isSolid(-1, 1));
+    try std.testing.expect(map.isSolid(6, 1));
+    try std.testing.expect(map.isSolid(1, -1));
+    try std.testing.expect(map.isSolid(1, 6));
+    try std.testing.expect(map.isSolid(3, 2));
+    try std.testing.expect(!map.isSolid(1, 1));
+}
+
+test "largestId reports the highest tile ID in the map" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 1), map.largestId());
+}
+
+test "a box moves its full distance across open floor" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const moved = map.moveBox(.{ .x = 16, .y = 16, .w = 16, .h = 16 }, 3, 2);
+    try std.testing.expectApproxEqAbs(@as(f32, 19), moved.x, 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 18), moved.y, 1e-4);
+}
+
+test "a box stops flush against a wall on its right" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    // The box covers columns 3 and 4 and is pushed right into the border at column 5.
+    const moved = map.moveBox(.{ .x = 48, .y = 16, .w = 16, .h = 16 }, 100, 0);
+    try std.testing.expectApproxEqAbs(@as(f32, 64), moved.x, 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 16), moved.y, 1e-4);
+}
+
+test "a box stops flush against a wall on its left" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const moved = map.moveBox(.{ .x = 32, .y = 16, .w = 16, .h = 16 }, -100, 0);
+    try std.testing.expectApproxEqAbs(@as(f32, 16), moved.x, 1e-4);
+}
+
+test "a box moving diagonally into a wall slides along it" {
+    // X is blocked by the wall at column 3, row 2. Y is still free, so the box slides down the wall.
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const moved = map.moveBox(.{ .x = 32, .y = 32, .w = 16, .h = 16 }, 20, 20);
+    try std.testing.expectApproxEqAbs(@as(f32, 32), moved.x, 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 52), moved.y, 1e-4);
+}
+
+test "a box moving down stops flush above a wall" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const moved = map.moveBox(.{ .x = 16, .y = 48, .w = 16, .h = 16 }, 0, 100);
+    try std.testing.expectApproxEqAbs(@as(f32, 64), moved.y, 1e-4);
+}
+
+test "a box moving up stops flush below a wall" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const moved = map.moveBox(.{ .x = 16, .y = 32, .w = 16, .h = 16 }, 0, -100);
+    try std.testing.expectApproxEqAbs(@as(f32, 16), moved.y, 1e-4);
+}
+
+test "a box already inside a wall can move out of it" {
+    // The box overlaps the wall at column 3, row 2, so the wall's own cells don't stop the move.
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const box = tilemap.Box{ .x = 50, .y = 34, .w = 16, .h = 16 };
+    try std.testing.expectApproxEqAbs(@as(f32, 40), map.moveBox(box, -10, 0).x, 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 60), map.moveBox(box, 10, 0).x, 1e-4);
+}
+
+test "a box flush against a wall cannot step into it" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const moved = map.moveBox(.{ .x = 32, .y = 32, .w = 16, .h = 16 }, 0.5, 0);
+    try std.testing.expectApproxEqAbs(@as(f32, 32), moved.x, 1e-4);
 }

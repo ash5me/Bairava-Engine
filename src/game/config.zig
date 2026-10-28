@@ -1,4 +1,4 @@
-//! Game settings: title, window and native view sizes, level size, background color, update
+//! Game settings: title, window and native view sizes, level path, background color, update
 //! rate, and scale mode. Read once at startup. The engine knows nothing else about the game.
 
 const engine = @import("../engine/engine.zig");
@@ -37,6 +37,5 @@ comptime {
     if (assets.len > max_assets) @compileError("config.assets has more entries than max_assets");
 }
 
-/// Size of the test level, in tiles.
-pub const level_cols: u32 = 40;
-pub const level_rows: u32 = 24;
+/// The tile map the game loads at startup, relative to the executable's folder.
+pub const level_path = "assets/maps/level1.txt";

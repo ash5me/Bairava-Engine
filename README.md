@@ -92,13 +92,14 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── math.zig           cglm wrappers: projection, transforms, normalization. The only cglm import.
 │   │   ├── string.zig         Validated fixed-capacity Name and Path types
 │   │   ├── hash_map.zig       StringMap: open-addressing hash map keyed by Name
-│   │   └── assets.zig         Asset Table: names to ids and validated paths
+│   │   ├── assets.zig         Asset Table: names to ids and validated paths
+│   │   └── tilemap.zig        Tile map format and parser, solid tiles, box movement against tiles
 │   ├── game/                  Gameplay code. Uses the engine only through engine/engine.zig.
 │   │   ├── game.zig           Game state, asset loading, update and draw
 │   │   ├── controls.zig       Named actions and the keys bound to them
 │   │   ├── player.zig         Player position, facing, walk animation, drawing
-│   │   ├── level.zig          Tile grid, view culling, tile drawing
-│   │   └── config.zig         Title, window and native sizes, level size, background color, update rate, scale mode, asset list
+│   │   ├── level.zig          Level: loads the tile map, view culling, tile drawing
+│   │   └── config.zig         Title, window and native sizes, level path, background color, update rate, scale mode, asset list
 │   ├── root.zig               Unused template file from `zig init`
 │   └── tests.zig              Test root for `zig build test`: every unit test. Pure modules, plus input and renderer, which import SDL. Opens no window.
 ├── shaders/
@@ -106,7 +107,8 @@ Keys are bound to named actions in `game/controls.zig`.
 ├── assets/
 │   ├── tile.png               Tile texture used by the map
 │   ├── warrior.png            Original warrior artwork (kept unchanged)
-│   └── warrior_16x32.png      Runtime sprite sheet: 5 columns × 4 rows of 16×32 cells
+│   ├── warrior_16x32.png      Runtime sprite sheet: 5 columns × 4 rows of 16×32 cells
+│   └── maps/level1.txt        Level 1 tile map: tile IDs, solid tiles, spawn cell
 ├── scripts/
 │   └── key_checker.ps1        Windows tool that keys out a checkerboard background
 ├── vendor/                    stb_image.h and stb_image_impl.c; cglm (headers, C sources, license) in vendor/cglm/
@@ -135,7 +137,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 1. Measure the frame time since the last frame, capped at 0.1 s.
 2. Drain the SDL event queue. The engine handles quit requests and F11. Key and mouse events update the held state, and presses, releases, and clicks wait in `Input` for the next update step.
 3. Add the frame time to an accumulator. While it holds at least one fixed step (1/60 s by default), latch the pending input so it reaches exactly one update, run game `update` with `ctx.dt` set to that step, and subtract the step. Stop early if the game sets `running` to false.
-4. Game `update`: read actions from `game/controls.zig`. Quit and scale toggle act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and the player is clamped to the map.
+4. Game `update`: read actions from `game/controls.zig`. Quit and scale toggle act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and solid tiles stop the player's feet on each axis, so the player slides along walls.
 5. Compute `alpha`, the leftover fraction of a step, from 0 to 1. Drawing blends between the last two updates with it, so motion stays smooth when the display rate and update rate differ.
 6. Read the window size in pixels. If either side is zero, the window is minimized, so sleep for 16 ms (`idle_sleep_ms` in `engine/engine.zig`) and start the next frame. Otherwise, choose the scale for the current scale mode (see Rendering model), then compute the view size. The native view is 320×180 in `game/config.zig`.
 7. If the view size changed, wait for the GPU to go idle and recreate the native target.
@@ -201,11 +203,12 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 **Math and data**
 - cglm for vectors and matrices, wrapped in `math.zig`. The sprite projection and diagonal normalization use it. `math.zig` also covers 3D transforms, perspective and look-at matrices, and quaternions (slerp, look rotation, billboard). Only the 2D parts are used so far.
 - Validated names and paths (`string.zig`), a hash map keyed by names (`hash_map.zig`), and an asset table that gives each name a dense id (`assets.zig`).
+- Tile maps (`tilemap.zig`): a text format with tile IDs, solid IDs, and a spawn cell. Malformed maps report what is wrong. `TileMap.moveBox` moves a box against solid tiles, one axis at a time.
 - `zig build test` runs every unit test: the string, hash map, asset table, math, view, input, and renderer modules. It links SDL and opens no window or GPU device.
 - Mouse mapping from window points to view and world pixels in `view.zig`, through `Context.mouseWorld`. Its tests run with `zig build test`.
 
 **Gameplay**
-- Player movement with arrow keys or WASD, normalized diagonals, and map clamping.
+- Player movement with arrow keys or WASD, normalized diagonals, and collision with solid tiles.
 - A 16×32 South Indian warrior sprite loaded from `assets/warrior_16x32.png`, with separate player width and height constants.
 - Directional sprite selection for front/down, right, back/up, and left; horizontal input wins when moving diagonally.
 - Walk-frame timing with frame 0 used while idle; the back-facing row cycles through four frames.
@@ -223,7 +226,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Platform | `sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
 | Engine | `engine/engine.zig` | Prototype | 60% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
 | Logging and assertions | `engine/log.zig` | Functional | 70% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Missing: log file output, profiling zones. |
-| Gameplay | `game/` | Prototype | 15% | Player with directional walk animation, one test level, and movement and quit actions bound in `game/controls.zig`. No entities, rules, or level files. |
+| Gameplay | `game/` | Prototype | 15% | Player with directional walk animation, one level loaded from `assets/maps/level1.txt`, and movement and quit actions bound in `game/controls.zig`. No entities or rules. |
 | Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Asks the device for DXIL only when the build embeds it. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, Metal support, pass helpers. |
 | Shaders | `shader.zig` | Basic | 55% | Picks the first shader format the device accepts (SPIR-V, then DXIL) and creates GPU shaders from code embedded at build time. DXIL is optional (`-Ddxil=true`). Per-shader entry points and resource counts are declared in `sprite.zig`. Missing: MSL, reflection. Uniform buffer count is supported but unused. |
 | Textures | `texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: atlases, unload and reload. |
@@ -234,12 +237,13 @@ These estimates are rough. They measure how close each area is to something usab
 | Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. Missing: loading, caching, unloading. |
 | Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Storage grows with each frame. Missing: index buffer, rotation, flip, origin, alpha tint, z-order. |
 | Camera | `camera.zig` | Functional | 50% | Follow, clamp, and pixel snap. Missing: smoothing, dead zone, zoom, shake. |
-| Level | `game/level.zig` | Early | 25% | One uniform layer drawn with culling. No tile data, multiple layers, loading, or collision. |
+| Level | `game/level.zig` | Early | 35% | One layer of tile IDs read from a text file, drawn with culling. Solid tiles block the player. No multiple layers or tile animation. |
+| Tile map | `engine/tilemap.zig` | Functional | 50% | Text map format with clear parse errors, one ID per cell, solid IDs, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: layers. |
 | Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but have no position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `src/tests.zig`. |
 | View mapping | `view.zig` | Functional | 60% | Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
 | Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, cglm, embedded shaders (SPIR-V, and DXIL with `-Ddxil=true`), the run step, and the test step. Installs `assets/` beside the executable. Missing: a Metal (MSL) shader target. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
-| Tests | `src/tests.zig` | Functional | 40% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, input, and renderer. Missing: tests that open a window or create a GPU device. |
+| Tests | `src/tests.zig` | Functional | 40% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, input, and renderer. Missing: tests that open a window or create a GPU device. |
 | Entities | none | Not started | 0% | The player is a struct in `game/player.zig`. There is no entity list yet. |
 | Collision | none | Not started | 0% | |
 | Audio | none | Not started | 0% | |
@@ -252,9 +256,9 @@ These are the natural extension points. Each one reuses existing code.
 
 **Character sprite and animation.** The warrior is loaded once from `assets/warrior_16x32.png` and drawn through the existing `drawSprite` source-rectangle API. Each cell is 16×32 pixels. `game/player.zig` tracks a facing row, walk timer, and frame index; the back-facing row uses four frames, while the other rows use five. Frame 0 is selected while idle.
 
-**Add per-cell tile data.** `Level` already knows its size and culls visible cells. Give it a `[]u16` of tile IDs with `cols * rows` entries. In `draw`, look up each cell's ID, convert it to a source rectangle in the tileset, and keep the same loop. The checkerboard tint is a stand-in for real data and can go.
+**Add a tile layer.** `TileMap` in `engine/tilemap.zig` stores one ID per cell. For another layer, add a second `tiles` array, a matching section to the map format, and a second pass in `Level.draw` that uses the same loop.
 
-**Add collision.** Give `Level` a `solid(col, row) bool` query. Move the player along x and resolve against overlapping solid cells, then move along y. The map clamp in `game/player.zig` is a special case: the map edges act as walls.
+**Add collision to an entity.** Give the entity a `tilemap.Box` and call `TileMap.moveBox` with its movement each update, the same way `Player.update` does. Map edges count as solid, so they act as walls.
 
 **Add camera effects.** The camera is a position and a view size. Smoothing is a lerp toward the target before clamping. Shake is an offset applied after `follow`. Zoom changes the native view size that `engine/engine.zig` uses in `fitScale`, and the rest of the pipeline already handles any view size.
 
@@ -305,8 +309,8 @@ These are the natural extension points. Each one reuses existing code.
 
 ### Phase 2: a playable map
 
-- [ ] Store tile IDs per cell and per layer, loaded from a file (a Tiled export or a simple custom format).
-- [ ] Tile collision with axis-separated movement.
+- [ ] Store tile IDs per cell and per layer, loaded from a file (a Tiled export or a simple custom format). One layer and the text format are done.
+- [x] Tile collision with axis-separated movement.
 - [ ] Multiple layers: ground, decoration, and foreground.
 - [ ] Camera zoom and smoothing. Edge clamping already works.
 - [ ] Advanced animation state and per-entity animation data. Basic directional walk animation is done (see Phase 1).
@@ -343,7 +347,7 @@ These are the natural extension points. Each one reuses existing code.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, so a config entry such as `assets/warrior_16x32.png` works from any directory.
 - `assets/warrior.png` is the original source art; the game loads the prepared 80×128 `assets/warrior_16x32.png` sheet instead.
 - Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
-- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, and `view.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
+- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `view.zig`, and `tilemap.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.

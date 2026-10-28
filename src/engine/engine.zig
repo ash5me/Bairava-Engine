@@ -31,6 +31,8 @@ pub const strings = @import("string.zig");
 pub const hash_map = @import("hash_map.zig");
 /// Asset names, ids, and validated paths.
 pub const assets = @import("assets.zig");
+/// Tile maps: the map file format, solid tiles, and box movement against them.
+pub const tilemap = @import("tilemap.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = logging;
 
@@ -102,6 +104,18 @@ pub const Context = struct {
         defer img.deinit();
         elog.debug("loaded texture {s} ({d}x{d})", .{ path, img.width, img.height });
         return Texture.initRgba8(self.device, img.width, img.height, img.pixels);
+    }
+
+    /// Reads a whole file. `relative` is relative to the executable's folder, like `loadTexture`.
+    /// The caller owns the result and frees it with `std.heap.page_allocator`.
+    pub fn readFile(self: *const Context, relative: []const u8) ![]u8 {
+        var buf: [max_full_path]u8 = undefined;
+        const path = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ self.base_path, relative }) catch return error.PathTooLong;
+        var size: usize = 0;
+        const data = c.SDL_LoadFile(path.ptr, &size) orelse return error.FileNotFound;
+        defer c.SDL_free(data);
+        const bytes: [*]const u8 = @ptrCast(data);
+        return std.heap.page_allocator.dupe(u8, bytes[0..size]);
     }
 };
 

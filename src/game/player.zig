@@ -1,5 +1,5 @@
 //! The player: position, facing, walk animation, and drawing. This is gameplay code. The engine
-//! sees only the sprites it queues.
+//! sees only the sprites it queues, and the tile map that the player collides with.
 
 const std = @import("std");
 const engine = @import("../engine/engine.zig");
@@ -7,6 +7,10 @@ const engine = @import("../engine/engine.zig");
 /// The sprite is 16x32 pixels. The sheet is laid out in rows by facing.
 const width: f32 = 16.0;
 const height: f32 = 32.0;
+/// Collision uses the bottom half of the sprite, the feet. The top half may overlap walls, as it
+/// would in a top-down view.
+const collide_top: f32 = 16.0;
+const collide_h: f32 = 16.0;
 /// Player speed, in native pixels per second.
 const speed: f32 = 80.0;
 /// Time each walk frame is shown, in seconds.
@@ -40,10 +44,10 @@ pub const Player = struct {
     walk_timer: f32 = 0,
     walk_frame: u32 = 0,
 
-    /// Starts the player in the middle of a map of the given size.
-    pub fn init(map_w: f32, map_h: f32) Player {
-        const x = (map_w - width) / 2.0;
-        const y = (map_h - height) / 2.0;
+    /// A player whose feet fill the given tile. The game starts the player on the map's spawn cell.
+    pub fn standingOn(col: u32, row: u32) Player {
+        const x = @as(f32, @floatFromInt(col)) * engine.tilemap.tile_px;
+        const y = @as(f32, @floatFromInt(row)) * engine.tilemap.tile_px - collide_top;
         return .{ .x = x, .y = y, .prev_x = x, .prev_y = y };
     }
 
@@ -62,9 +66,9 @@ pub const Player = struct {
         return .{ .x = top_left.x + width / 2.0, .y = top_left.y + height / 2.0 };
     }
 
-    /// Moves the player. `move_x` and `move_y` are input directions, each -1, 0, or 1.
-    /// The player stays inside a map of `map_w` by `map_h` pixels.
-    pub fn update(self: *Player, move_x: f32, move_y: f32, dt: f32, map_w: f32, map_h: f32) void {
+    /// Moves the player. `move_x` and `move_y` are input directions, each -1, 0, or 1. Solid tiles
+    /// in `map` stop the player on each axis, so the player slides along walls.
+    pub fn update(self: *Player, move_x: f32, move_y: f32, dt: f32, map: *const engine.tilemap.TileMap) void {
         // Remember where we were, so drawing can blend from here to the new position.
         self.prev_x = self.x;
         self.prev_y = self.y;
@@ -105,9 +109,14 @@ pub const Player = struct {
         dx = direction[0];
         dy = direction[1];
 
-        // Keep the whole sprite inside the map.
-        self.x = std.math.clamp(self.x + dx * speed * dt, 0.0, map_w - width);
-        self.y = std.math.clamp(self.y + dy * speed * dt, 0.0, map_h - height);
+        // Move the feet against the map, one axis at a time. Then place the sprite above them.
+        const feet = map.moveBox(
+            .{ .x = self.x, .y = self.y + collide_top, .w = width, .h = collide_h },
+            dx * speed * dt,
+            dy * speed * dt,
+        );
+        self.x = feet.x;
+        self.y = feet.y - collide_top;
 
         // Invariants: the walk index stays inside its row, and the position stays a real number.
         engine.log.assert(self.frame < frame_count, @src(), "frame {d} is outside its row of {d} frames", .{ self.frame, frame_count });

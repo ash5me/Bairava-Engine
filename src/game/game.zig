@@ -20,10 +20,6 @@ pub const Game = struct {
     warrior: engine.Texture,
 
     pub fn init(ctx: *engine.Context) Game {
-        const level = Level{ .cols = config.level_cols, .rows = config.level_rows };
-        const player = Player.init(level.widthPx(), level.heightPx());
-        log.info("level {d}x{d} tiles, player starts at ({d:.0}, {d:.0})", .{ config.level_cols, config.level_rows, player.x, player.y });
-
         // Register every asset up front. A bad name or path is a bug in config.zig, so it panics here,
         // where the message says which entry is wrong.
         var table = engine.assets.Table.init(std.heap.page_allocator, config.max_assets) catch |err| {
@@ -36,16 +32,26 @@ pub const Game = struct {
         }
         log.info("registered {d} assets", .{table.count()});
 
+        const tile = loadNamedTexture(ctx, &table, "tile");
+        const warrior = loadNamedTexture(ctx, &table, "warrior");
+        const level = Level.load(ctx, config.level_path);
+        checkTileset(&level, &tile);
+
+        const spawn = level.map.spawn;
+        const player = Player.standingOn(spawn.col, spawn.row);
+        log.info("map {d}x{d} tiles, player starts on tile ({d}, {d})", .{ level.map.cols, level.map.rows, spawn.col, spawn.row });
+
         return .{
             .level = level,
             .player = player,
             .assets = table,
-            .tile = loadNamedTexture(ctx, &table, "tile"),
-            .warrior = loadNamedTexture(ctx, &table, "warrior"),
+            .tile = tile,
+            .warrior = warrior,
         };
     }
 
     pub fn deinit(self: *Game) void {
+        self.level.deinit();
         self.warrior.deinit();
         self.tile.deinit();
         self.assets.deinit();
@@ -73,7 +79,7 @@ pub const Game = struct {
         if (controls.held(input, .move_up)) dy -= 1;
         if (controls.held(input, .move_down)) dy += 1;
 
-        self.player.update(dx, dy, ctx.dt, self.level.widthPx(), self.level.heightPx());
+        self.player.update(dx, dy, ctx.dt, &self.level.map);
     }
 
     /// Runs once per frame. `dc.alpha` blends the player between the last two updates.
@@ -87,6 +93,16 @@ pub const Game = struct {
         self.player.draw(dc.batch, &self.warrior, dc.cam, dc.alpha);
     }
 };
+
+/// Every tile ID in the map must name a tile in the tileset. Otherwise the map would draw blank or
+/// wrong tiles. Panics with the offending ID so the map or the texture can be fixed.
+fn checkTileset(level: *const Level, tileset: *const engine.Texture) void {
+    const count = Level.tileCount(tileset);
+    const largest = level.map.largestId();
+    if (largest >= count) {
+        std.debug.panic("the map uses tile ID {d}, but the tile texture holds only {d} tiles", .{ largest, count });
+    }
+}
 
 /// Loads the texture registered under `name`. A name that isn't registered is a bug in config.zig,
 /// so it panics.
