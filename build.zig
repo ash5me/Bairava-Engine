@@ -231,7 +231,11 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     addCglm(b, test_module);
+    // input and renderer import SDL's headers and the embedded shaders. The tests open no window and
+    // create no GPU device, but the test binary links SDL and needs slangc to build the shaders.
+    test_module.linkLibrary(sdl.artifact("SDL3"));
+    test_module.addAnonymousImport("embedded_shaders", .{ .root_source_file = embedded_module });
     const tests = b.addTest(.{ .root_module = test_module });
     const run_tests = b.addRunArtifact(tests);
-    b.step("test", "Run unit tests (no GPU needed)").dependOn(&run_tests.step);
+    b.step("test", "Run unit tests (no GPU or window; links SDL, needs slangc)").dependOn(&run_tests.step);
 }

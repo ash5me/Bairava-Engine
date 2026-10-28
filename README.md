@@ -40,7 +40,7 @@ zig build                          # compile the executable and shaders into zig
 zig build run                      # build and launch the game
 zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
-zig build test                     # run unit tests (no GPU or SDL needed)
+zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
 
 `zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written.
@@ -100,7 +100,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── level.zig          Tile grid, view culling, tile drawing
 │   │   └── config.zig         Title, window and native sizes, level size, background color, update rate, scale mode, asset list
 │   ├── root.zig               Unused template file from `zig init`
-│   └── tests.zig              Test root for `zig build test`. Pure modules only: string, hash_map, assets, math.
+│   └── tests.zig              Test root for `zig build test`: every unit test. Pure modules, plus input and renderer, which import SDL. Opens no window.
 ├── shaders/
 │   └── default.slang          Sprite vertex and fragment shaders. Compiled once per target, and `-DDXIL_TARGET` selects the D3D12 sampler layout
 ├── assets/
@@ -201,8 +201,8 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 **Math and data**
 - cglm for vectors and matrices, wrapped in `math.zig`. The sprite projection and diagonal normalization use it. `math.zig` also covers 3D transforms, perspective and look-at matrices, and quaternions (slerp, look rotation, billboard). Only the 2D parts are used so far.
 - Validated names and paths (`string.zig`), a hash map keyed by names (`hash_map.zig`), and an asset table that gives each name a dense id (`assets.zig`).
-- `zig build test` runs unit tests for the string, hash map, asset table, and math modules without SDL or a GPU.
-- Mouse mapping from window points to view and world pixels in `view.zig`, through `Context.mouseWorld`. Its tests aren't run by `zig build test` yet (see Known issues).
+- `zig build test` runs every unit test: the string, hash map, asset table, math, view, input, and renderer modules. It links SDL and opens no window or GPU device.
+- Mouse mapping from window points to view and world pixels in `view.zig`, through `Context.mouseWorld`. Its tests run with `zig build test`.
 
 **Gameplay**
 - Player movement with arrow keys or WASD, normalized diagonals, and map clamping.
@@ -224,7 +224,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Engine | `engine/engine.zig` | Prototype | 60% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
 | Logging and assertions | `engine/log.zig` | Functional | 70% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Missing: log file output, profiling zones. |
 | Gameplay | `game/` | Prototype | 15% | Player with directional walk animation, one test level, and movement and quit actions bound in `game/controls.zig`. No entities, rules, or level files. |
-| Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Asks the device for DXIL only when the build embeds it. Missing: device-lost recovery, Metal support, pass helpers. |
+| Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Asks the device for DXIL only when the build embeds it. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, Metal support, pass helpers. |
 | Shaders | `shader.zig` | Basic | 55% | Picks the first shader format the device accepts (SPIR-V, then DXIL) and creates GPU shaders from code embedded at build time. DXIL is optional (`-Ddxil=true`). Per-shader entry points and resource counts are declared in `sprite.zig`. Missing: MSL, reflection. Uniform buffer count is supported but unused. |
 | Textures | `texture.zig` | Solid base | 70% | Synchronous upload that waits for GPU idle. Missing: atlases, async uploads, unload and reload. |
 | Images | `image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
@@ -235,11 +235,11 @@ These estimates are rough. They measure how close each area is to something usab
 | Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Missing: index buffer, rotation, flip, origin, alpha tint, z-order, growable capacity. |
 | Camera | `camera.zig` | Functional | 50% | Follow, clamp, and pixel snap. Missing: smoothing, dead zone, zoom, shake. |
 | Level | `game/level.zig` | Early | 25% | One uniform layer drawn with culling. No tile data, multiple layers, loading, or collision. |
-| Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but have no position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. |
-| View mapping | `view.zig` | Functional | 60% | Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, which `src/tests.zig` doesn't run yet. |
+| Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but have no position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `src/tests.zig`. |
+| View mapping | `view.zig` | Functional | 60% | Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
 | Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, cglm, embedded shaders (SPIR-V, and DXIL with `-Ddxil=true`), the run step, and the test step. Installs `assets/` beside the executable. Missing: a Metal (MSL) shader target. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
-| Tests | `src/tests.zig` | Functional | 40% | Unit tests for `string.zig`, `hash_map.zig`, `assets.zig`, and `math.zig`, run by `zig build test`. Missing: `view.zig`'s tests, and tests for SDL-facing code. |
+| Tests | `src/tests.zig` | Functional | 40% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, input, and renderer. Missing: tests that open a window or create a GPU device. |
 | Entities | none | Not started | 0% | The player is a struct in `game/player.zig`. There is no entity list yet. |
 | Collision | none | Not started | 0% | |
 | Audio | none | Not started | 0% | |
@@ -290,7 +290,7 @@ These are the natural extension points. Each one reuses existing code.
 
 10. **Fixed: the SPIR-V version was not pinned.** `build.zig` now passes `-profile spirv_1_5` to `slangc`, the version that matches the Vulkan 1.2 request made at runtime.
 
-11. **`view.zig`'s tests don't run.** `src/tests.zig` imports `string.zig`, `hash_map.zig`, `assets.zig`, and `math.zig`, but not `view.zig`, so the five tests in `view.zig` are never compiled by `zig build test`. Add `_ = @import("engine/view.zig");` to the test block.
+11. **Fixed: `view.zig`'s tests didn't run.** `src/tests.zig` imports `view.zig`, so its five tests run with `zig build test`.
 
 ## Roadmap
 
@@ -343,7 +343,7 @@ These are the natural extension points. Each one reuses existing code.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, so a config entry such as `assets/warrior_16x32.png` works from any directory.
 - `assets/warrior.png` is the original source art; the game loads the prepared 80×128 `assets/warrior_16x32.png` sheet instead.
 - Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
-- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, and `view.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`.
+- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, and `view.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
