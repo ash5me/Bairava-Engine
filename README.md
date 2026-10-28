@@ -37,6 +37,7 @@ Run commands from the project root. Shader and asset paths are relative to the w
 zig build                          # compile the executable and shaders into zig-out/
 zig build run                      # build and launch the game
 zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
+zig build test                     # run unit tests (no GPU or SDL needed)
 ```
 
 `zig build` installs `zig-out/bin/my-game(.exe)` and the compiled shaders in `zig-out/shaders/`.
@@ -69,7 +70,7 @@ Keys are bound to named actions in `game/controls.zig`.
 
 ```
 .
-├── build.zig                  Build graph: SDL3, stb_image, shader compilation, run step
+├── build.zig                  Build graph: SDL3, stb_image, cglm, shader compilation, run and test steps
 ├── build.zig.zon              Package manifest and pinned dependencies
 ├── src/
 │   ├── main.zig               Entry point: hands the game to the engine
@@ -83,14 +84,19 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── sprite.zig         Batched textured quads, sprite pipeline, vertex upload
 │   │   ├── camera.zig         View position, follow target, edge clamping
 │   │   ├── input.zig          Key enum, held, pressed, and released state, mouse events
-│   │   └── log.zig            Logging and assertions for debugging
+│   │   ├── log.zig            Logging and assertions for debugging
+│   │   ├── math.zig           cglm wrappers: projection, transforms, normalization. The only cglm import.
+│   │   ├── string.zig         Validated fixed-capacity Name and Path types
+│   │   ├── hash_map.zig       StringMap: open-addressing hash map keyed by Name
+│   │   └── assets.zig         Asset Table: names to ids and validated paths
 │   ├── game/                  Gameplay code. Uses the engine only through engine/engine.zig.
 │   │   ├── game.zig           Game state, asset loading, update and draw
 │   │   ├── controls.zig       Named actions and the keys bound to them
 │   │   ├── player.zig         Player position, facing, walk animation, drawing
 │   │   ├── level.zig          Tile grid, view culling, tile drawing
-│   │   └── config.zig         Title, window and native sizes, level size, background color, update rate, scale mode
-│   └── root.zig               Unused template file from `zig init`
+│   │   └── config.zig         Title, window and native sizes, level size, background color, update rate, scale mode, asset list
+│   ├── root.zig               Unused template file from `zig init`
+│   └── tests.zig              Test root for `zig build test`. Pure modules only.
 ├── shaders/
 │   └── triangle.slang         Sprite vertex and fragment shaders (the name is legacy)
 ├── assets/
@@ -99,7 +105,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   └── warrior_16x32.png      Runtime sprite sheet: 5 columns × 4 rows of 16×32 cells
 ├── scripts/
 │   └── key_checker.ps1        Windows tool that keys out a checkerboard background
-├── vendor/                    stb_image.h and stb_image_impl.c
+├── vendor/                    stb_image.h and stb_image_impl.c; cglm (headers, C sources, license) in vendor/cglm/
 └── .gitignore
 ```
 
@@ -138,7 +144,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 
 - **World space** is in native pixels, with the origin at the map's top-left corner and y increasing downward. Tiles are 16 px.
 - **Camera** `x` and `y` give the world position of the view's top-left corner.
-- **Sprite destinations** are in view pixels, so world positions have the camera subtracted. `SpriteBatch` converts them to normalized device coordinates, with y pointing up.
+- **Sprite destinations** are in view pixels, so world positions have the camera subtracted. `SpriteBatch` multiplies them by the projection from `math.ortho2d`, which gives normalized device coordinates with y pointing up.
 - **Sprite sources** are in texels. `drawSprite` converts them to 0 to 1 UV coordinates.
 - **Tint** is an RGB multiplier. There is no alpha tint.
 
@@ -149,6 +155,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | Zig | 0.16.0-dev, pinned by `minimum_zig_version` | Language, build system, standard library | MIT |
 | SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard state, SDL_GPU API, file loading, timing, memory | zlib |
 | stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8 | Public domain or MIT |
+| cglm | 0.9.7, vendored in `vendor/cglm/`: headers, the 46 C sources its CMake lists, and its license | Vector and matrix math, the pixel projection, and transforms | MIT |
 | Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/triangle.slang` to SPIR-V; no explicit profile is set (see Known issues) | Apache 2.0 with LLVM exception |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
 | PowerShell and System.Drawing | Windows | `scripts/key_checker.ps1` | Windows built-in |
@@ -182,6 +189,11 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Camera follow with edge clamping, pixel snapping, and centering when the world is smaller than the view.
 - The two-pass pixel-art pipeline: native target, then stretch to the window.
 
+**Math and data**
+- cglm for vectors and matrices, wrapped in `math.zig`. The sprite projection and diagonal normalization use it.
+- Validated names and paths (`string.zig`), a hash map keyed by names (`hash_map.zig`), and an asset table that gives each name a dense id (`assets.zig`).
+- `zig build test` runs unit tests for these modules without SDL or a GPU.
+
 **Gameplay**
 - Player movement with arrow keys or WASD, normalized diagonals, and map clamping.
 - A 16×32 South Indian warrior sprite loaded from `assets/warrior_16x32.png`, with separate player width and height constants.
@@ -206,13 +218,17 @@ These estimates are rough. They measure how close each area is to something usab
 | Shaders | `shader.zig` | Basic | 50% | Loads SPIR-V from disk. Missing: embedding, reflection, hot reload. Uniform buffer count is supported but unused. |
 | Textures | `texture.zig` | Solid base | 70% | Synchronous upload that waits for GPU idle. Missing: atlases, async uploads, unload and reload. |
 | Images | `image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
+| Math | `math.zig` | Functional | 60% | cglm wrappers: identity, mul, translate, rotate, ortho, transform, normalize. Missing: 3D helpers, quaternions. |
+| Strings | `string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
+| Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, checked against `std.StringHashMap`. Missing: removal. |
+| Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. Missing: loading, caching, unloading. |
 | Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Missing: index buffer, rotation, flip, origin, alpha tint, z-order, growable capacity. |
 | Camera | `camera.zig` | Functional | 50% | Follow, clamp, and pixel snap. Missing: smoothing, dead zone, zoom, shake. |
 | Level | `game/level.zig` | Early | 25% | One uniform layer drawn with culling. No tile data, multiple layers, loading, or collision. |
 | Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but not usable yet, and mouse position is in window space (see Known issues). No gamepad or text input. |
-| Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, shaders, and the run step. Missing: tests, asset install step, other shader targets. |
+| Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, cglm, shaders, the run step, and the test step. Missing: asset install step, other shader targets. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
-| Tests | `root.zig` | Not started | 0% | Template leftover, not connected to the build. |
+| Tests | `src/tests.zig` | Functional | 40% | Unit tests for the pure modules, run by `zig build test`. Missing: tests for SDL-facing code. |
 | Entities | none | Not started | 0% | The player is a struct in `game/player.zig`. There is no entity list yet. |
 | Collision | none | Not started | 0% | |
 | Audio | none | Not started | 0% | |
@@ -237,6 +253,8 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
 
+**Add an asset.** Add a `{ .name, .path }` entry to `assets` in `game/config.zig`. The name must follow the rules in `engine/string.zig`, and the path must be relative to the project root. Both are checked when the game starts. Look the asset up once with `table.find(name)` and keep the returned id.
+
 **Add entities.** Store entities in an array of structs with a position, a velocity, and a sprite or animation. Update and draw them in the loop, subtracting the camera from world positions the same way `Player.draw` does. Once there are several entity types, consider the ECS approach from the roadmap.
 
 ## Known issues
@@ -251,13 +269,13 @@ These are the natural extension points. Each one reuses existing code.
 
 5. **Names don't match.** The package is `zig_sdl3_slang`, the executable is `my-game`, the window is `My Game`, and the sprite shader is `triangle.slang`. Choose one scheme and rename.
 
-6. **`root.zig` is template code.** Its functions and test are not used by the game, and `zig build test` is not wired to anything. Delete the file or move real tests into it.
+6. **`root.zig` is template code.** Its functions and test are not used by the game, and `zig build test` runs `src/tests.zig`, which doesn't import it. Delete the file or move real tests into it.
 
 7. **Texture uploads block.** `Texture.initRgba8` waits for the GPU to go idle. That is fine at load time, but it must not run every frame.
 
 8. **Fixed batch limits.** `SpriteBatch` panics above 8192 sprites or 256 texture switches in one frame. These limits fail loudly on purpose, but they will need revisiting once there are many textures or large levels.
 
-9. **The package file list omits build inputs.** `build.zig.zon` lists only `build.zig`, `build.zig.zon`, and `src` in `.paths`. A project that depends on this package would not receive `shaders/` or `vendor/`, which the build needs. Add those paths, or defer this until the package is meant for reuse.
+9. **Fixed: the package file list omitted build inputs.** `.paths` in `build.zig.zon` now includes `shaders` and `vendor`, which the build needs. `assets` stays out, since the build doesn't read it.
 
 10. **The SPIR-V version is not pinned.** `build.zig` and `renderer.zig` both say the shaders are SPIR-V 1.5, but the `slangc` command passes no `-profile` flag, so the output depends on the installed Slang version's default. SPIR-V 1.5 is the version that matches the Vulkan 1.2 request made at runtime, so the two should be set together. Add `-profile spirv_1_5` to the command, or change the comment if another version is intended.
 
@@ -294,7 +312,7 @@ These are the natural extension points. Each one reuses existing code.
 - [ ] On-screen debug overlay with a frame-time graph, replacing the title stats.
 - [ ] Profiling zones (for example Tracy), and log file output.
 - [ ] Settings file for resolution, fullscreen, vsync, and key bindings.
-- [ ] Unit tests wired into `zig build test`.
+- [x] Unit tests wired into `zig build test`.
 
 ### Phase 4: platforms and tooling
 
@@ -310,7 +328,9 @@ These are the natural extension points. Each one reuses existing code.
 - Game `update` runs at the fixed rate `update_hz` in `game/config.zig`, and `ctx.dt` is that step. `draw` runs once per frame and gets `alpha`, which blends between the last two updates.
 - Paths are relative to the project root; run `zig build run` from the repository root so `assets/warrior_16x32.png` can be found.
 - `assets/warrior.png` is the original source art; the game loads the prepared 80×128 `assets/warrior_16x32.png` sheet instead.
-- Only `sdl.zig` imports SDL's C headers.
+- Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
+- `math.zig`, `string.zig`, `hash_map.zig`, and `assets.zig` don't import SDL or `log.zig`, so `zig build test` runs without a GPU. Keep new pure code the same way when you can.
+- Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
 - Capacity limits are constants that panic when exceeded, so overflows are caught early.

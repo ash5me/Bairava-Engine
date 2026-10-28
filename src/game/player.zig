@@ -99,12 +99,11 @@ pub const Player = struct {
         // After a turn, the walk index can sit past the end of a shorter row, so wrap it.
         self.frame = if (moving) self.walk_frame % frame_count else 0;
 
-        // Diagonal input is normalized so it isn't faster.
-        if (dx != 0 and dy != 0) {
-            const diagonal = 1.0 / @sqrt(2.0);
-            dx *= diagonal;
-            dy *= diagonal;
-        }
+        // Diagonal input is normalized so it isn't faster. Cardinal input already has length 1,
+        // and zero input stays zero.
+        const direction = engine.math.normalizeOrZero(.{ dx, dy });
+        dx = direction[0];
+        dy = direction[1];
 
         // Keep the whole sprite inside the map.
         self.x = std.math.clamp(self.x + dx * speed * dt, 0.0, map_w - width);

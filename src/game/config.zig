@@ -16,6 +16,27 @@ pub const clear_rgb = [3]f32{ 0.2, 0.3, 0.5 };
 pub const update_hz: u32 = 60;
 /// Starting scale mode. Press I in game to toggle between fit and integer.
 pub const scale_mode: engine.ScaleMode = .fit;
+/// One asset the game loads at startup: the name code uses to refer to it, and its path relative to
+/// the project root.
+pub const Asset = struct {
+    name: []const u8,
+    path: []const u8,
+};
+
+/// Upper bound on registered assets. The asset table is sized from it.
+pub const max_assets: u32 = 32;
+
+/// Every asset the game registers at startup. Names follow the rules in engine/string.zig and must
+/// be unique.
+pub const assets = [_]Asset{
+    .{ .name = "tile", .path = "assets/tile.png" },
+    .{ .name = "warrior", .path = "assets/warrior_16x32.png" },
+};
+
+comptime {
+    if (assets.len > max_assets) @compileError("config.assets has more entries than max_assets");
+}
+
 /// Size of the test level, in tiles.
 pub const level_cols: u32 = 40;
 pub const level_rows: u32 = 24;

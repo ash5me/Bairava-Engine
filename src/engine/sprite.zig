@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const c = @import("sdl.zig").c;
+const math = @import("math.zig");
 const shader = @import("shader.zig");
 const Texture = @import("texture.zig").Texture;
 
@@ -46,8 +47,8 @@ pub const SpriteBatch = struct {
     batch_count: u32 = 0,
     /// Draw calls issued by draw() this frame. Shows whether batching is working.
     draw_calls: u32 = 0,
-    viewport_w: f32 = 1,
-    viewport_h: f32 = 1,
+    /// Maps pixel coordinates in the viewport to normalized device coordinates. Set by `begin`.
+    projection: math.Mat4 = undefined,
 
     /// Builds the pipeline and GPU buffers. `color_format` is the swapchain format
     /// the sprites render into.
@@ -125,6 +126,7 @@ pub const SpriteBatch = struct {
             .vb_binding = .{ .buffer = vertex_buffer, .offset = 0 },
             .upload_buffer = upload_buffer,
             .vertices = vertices,
+            .projection = math.ortho2d(1.0, 1.0),
         };
     }
 
@@ -135,8 +137,7 @@ pub const SpriteBatch = struct {
         self.sprite_count = 0;
         self.batch_count = 0;
         self.draw_calls = 0;
-        self.viewport_w = viewport_w;
-        self.viewport_h = viewport_h;
+        self.projection = math.ortho2d(viewport_w, viewport_h);
     }
 
     /// Queues one sprite. `src` is the texel rectangle to sample, `dst` is the on-screen
@@ -170,16 +171,16 @@ pub const SpriteBatch = struct {
         const u_right = (src.x + src.w) / tw;
         const v_bottom = (src.y + src.h) / th;
 
-        // Pixel rectangle (top-left origin) -> normalized device coordinates (y up).
-        const x_left = dst.x / self.viewport_w * 2.0 - 1.0;
-        const x_right = (dst.x + dst.w) / self.viewport_w * 2.0 - 1.0;
-        const y_top = 1.0 - dst.y / self.viewport_h * 2.0;
-        const y_bottom = 1.0 - (dst.y + dst.h) / self.viewport_h * 2.0;
+        // Pixel corners (top-left origin) -> normalized device coordinates (y up), through the projection.
+        const p_tl = math.transformPoint(&self.projection, dst.x, dst.y);
+        const p_tr = math.transformPoint(&self.projection, dst.x + dst.w, dst.y);
+        const p_br = math.transformPoint(&self.projection, dst.x + dst.w, dst.y + dst.h);
+        const p_bl = math.transformPoint(&self.projection, dst.x, dst.y + dst.h);
 
-        const tl = Vertex{ .pos = .{ x_left, y_top }, .uv = .{ u_left, v_top }, .color = tint };
-        const tr = Vertex{ .pos = .{ x_right, y_top }, .uv = .{ u_right, v_top }, .color = tint };
-        const br = Vertex{ .pos = .{ x_right, y_bottom }, .uv = .{ u_right, v_bottom }, .color = tint };
-        const bl = Vertex{ .pos = .{ x_left, y_bottom }, .uv = .{ u_left, v_bottom }, .color = tint };
+        const tl = Vertex{ .pos = p_tl, .uv = .{ u_left, v_top }, .color = tint };
+        const tr = Vertex{ .pos = p_tr, .uv = .{ u_right, v_top }, .color = tint };
+        const br = Vertex{ .pos = p_br, .uv = .{ u_right, v_bottom }, .color = tint };
+        const bl = Vertex{ .pos = p_bl, .uv = .{ u_left, v_bottom }, .color = tint };
 
         const start = self.vertex_count;
         self.vertices[start + 0] = tl;

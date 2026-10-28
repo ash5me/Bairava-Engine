@@ -1,6 +1,8 @@
 //! Gameplay: the level, the player, and how actions drive them. The engine calls into this
 //! file through `init`, `update`, `draw`, and `deinit`, and never looks inside it.
 
+const std = @import("std");
+
 const engine = @import("../engine/engine.zig");
 const config = @import("config.zig");
 const controls = @import("controls.zig");
@@ -12,6 +14,8 @@ const log = engine.log.scoped("game");
 pub const Game = struct {
     level: Level,
     player: Player,
+    /// Asset names and validated paths, registered from config.assets at startup.
+    assets: engine.assets.Table,
     tile: engine.Texture,
     warrior: engine.Texture,
 
@@ -19,17 +23,32 @@ pub const Game = struct {
         const level = Level{ .cols = config.level_cols, .rows = config.level_rows };
         const player = Player.init(level.widthPx(), level.heightPx());
         log.info("level {d}x{d} tiles, player starts at ({d:.0}, {d:.0})", .{ config.level_cols, config.level_rows, player.x, player.y });
+
+        // Register every asset up front. A bad name or path is a bug in config.zig, so it panics here,
+        // where the message says which entry is wrong.
+        var table = engine.assets.Table.init(std.heap.page_allocator, config.max_assets) catch |err| {
+            std.debug.panic("asset table allocation failed: {s}", .{@errorName(err)});
+        };
+        for (config.assets) |asset| {
+            _ = table.register(asset.name, asset.path) catch |err| {
+                std.debug.panic("asset '{s}' at '{s}' was rejected: {s}", .{ asset.name, asset.path, @errorName(err) });
+            };
+        }
+        log.info("registered {d} assets", .{table.count()});
+
         return .{
             .level = level,
             .player = player,
-            .tile = ctx.loadTexture("assets/tile.png"),
-            .warrior = ctx.loadTexture("assets/warrior_16x32.png"),
+            .assets = table,
+            .tile = loadNamedTexture(ctx, &table, "tile"),
+            .warrior = loadNamedTexture(ctx, &table, "warrior"),
         };
     }
 
     pub fn deinit(self: *Game) void {
         self.warrior.deinit();
         self.tile.deinit();
+        self.assets.deinit();
     }
 
     /// Runs at the fixed update rate. `ctx.dt` is the length of the step.
@@ -68,3 +87,11 @@ pub const Game = struct {
         self.player.draw(dc.batch, &self.warrior, dc.cam, dc.alpha);
     }
 };
+
+/// Loads the texture registered under `name`. A name that isn't registered is a bug in config.zig,
+/// so it panics.
+fn loadNamedTexture(ctx: *engine.Context, table: *const engine.assets.Table, name: []const u8) engine.Texture {
+    const id = table.find(name) orelse std.debug.panic("asset '{s}' is not registered", .{name});
+    const path = table.pathOf(id) orelse unreachable;
+    return ctx.loadTexture(path.cstr());
+}

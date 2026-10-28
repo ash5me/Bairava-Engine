@@ -21,6 +21,14 @@ pub const Key = @import("input.zig").Key;
 pub const Rect = @import("sprite.zig").Rect;
 pub const SpriteBatch = @import("sprite.zig").SpriteBatch;
 pub const Texture = @import("texture.zig").Texture;
+/// Vector and matrix math, backed by cglm.
+pub const math = @import("math.zig");
+/// Validated fixed-capacity strings for names and paths.
+pub const strings = @import("string.zig");
+/// Hash map keyed by validated names.
+pub const hash_map = @import("hash_map.zig");
+/// Asset names, ids, and validated paths.
+pub const assets = @import("assets.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = logging;
 
