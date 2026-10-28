@@ -80,6 +80,78 @@ fn addCglm(b: *std.Build, module: *std.Build.Module) void {
     }
 }
 
+/// One entry point of shaders/triangle.slang. To add a shader, add a row here, then declare a
+/// `shader.Source` in the code that uses it.
+const ShaderEntry = struct {
+    /// Function name in the Slang source.
+    entry: []const u8,
+    /// Stage name that slangc expects: "vertex" or "fragment".
+    stage: []const u8,
+    /// Output file name without an extension, such as "triangle.vert".
+    file: []const u8,
+    /// Declaration name in the generated `embedded_shaders` module, such as "triangle_vert".
+    /// A target's `suffix` is added to this name, so each format gets its own declaration.
+    decl: []const u8,
+};
+
+const shader_entries = [_]ShaderEntry{
+    .{ .entry = "vertexMain", .stage = "vertex", .file = "triangle.vert", .decl = "triangle_vert" },
+    .{ .entry = "fragmentMain", .stage = "fragment", .file = "triangle.frag", .decl = "triangle_frag" },
+};
+
+/// One output format for every shader entry point.
+const ShaderTarget = struct {
+    /// File extension for the output, such as "spv" or "dxil".
+    ext: []const u8,
+    /// slangc arguments that select the target and profile.
+    args: []const []const u8,
+    /// Added to each declaration name for this format, such as "_dxil".
+    suffix: []const u8,
+    /// An extra slangc argument, or null. DXIL compiles pass -DDXIL_TARGET so the shader can pick
+    /// the D3D12 register layout.
+    define: ?[]const u8,
+    /// Built only when -Ddxil=true. When off, the generated module declares an empty slice for it,
+    /// so a machine without DXIL support still builds the SPIR-V game.
+    optional: bool,
+};
+
+const shader_targets = [_]ShaderTarget{
+    .{
+        .ext = "spv",
+        .args = &.{ "-target", "spirv", "-profile", "spirv_1_5" },
+        .suffix = "",
+        .define = null,
+        .optional = false,
+    },
+    .{
+        .ext = "dxil",
+        .args = &.{ "-target", "dxil", "-profile", "sm_6_0" },
+        .suffix = "_dxil",
+        .define = "-DDXIL_TARGET",
+        .optional = true,
+    },
+};
+
+/// Source of the generated `embedded_shaders` module. Each compiled shader's bytes are copied into a
+/// 4-byte-aligned global, because SPIR-V is read as 32-bit words. An optional format that isn't
+/// built gets an empty slice. It is built at comptime from the tables above, so the module and the
+/// compile steps can't disagree about names.
+fn embeddedSource(b: *std.Build, dxil_enabled: bool) []const u8 {
+    var source: []const u8 = "";
+    inline for (shader_targets) |t| {
+        inline for (shader_entries) |s| {
+            const decl = s.decl ++ t.suffix;
+            const text: []const u8 = if (t.optional and !dxil_enabled)
+                "pub const " ++ decl ++ ": []align(4) const u8 = &.{};\n"
+            else
+                "const " ++ decl ++ "_storage align(4) = @embedFile(\"" ++ s.file ++ "." ++ t.ext ++ "\").*;\n" ++
+                    "pub const " ++ decl ++ ": []align(4) const u8 = &" ++ decl ++ "_storage;\n";
+            source = std.mem.concat(b.allocator, u8, &.{ source, text }) catch @panic("out of memory");
+        }
+    }
+    return source;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -116,24 +188,36 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
-    // Compile Slang shaders directly to SPIR-V (SPIR-V 1.5) into zig-out/shaders/.
-    // The device requests Vulkan 1.2 at runtime to accept this output.
-    inline for (.{
-        .{ "vertexMain", "vertex", "triangle.vert" },
-        .{ "fragmentMain", "fragment", "triangle.frag" },
-    }) |s| {
-        const compile = b.addSystemCommand(&.{
-            "slangc", "-target", "spirv",
-            "-entry", s[0],      "-stage",
-            s[1],
-        });
-        compile.addFileArg(b.path("shaders/triangle.slang"));
-        compile.addArg("-o");
-        const spv = compile.addOutputFileArg(s[2] ++ ".spv");
+    // Assets sit beside the executable, in bin/assets, where Context.loadTexture looks for them.
+    const install_assets = b.addInstallDirectory(.{
+        .source_dir = b.path("assets"),
+        .install_dir = .bin,
+        .install_subdir = "assets",
+    });
+    b.getInstallStep().dependOn(&install_assets.step);
 
-        const install = b.addInstallFile(spv, "shaders/" ++ s[2] ++ ".spv");
-        b.getInstallStep().dependOn(&install.step);
+    // Compile each shader entry point for each target, and embed the results in the executable
+    // through a generated module, so the game reads no shader files at runtime. DXIL is optional:
+    // pass -Ddxil=true to build it. The device requests Vulkan 1.2 at runtime to accept SPIR-V.
+    const dxil_enabled = b.option(bool, "dxil", "Compile DXIL shaders for D3D12") orelse false;
+    const shader_files = b.addWriteFiles();
+    inline for (shader_targets) |t| {
+        if (!t.optional or dxil_enabled) {
+            inline for (shader_entries) |s| {
+                const compile = b.addSystemCommand(&.{"slangc"});
+                compile.addArgs(t.args);
+                if (t.define) |d| compile.addArg(d);
+                compile.addArgs(&.{ "-entry", s.entry, "-stage", s.stage });
+                compile.addFileArg(b.path("shaders/triangle.slang"));
+                compile.addArg("-o");
+                const out = compile.addOutputFileArg(s.file ++ "." ++ t.ext);
+                _ = shader_files.addCopyFile(out, s.file ++ "." ++ t.ext);
+            }
+        }
     }
+    const embedded_source = embeddedSource(b, dxil_enabled);
+    const embedded_module = shader_files.add("embedded_shaders.zig", embedded_source);
+    exe.root_module.addAnonymousImport("embedded_shaders", .{ .root_source_file = embedded_module });
 
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());

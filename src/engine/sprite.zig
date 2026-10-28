@@ -3,6 +3,7 @@ const std = @import("std");
 const c = @import("sdl.zig").c;
 const math = @import("math.zig");
 const shader = @import("shader.zig");
+const embedded = @import("embedded_shaders");
 const Texture = @import("texture.zig").Texture;
 
 /// Vertex layout for sprite quads. Positions are in normalized device coordinates.
@@ -24,6 +25,23 @@ const max_sprites = 8192;
 const max_batches = 256;
 const vertices_per_sprite = 6;
 const max_vertices = max_sprites * vertices_per_sprite;
+
+/// The sprite shaders. build.zig compiles them and embeds the code under the `decl` names in its
+/// `shader_entries` table. The resource counts sit here, beside the pipeline that binds them.
+const vertex_source = shader.Source{
+    .name = "triangle.vert",
+    .entry = "vertexMain",
+    .stage = c.SDL_GPU_SHADERSTAGE_VERTEX,
+    .code = .{ .spirv = embedded.triangle_vert, .dxil = embedded.triangle_vert_dxil },
+};
+const fragment_source = shader.Source{
+    .name = "triangle.frag",
+    .entry = "fragmentMain",
+    .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
+    .code = .{ .spirv = embedded.triangle_frag, .dxil = embedded.triangle_frag_dxil },
+    // The fragment shader samples one texture, which takes one sampler slot.
+    .resources = .{ .samplers = 1 },
+};
 
 /// Consecutive vertices that sample the same texture, drawn in one call.
 const Batch = struct {
@@ -53,11 +71,10 @@ pub const SpriteBatch = struct {
     /// Builds the pipeline and GPU buffers. `color_format` is the swapchain format
     /// the sprites render into.
     pub fn init(device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat) SpriteBatch {
-        // Slang writes each entry point as "main" in the SPIR-V output.
-        const vert = shader.loadSpirv(device, "zig-out/shaders/triangle.vert.spv", "main", c.SDL_GPU_SHADERSTAGE_VERTEX, .{});
+        const format = shader.pickFormat(device);
+        const vert = shader.load(device, format, vertex_source);
         defer c.SDL_ReleaseGPUShader(device, vert);
-        // The fragment shader samples one texture, which takes one sampler slot.
-        const frag = shader.loadSpirv(device, "zig-out/shaders/triangle.frag.spv", "main", c.SDL_GPU_SHADERSTAGE_FRAGMENT, .{ .samplers = 1 });
+        const frag = shader.load(device, format, fragment_source);
         defer c.SDL_ReleaseGPUShader(device, frag);
 
         // Alpha blending, so transparent pixels show what's behind them.
@@ -78,6 +95,7 @@ pub const SpriteBatch = struct {
         vb_desc.pitch = @sizeOf(Vertex);
         vb_desc.input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
+        // Locations must match the [vk::location] values in shaders/triangle.slang.
         var vb_attrs = [_]c.SDL_GPUVertexAttribute{
             .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "pos") },
             .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },

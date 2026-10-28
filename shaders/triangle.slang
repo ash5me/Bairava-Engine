@@ -1,13 +1,17 @@
+// Sprite shaders. The vertex layout is defined in src/engine/sprite.zig (Vertex, and the
+// vb_attrs list in SpriteBatch.init). The locations below must match those attributes, so
+// change both together.
+
 struct VSInput {
-    float2 position : POSITION;
-    float2 uv : TEXCOORD0;
-    float3 color : COLOR0;
+    [vk::location(0)] float2 position : POSITION;
+    [vk::location(1)] float2 uv : TEXCOORD0;
+    [vk::location(2)] float3 color : COLOR0;
 };
 
 struct VSOutput {
     float4 position : SV_Position;
-    float2 uv : TEXCOORD0;
-    float3 color : COLOR0;
+    [vk::location(0)] float2 uv : TEXCOORD0;
+    [vk::location(1)] float3 color : COLOR0;
 };
 
 [shader("vertex")]
@@ -19,11 +23,27 @@ VSOutput vertexMain(VSInput input) {
     return output;
 }
 
-// Combined texture and sampler, bound in set 2 / binding 0 (SDL_GPU's fragment sampler set).
+// The fragment sampler lives in set 2 / slot 0 on Vulkan (SDL_GPU's fragment sampler set), and
+// in space 2 on D3D12 (t0 for the texture, s0 for the sampler, per SDL_gpu.h). Vulkan needs one
+// combined image sampler, while D3D12 needs the texture and sampler as separate registers. So the
+// declaration depends on the target. Pass -DDXIL_TARGET when compiling for DXIL.
+#ifdef DXIL_TARGET
+Texture2D tex : register(t0, space2);
+SamplerState samp : register(s0, space2);
+
+float4 sampleTex(float2 uv) {
+    return tex.Sample(samp, uv);
+}
+#else
 [vk::binding(0, 2)]
 Sampler2D tex;
 
+float4 sampleTex(float2 uv) {
+    return tex.Sample(uv);
+}
+#endif
+
 [shader("fragment")]
 float4 fragmentMain(VSOutput input) : SV_Target {
-    return tex.Sample(input.uv) * float4(input.color, 1.0);
+    return sampleTex(input.uv) * float4(input.color, 1.0);
 }

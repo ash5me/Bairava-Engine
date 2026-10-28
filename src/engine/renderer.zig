@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const embedded = @import("embedded_shaders");
+
 const c = @import("sdl.zig").c;
 
 /// A frame in progress: the command buffer and the swapchain texture it draws to.
@@ -32,6 +34,11 @@ pub const Renderer = struct {
         defer c.SDL_DestroyProperties(props);
 
         _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+        // Ask for DXIL only when this build embeds it (-Ddxil=true). Without it the device would
+        // accept a format the game has no code for.
+        if (embedded.triangle_vert_dxil.len != 0) {
+            _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, true);
+        }
         _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, gpu_debug);
         _ = c.SDL_SetPointerProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER, &vk_opts);
 

@@ -78,6 +78,9 @@ pub const Context = struct {
     layout: view.Layout,
     /// The camera as the game last drew with it. Read it through `mouseWorld`.
     camera: *const Camera,
+    /// Directory of the running executable, with a trailing separator. Asset paths are resolved
+    /// against it, because the build installs assets beside the executable.
+    base_path: []const u8,
 
     /// The mouse position in world pixels, as the player sees it. It is the cursor's place in the
     /// view drawn last frame, plus that frame's camera position. Use this in `update` rather than
@@ -86,10 +89,14 @@ pub const Context = struct {
         return view.windowToWorld(self.layout, self.camera, .{ .x = self.input.mouse_x, .y = self.input.mouse_y });
     }
 
-    /// Loads an image and uploads it as a texture. Panics if the file is missing or can't be
-    /// decoded. Paths are relative to the working directory.
-    pub fn loadTexture(self: *const Context, path: [*:0]const u8) Texture {
-        var img = image.loadRgba8(path) catch |err| {
+    /// Loads an image and uploads it as a texture. `relative` is relative to the executable's
+    /// folder, where the build installs the assets. Panics if the file is missing or can't be decoded.
+    pub fn loadTexture(self: *const Context, relative: []const u8) Texture {
+        var buf: [max_full_path]u8 = undefined;
+        const path = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ self.base_path, relative }) catch {
+            std.debug.panic("asset path '{s}' is longer than {d} bytes", .{ relative, max_full_path });
+        };
+        var img = image.loadRgba8(path.ptr) catch |err| {
             std.debug.panic("failed to load {s}: {s}", .{ path, @errorName(err) });
         };
         defer img.deinit();
@@ -120,6 +127,8 @@ const title_interval: f32 = 0.5;
 /// pixels to draw into, so the loop idles instead of spinning. The sleep is short enough that a
 /// restored window shows up within a frame, and SDL keeps queuing events while the loop sleeps.
 const idle_sleep_ms: u32 = 16;
+/// Longest full asset path the loader builds, in bytes. A longer path panics with a clear message.
+const max_full_path = 1024;
 
 const white = [3]f32{ 1.0, 1.0, 1.0 };
 const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
@@ -177,6 +186,11 @@ pub fn run(comptime Game: type, config: Config) void {
     // The game sets the world size every frame, so the camera starts without one.
     var cam = Camera{ .view_w = native_wf, .view_h = native_hf, .world_w = 0, .world_h = 0 };
 
+    // Find the executable's folder once. SDL3 owns the returned string, so it stays valid for the run.
+    const base_c = c.SDL_GetBasePath();
+    if (base_c == null) std.debug.panic("SDL_GetBasePath failed: {s}", .{c.SDL_GetError()});
+    const base_path = std.mem.span(base_c);
+
     // Before the first frame is drawn, assume the view fills the window at its native size.
     var ctx = Context{
         .device = gpu.device,
@@ -184,6 +198,7 @@ pub fn run(comptime Game: type, config: Config) void {
         .scale_mode = config.scale_mode,
         .layout = .{ .dst_w = native_wf, .dst_h = native_hf, .view_w = native_wf, .view_h = native_hf },
         .camera = &cam,
+        .base_path = base_path,
     };
     var game = Game.init(&ctx);
     defer game.deinit();

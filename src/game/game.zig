@@ -93,5 +93,5 @@ pub const Game = struct {
 fn loadNamedTexture(ctx: *engine.Context, table: *const engine.assets.Table, name: []const u8) engine.Texture {
     const id = table.find(name) orelse std.debug.panic("asset '{s}' is not registered", .{name});
     const path = table.pathOf(id) orelse unreachable;
-    return ctx.loadTexture(path.cstr());
+    return ctx.loadTexture(path.slice());
 }
