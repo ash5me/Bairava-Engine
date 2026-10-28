@@ -150,7 +150,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 ### Coordinate systems
 
 - **World space** is in native pixels, with the origin at the map's top-left corner and y increasing downward. Tiles are 16 px.
-- **Camera** `x` and `y` give the world position of the view's top-left corner.
+- **Camera** `x` and `y` give the world position of the view's top-left corner. They keep fractions while the camera eases. Each sprite and tile rounds its screen position once, with `Camera.screenX` and `screenY`, so everything stays on whole pixels without the camera stepping on its own.
 - **Sprite destinations** are in view pixels, so world positions have the camera subtracted. `SpriteBatch` multiplies them by the projection from `math.ortho2d`, which gives normalized device coordinates with y pointing up.
 - **Sprite sources** are in texels. `drawSprite` converts them to 0 to 1 UV coordinates.
 - **Tint** is an RGB multiplier. There is no alpha tint.
@@ -238,7 +238,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, checked against `std.StringHashMap`. Missing: removal. |
 | Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. Missing: loading, caching, unloading. |
 | Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Storage grows with each frame. Missing: index buffer, rotation, flip, origin, alpha tint, z-order. |
-| Camera | `camera.zig` | Functional | 65% | Follow, frame-rate-independent smoothing, clamp, and pixel snap. Missing: zoom, dead zone, shake. |
+| Camera | `camera.zig` | Functional | 65% | Follow, frame-rate-independent smoothing, clamp, and per-sprite pixel rounding. Missing: zoom, dead zone, shake. |
 | Animation | `animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
 | Level | `game/level.zig` | Early | 50% | Tile map drawn one layer at a time with culling, in ground, decoration, player, foreground order. Solid tiles block the player. No tile animation. |
 | Tile map | `engine/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |

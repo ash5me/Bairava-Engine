@@ -596,12 +596,10 @@ test "followSmooth eases toward the target and gets there over time" {
     cam.follow(0, 0);
     // A target at 500 centers the view at 480.
     cam.followSmooth(500, 500, 1.0 / 60.0, 10);
-    try std.testing.expect(cam.smooth_x > 0 and cam.smooth_x < 480);
+    try std.testing.expect(cam.x > 0 and cam.x < 480);
     var i: u32 = 0;
     while (i < 600) : (i += 1) cam.followSmooth(500, 500, 1.0 / 60.0, 10);
-    try std.testing.expectApproxEqAbs(@as(f32, 480), cam.smooth_x, 0.01);
-    // The drawn position is the smoothed one, rounded to whole pixels.
-    try std.testing.expectEqual(@round(cam.smooth_x), cam.x);
+    try std.testing.expectApproxEqAbs(@as(f32, 480), cam.x, 0.01);
 }
 
 test "followSmooth covers the same distance at any frame rate" {
@@ -613,7 +611,30 @@ test "followSmooth covers the same distance at any frame rate" {
     while (i < 30) : (i += 1) slow.followSmooth(500, 500, 1.0 / 30.0, 6);
     i = 0;
     while (i < 120) : (i += 1) fast.followSmooth(500, 500, 1.0 / 120.0, 6);
-    try std.testing.expectApproxEqAbs(slow.smooth_x, fast.smooth_x, 1e-3);
+    try std.testing.expectApproxEqAbs(slow.x, fast.x, 1e-3);
+}
+
+test "the camera keeps fractions, and screenX rounds once from them" {
+    var cam = camera.Camera{ .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    cam.x = 10.5;
+    try std.testing.expectEqual(@as(f32, 11), cam.screenX(21.0));
+    try std.testing.expectEqual(@as(f32, 10), cam.screenX(20.4));
+}
+
+test "a sprite that keeps pace with the camera stays on one pixel" {
+    // The sprite and the camera both move 0.37 px per step, and the sprite sits 16.3 px right of the
+    // camera's left edge. Rounding the camera and the sprite separately would step the sprite by a
+    // pixel now and then.
+    var cam = camera.Camera{ .view_w = 320, .view_h = 180, .world_w = 4000, .world_h = 180 };
+    var sprite_x: f32 = 100;
+    cam.x = sprite_x - 16.3;
+    const first = cam.screenX(sprite_x);
+    var i: u32 = 0;
+    while (i < 50) : (i += 1) {
+        sprite_x += 0.37;
+        cam.x += 0.37;
+        try std.testing.expectEqual(first, cam.screenX(sprite_x));
+    }
 }
 
 test "a rate of zero snaps the camera to its target" {

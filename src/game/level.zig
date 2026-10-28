@@ -72,9 +72,10 @@ pub const Level = struct {
                     .w = tile_px,
                     .h = tile_px,
                 };
+                // The same rounding as the player's sprite, so tiles and sprites stay on one pixel grid.
                 const dst = engine.Rect{
-                    .x = @as(f32, @floatFromInt(col)) * tile_px - cam.x,
-                    .y = @as(f32, @floatFromInt(row)) * tile_px - cam.y,
+                    .x = cam.screenX(@as(f32, @floatFromInt(col)) * tile_px),
+                    .y = cam.screenY(@as(f32, @floatFromInt(row)) * tile_px),
                     .w = tile_px,
                     .h = tile_px,
                 };

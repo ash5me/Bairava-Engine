@@ -142,10 +142,10 @@ pub const Player = struct {
             .w = width,
             .h = height,
         };
-        // Whole native pixels keep the edges of the sprite sharp.
+        // Whole native pixels keep the edges of the sprite sharp. The camera rounds once per sprite.
         const dst = engine.Rect{
-            .x = @round(pos.x) - cam.x,
-            .y = @round(pos.y) - cam.y,
+            .x = cam.screenX(pos.x),
+            .y = cam.screenY(pos.y),
             .w = width,
             .h = height,
         };
