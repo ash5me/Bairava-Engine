@@ -1,4 +1,4 @@
-# My Game
+# Bairava
 
 A 2D pixel-art game engine in progress, written in Zig. It draws a tile map at a fixed native resolution, scales it to any window size with nearest-neighbor filtering, and lets a player walk around while a camera follows. Rendering goes through SDL3's GPU API, with shaders written in Slang and compiled to SPIR-V.
 
