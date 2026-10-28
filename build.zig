@@ -51,9 +51,11 @@ const cglm_sources = [_][]const u8{
     "vendor/cglm/src/clipspace/project_zo.c",
 };
 
-/// Gives `module` cglm's headers and compiles cglm's C sources into it. CGLM_ALL_UNALIGNED stops
-/// cglm from assuming 16-byte alignment, which Zig arrays don't guarantee. src/engine/math.zig
-/// defines the same macro for its @cImport, so both sides see the same types.
+/// Gives `module` cglm's headers and compiles cglm's C sources into it. Two macros must match the
+/// @cImport in src/engine/math.zig, so the C library and the translated headers agree.
+/// CGLM_ALL_UNALIGNED stops cglm from assuming 16-byte alignment, which Zig arrays don't guarantee.
+/// CGLM_FORCE_DEPTH_ZERO_TO_ONE gives depth from 0 (near) to 1 (far), as SDL_GPU expects. Without
+/// it, cglm's exported glmc_* functions would use depth from -1 to 1 while math.zig uses 0 to 1.
 /// cglm's SIMD paths are off here. Zig's @cImport translates cglm's SIMD wrappers into calls to
 /// helpers that are never defined, so the build would fail to link. The portable scalar code is
 /// used on every target, and src/engine/math.zig undefines the same macros before its @cImport.
@@ -72,6 +74,7 @@ const cglm_simd_flags = [_][]const u8{
 fn addCglm(b: *std.Build, module: *std.Build.Module) void {
     module.addIncludePath(b.path("vendor/cglm/include"));
     module.addCMacro("CGLM_ALL_UNALIGNED", "1");
+    module.addCMacro("CGLM_FORCE_DEPTH_ZERO_TO_ONE", "1");
     for (cglm_sources) |path| {
         module.addCSourceFile(.{ .file = b.path(path), .flags = &cglm_simd_flags });
     }
