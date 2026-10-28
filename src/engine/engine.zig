@@ -102,6 +102,10 @@ pub const DrawContext = struct {
 const max_dt: f32 = 0.1;
 /// How often the window title is refreshed, in seconds.
 const title_interval: f32 = 0.5;
+/// How long to sleep when there is nothing to draw, in milliseconds. A minimized window has no
+/// pixels to draw into, so the loop idles instead of spinning. The sleep is short enough that a
+/// restored window shows up within a frame, and SDL keeps queuing events while the loop sleeps.
+const idle_sleep_ms: u32 = 16;
 
 const white = [3]f32{ 1.0, 1.0, 1.0 };
 const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
@@ -219,7 +223,12 @@ pub fn run(comptime Game: type, config: Config) void {
         var pw: c_int = 0;
         var ph: c_int = 0;
         _ = c.SDL_GetWindowSizeInPixels(window, &pw, &ph);
-        if (pw <= 0 or ph <= 0) continue;
+        if (pw <= 0 or ph <= 0) {
+            // Minimized: there is nothing to draw into, so sleep rather than spin. Events stay
+            // queued in SDL until the next poll.
+            c.SDL_Delay(idle_sleep_ms);
+            continue;
+        }
         const win_wf: f32 = @floatFromInt(pw);
         const win_hf: f32 = @floatFromInt(ph);
 
@@ -252,7 +261,11 @@ pub fn run(comptime Game: type, config: Config) void {
         cam.view_h = view_hf;
 
         // Acquire the frame after the layout is known.
-        const frame = gpu.beginFrame() orelse continue;
+        // A minimized window can report a nonzero size yet get no swapchain, so this path idles too.
+        const frame = gpu.beginFrame() orelse {
+            c.SDL_Delay(idle_sleep_ms);
+            continue;
+        };
 
         // Pass 1: the game queues its sprites, and they're drawn into the view-sized target.
         world_batch.begin(view_wf, view_hf);

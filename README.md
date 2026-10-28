@@ -135,9 +135,9 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 3. Add the frame time to an accumulator. While it holds at least one fixed step (1/60 s by default), latch the pending input so it reaches exactly one update, run game `update` with `ctx.dt` set to that step, and subtract the step. Stop early if the game sets `running` to false.
 4. Game `update`: read actions from `game/controls.zig`. Quit and scale toggle act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and the player is clamped to the map.
 5. Compute `alpha`, the leftover fraction of a step, from 0 to 1. Drawing blends between the last two updates with it, so motion stays smooth when the display rate and update rate differ.
-6. Read the window size in pixels. Choose the scale for the current scale mode (see Rendering model), then compute the view size. The native view is 320×180 in `game/config.zig`.
+6. Read the window size in pixels. If either side is zero, the window is minimized, so sleep for 16 ms (`idle_sleep_ms` in `engine/engine.zig`) and start the next frame. Otherwise, choose the scale for the current scale mode (see Rendering model), then compute the view size. The native view is 320×180 in `game/config.zig`.
 7. If the view size changed, wait for the GPU to go idle and recreate the native target.
-8. Acquire a command buffer and swapchain texture. Skip the frame if either is unavailable.
+8. Acquire a command buffer and swapchain texture. If either is unavailable, sleep for the same 16 ms and start the next frame, so a minimized window doesn't spin.
 9. Pass 1: game `draw` points the camera at the player's blended center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target.
 10. Pass 2: queue one quad that stretches the native target across the window. In fit mode it covers the whole window. In integer mode it covers a centered whole-number multiple of the view.
 11. Submit the command buffer. Every 0.5 s, refresh the window title with FPS, sprite count, draw calls, scale, scale mode, and view size.
@@ -171,6 +171,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Quit on window close or Esc. F11 toggles fullscreen.
 - Variable-timestep loop with delta time capped at 0.1 s.
 - Live stats in the window title.
+- A minimized window idles instead of spinning the CPU.
 
 **GPU and shaders**
 - GPU device creation with a Vulkan 1.2 request, SPIR-V shaders, and an optional validation layer (`-Dgpu-debug`).
@@ -263,9 +264,9 @@ These are the natural extension points. Each one reuses existing code.
 
 1. **Mouse coordinates are in the wrong space for gameplay.** `motion.x` and `motion.y` are window-space values, but the render size comes from `SDL_GetWindowSizeInPixels`. On high-DPI displays these differ. Convert window coordinates to pixels, divide by the scale to get view pixels, then add the camera position to get world coordinates.
 
-2. **Asset and shader paths depend on the working directory.** Running the executable from another folder panics on the first load. The asset paths are set in `game/game.zig`, and the shader paths are hardcoded in `engine/sprite.zig`. Both are relative to the working directory. Resolve paths relative to the executable, or embed the compiled shaders.
+2. **Asset and shader paths depend on the working directory.** Running the executable from another folder panics on the first load. The asset paths are listed in `game/config.zig`, and the shader paths are hardcoded in `engine/sprite.zig`. Both are relative to the working directory. Resolve paths relative to the executable, or embed the compiled shaders.
 
-3. **A minimized window spins the CPU.** When the window has zero pixel size, the loop `continue`s without waiting. Add an `SDL_Delay`, or use `SDL_WaitEvent`, in that branch.
+3. **Fixed: a minimized window spun the CPU.** A zero-size window, or a frame with no swapchain, used to restart the loop without waiting. Both cases now sleep for 16 ms first, so a minimized window idles.
 
 4. **The backend is assumed to be Vulkan.** The device accepts SPIR-V only, and the renderer sets Vulkan options. This works on the current machine. Other backends (D3D12, Metal) need DXIL or MSL shaders, which are on the roadmap. The sampler in `triangle.slang` is bound with the Vulkan-specific `[vk::binding(0, 2)]` attribute, so the binding layout will need attention when those targets are added.
 
