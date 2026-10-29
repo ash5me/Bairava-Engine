@@ -10,6 +10,7 @@ const build_options = @import("build_options");
 
 const c = @import("sdl.zig").c;
 const image = @import("image.zig");
+const Audio = @import("audio.zig").Audio;
 const logging = @import("log.zig");
 const Renderer = @import("renderer.zig").Renderer;
 
@@ -42,6 +43,8 @@ pub const entity = @import("entity.zig");
 pub const tilemap = @import("tilemap.zig");
 /// Sprite-sheet animation: clips that name a row of frames, and an animator that plays them.
 pub const animation = @import("animation.zig");
+/// Sound output through SDL3 audio streams: the playback device, sounds, and voices.
+pub const audio = @import("audio.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = logging;
 
@@ -98,6 +101,9 @@ pub const Context = struct {
     /// Directory of the running executable, with a trailing separator. Asset paths are resolved
     /// against it, because the build installs assets beside the executable.
     base_path: []const u8,
+    /// Sound output. Load sounds with `loadSound` and play them through this. It stays silent when
+    /// no playback device could be opened.
+    audio: *Audio,
 
     /// The mouse position in world pixels, as the player sees it. It is the cursor's place in the
     /// view drawn last frame, plus that frame's camera position. Use this in `update` rather than
@@ -130,6 +136,15 @@ pub const Context = struct {
         defer img.deinit();
         elog.debug("loaded texture {s} ({d}x{d})", .{ path, img.width, img.height });
         return Texture.initRgba8(self.device, img.width, img.height, img.pixels);
+    }
+
+    /// Loads a WAV file and converts it to the device's format. `relative` is relative to the
+    /// executable's folder, like `loadTexture`. It returns an error instead of panicking, because a
+    /// missing sound shouldn't stop the game. The caller frees the sound with `Sound.deinit`.
+    pub fn loadSound(self: *const Context, relative: []const u8) audio.Error!audio.Sound {
+        var buf: [max_full_path]u8 = undefined;
+        const path = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ self.base_path, relative }) catch return error.LoadFailed;
+        return self.audio.loadSound(path);
     }
 
     /// Reads a whole file. `relative` is relative to the executable's folder, like `loadTexture`.
@@ -221,6 +236,10 @@ pub fn run(comptime Game: type, config: Config) void {
     defer screen_batch.deinit();
 
     var input_state = Input.init();
+
+    // Sound output. A missing device leaves it silent, so it never stops the game.
+    var audio_out = Audio.init();
+    defer audio_out.deinit();
     // The game sets the world size every frame, so the camera starts without one.
     var cam = Camera{ .view_w = native_wf, .view_h = native_hf, .world_w = 0, .world_h = 0 };
 
@@ -239,6 +258,7 @@ pub fn run(comptime Game: type, config: Config) void {
         .layout = .{ .dst_w = native_wf, .dst_h = native_hf, .view_w = native_wf, .view_h = native_hf },
         .camera = &cam,
         .base_path = base_path,
+        .audio = &audio_out,
     };
     var game = Game.init(&ctx);
     defer game.deinit();
@@ -286,6 +306,9 @@ pub fn run(comptime Game: type, config: Config) void {
         if (steps > 4) {
             elog.debug("{d} update steps in one frame, so the frame took {d:.1} ms", .{ steps, frame_dt * 1000.0 });
         }
+        // Free finished voices and keep looping voices fed. Once per frame is enough, because a
+        // looping voice queues a full copy of its sound ahead of time.
+        audio_out.update();
         if (ctx.scale_mode != last_mode) {
             elog.info("scale mode: {s}", .{@tagName(ctx.scale_mode)});
             last_mode = ctx.scale_mode;

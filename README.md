@@ -92,6 +92,8 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── camera.zig         View position, follow target, smoothing, edge clamping, zoom easing
 │   │   ├── animation.zig      Sprite-sheet clips and the animator that plays them
 │   │   ├── input.zig          Key enum, held, pressed, and released state, mouse events
+│   │   ├── audio.zig          Sound output: one playback device, WAV sounds converted to its format, voices as SDL audio streams
+│   │   ├── audio_voices.zig   Voice handles, gain, and the finish and loop rules (no SDL)
 │   │   ├── view.zig           Fits the view to the window for each zoom and scale mode, and maps mouse positions from window to view and world
 │   │   ├── log.zig            Logging and assertions for debugging
 │   │   ├── math.zig           cglm wrappers: projection, transforms, normalization. The only cglm import.
@@ -175,7 +177,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | Name | Version | Used for | License |
 |---|---|---|---|
 | Zig | 0.16.0-dev, pinned by `minimum_zig_version` | Language, build system, standard library | MIT |
-| SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard state, SDL_GPU API, file loading, timing, memory | zlib |
+| SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard state, SDL_GPU API, file loading, timing, memory, audio streams | zlib |
 | stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8 | Public domain or MIT |
 | stb_image_write | Vendored in `vendor/` | Writing `atlas.png` in the build's atlas packer | Public domain or MIT |
 | stb_rect_pack | Vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
@@ -271,7 +273,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Vector | `vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
 | Entities | `entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
 | Collision | none | Not started | 0% | |
-| Audio | none | Not started | 0% | |
+| Audio | `audio.zig`, `audio_voices.zig` | Early | 40% | One default playback device, WAV files converted to its format at load, and voices that each use one SDL audio stream, which SDL mixes. Master and per-voice gain, looping, and finish checks in `update`. Not yet compiled or run, and the game plays no sounds. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
 | UI and text | none | Not started | 0% | |
 | Scenes and state | none | Not started | 0% | |
 
@@ -351,7 +353,7 @@ These are the natural extension points. Each one reuses existing code.
 - [ ] Asset manager with caching. Executable-relative paths already work. The cache module exists in `asset_cache.zig`, but the game doesn't load its textures through it yet.
 - [x] Asynchronous texture uploads.
 - [x] Shader embedding at build time.
-- [ ] Audio through SDL3 audio streams.
+- [ ] Audio through SDL3 audio streams. The module is in place (`audio.zig`), but it isn't compiled yet, and the game doesn't play any sounds yet.
 - [ ] Text rendering and basic UI widgets.
 - [ ] On-screen debug overlay with a frame-time graph, replacing the title stats.
 - [ ] Profiling zones (for example Tracy), and log file output.
@@ -374,7 +376,7 @@ These are the natural extension points. Each one reuses existing code.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
 - Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
-- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `asset_cache.zig`, `atlas.zig`, `vector.zig`, `entity.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, and `animation.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
+- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `asset_cache.zig`, `atlas.zig`, `vector.zig`, `entity.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, `animation.zig`, and `audio_voices.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.

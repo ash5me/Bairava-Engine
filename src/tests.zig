@@ -19,6 +19,8 @@ test {
     _ = @import("engine/hash_map.zig");
     _ = @import("engine/assets.zig");
     _ = @import("engine/asset_cache.zig");
+    _ = @import("engine/audio_voices.zig");
+    _ = @import("engine/audio.zig");
     _ = @import("engine/atlas.zig");
     _ = @import("engine/vector.zig");
     _ = @import("engine/entity.zig");
