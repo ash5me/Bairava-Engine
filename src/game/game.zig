@@ -8,6 +8,8 @@ const config = @import("config.zig");
 const controls = @import("controls.zig");
 const Level = @import("level.zig").Level;
 const Player = @import("player.zig").Player;
+const save_store = @import("save.zig");
+const sdl = @import("../engine/sdl.zig").c;
 
 const log = engine.log.scoped("game");
 
@@ -57,7 +59,7 @@ pub const Game = struct {
         const ui = createUi(ui_font);
         const bindings = controls.Bindings.load(ctx.settings_text);
 
-        return .{
+        var game: Game = .{
             .level = level,
             .player = player,
             .atlas = atlas,
@@ -70,6 +72,8 @@ pub const Game = struct {
             .volume = 0.5,
             .bindings = bindings,
         };
+        game.loadSave(ctx);
+        return game;
     }
 
     pub fn deinit(self: *Game) void {
@@ -88,6 +92,8 @@ pub const Game = struct {
             log.info("quit action pressed", .{});
             ctx.running = false;
         }
+        if (self.bindings.pressed(input, .save_game)) self.saveGame(ctx);
+        if (self.bindings.pressed(input, .load_game)) self.loadSave(ctx);
         if (self.bindings.pressed(input, .toggle_scale)) {
             ctx.scale_mode = switch (ctx.scale_mode) {
                 .fit => .integer,
@@ -108,6 +114,73 @@ pub const Game = struct {
 
         self.player.update(dx, dy, ctx.dt, &self.level.map);
         self.updateUi(ctx);
+    }
+
+    fn saveGame(self: *const Game, ctx: *const engine.Context) void {
+        const state = save_store.State{
+            .player_x = self.player.x,
+            .player_y = self.player.y,
+            .facing = self.player.facing,
+            .moving = self.player.anim.clip.frame_count > 1,
+            .animation_time = self.player.anim.time,
+            .clicks = self.clicks,
+            .volume = self.volume,
+            .scale_mode = if (ctx.scale_mode == .integer) .integer else .fit,
+            .zoom_target = ctx.zoom_target,
+        };
+        const json = save_store.serialize(std.heap.page_allocator, state) catch |err| {
+            log.err("save serialization failed: {s}", .{@errorName(err)});
+            return;
+        };
+        defer std.heap.page_allocator.free(json);
+
+        var path_buffer: [512]u8 = undefined;
+        const path = std.fmt.bufPrintZ(&path_buffer, "{s}{s}", .{ ctx.base_path, config.save_file_name }) catch {
+            log.err("save path is too long", .{});
+            return;
+        };
+        if (!sdl.SDL_SaveFile(path.ptr, json.ptr, json.len)) {
+            log.err("could not write save '{s}': {s}", .{ config.save_file_name, sdl.SDL_GetError() });
+            return;
+        }
+        log.info("saved game to {s}", .{config.save_file_name});
+    }
+
+    fn loadSave(self: *Game, ctx: *engine.Context) void {
+        const text = ctx.readFile(config.save_file_name) catch |err| {
+            if (err != error.FileNotFound) log.warn("save '{s}' could not be read: {s}", .{ config.save_file_name, @errorName(err) });
+            return;
+        };
+        defer std.heap.page_allocator.free(text);
+
+        const defaults = save_store.State{
+            .player_x = self.player.x,
+            .player_y = self.player.y,
+            .facing = self.player.facing,
+            .clicks = self.clicks,
+            .volume = self.volume,
+            .scale_mode = if (ctx.scale_mode == .integer) .integer else .fit,
+            .zoom_target = ctx.zoom_target,
+        };
+        const state = save_store.deserialize(text, defaults) catch |err| {
+            log.warn("save '{s}' was ignored: {s}", .{ config.save_file_name, @errorName(err) });
+            return;
+        };
+        if (!state.level_matches) {
+            log.warn("save '{s}' belongs to a different level; it was ignored", .{config.save_file_name});
+            return;
+        }
+
+        if (positionIsValid(state.player_x, state.player_y, &self.level)) {
+            self.player.restore(state.player_x, state.player_y, state.facing, state.moving, state.animation_time);
+        } else {
+            log.warn("saved player position is outside the current level; using the level spawn", .{});
+        }
+        self.clicks = state.clicks;
+        self.volume = state.volume;
+        ctx.scale_mode = if (state.scale_mode == .integer) .integer else .fit;
+        ctx.zoom_target = std.math.clamp(state.zoom_target, config.zoom_min, config.zoom_max);
+        log.info("loaded game from {s}", .{config.save_file_name});
     }
 
     /// Runs once per frame. `dc.alpha` blends the player between the last two updates. The camera
@@ -146,6 +219,7 @@ pub const Game = struct {
         // The panel sits in the top-left corner of the view, 120 view pixels wide.
         engine.ui.c.ui_begin(ui, &frame_input, 4, 4, 120);
         engine.ui.c.ui_label(ui, "Semkootru");
+        engine.ui.c.ui_label(ui, "F5 save  F9 load");
         if (engine.ui.c.ui_button(ui, "Click me##go") != 0) self.clicks += 1;
 
         var clicks_buf: [32]u8 = undefined;
@@ -161,6 +235,25 @@ pub const Game = struct {
         engine.ui.c.ui_end(ui);
     }
 };
+
+fn positionIsValid(x: f32, y: f32, level: *const Level) bool {
+    if (!std.math.isFinite(x) or !std.math.isFinite(y) or x < 0 or y < 0 or
+        x + 16.0 > level.widthPx() or y + 32.0 > level.heightPx()) return false;
+
+    const tile_px = engine.tilemap.tile_px;
+    const left: i32 = @intFromFloat(@floor(x / tile_px));
+    const right: i32 = @intFromFloat(@ceil((x + 16.0) / tile_px) - 1);
+    const top: i32 = @intFromFloat(@floor((y + 16.0) / tile_px));
+    const bottom: i32 = @intFromFloat(@ceil((y + 32.0) / tile_px) - 1);
+    var row = top;
+    while (row <= bottom) : (row += 1) {
+        var col = left;
+        while (col <= right) : (col += 1) {
+            if (level.map.isSolid(col, row)) return false;
+        }
+    }
+    return true;
+}
 
 /// Reads and bakes the UI font onto the GPU. The font is a required asset, so a missing or unusable
 /// file panics and says why, the same way the atlas does.

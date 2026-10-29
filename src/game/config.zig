@@ -49,6 +49,9 @@ pub const atlas_index_path = "assets/atlas.txt";
 /// The tile map the game loads at startup, relative to the executable's folder.
 pub const level_path = "assets/maps/level1.txt";
 
+/// The gameplay save beside the executable. It is human-editable JSON with a schema version.
+pub const save_file_name = "save.json";
+
 /// The font for the demo panel, relative to the executable's folder, and its height in native
 /// pixels. The UI is drawn at native resolution, so 10 keeps it legible at the 320x180 view.
 pub const ui_font_path = "assets/font.ttf";

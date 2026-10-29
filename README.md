@@ -93,6 +93,30 @@ zig build asset-keyer -- path/to/sprite.png path/to/sprite_keyed.png
 zig build asset-import -- path/to/sprite_keyed.png my_sprite
 ```
 
+## Save and load
+
+Press **F5** to save or **F9** to load. Saves are written to `save.json` beside the executable and use Parson to serialize a pretty, human-editable JSON document. The `save_version` field and component-scoped keys keep the format resilient: older files can omit newer component fields, while a save with a newer unsupported version is ignored and left untouched unless you explicitly save over it.
+
+The file maps game state into component paths: `components.player.transform` stores position, `components.player.facing` stores direction, `components.player.animation` stores movement and elapsed time, `components.game.progress` stores clicks and volume, `components.world.level` identifies the map, and `components.display` stores scale mode and zoom. Invalid component values fall back to defaults; saved player positions outside the map or inside solid tiles are rejected.
+
+For example:
+
+```json
+{
+  "save_version": 1,
+  "components": {
+    "player": {
+      "transform": { "x": 64, "y": 48 },
+      "facing": { "direction": "down" },
+      "animation": { "moving": false, "elapsed_seconds": 0 }
+    },
+    "game": { "progress": { "clicks": 3, "volume": 0.5 } },
+    "world": { "level": { "id": "level1" } },
+    "display": { "scale_mode": "fit", "zoom_target": 1 }
+  }
+}
+```
+
 ## Debugging
 
 Logs print to stderr, so `zig build run` shows them in the terminal, and they are also written to `Semkootru.log` beside the executable (see Log file below). Each terminal line has a timestamp, a level, and a scope:
@@ -303,6 +327,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
 | Direct3D 12 | System driver, selected by SDL_GPU | Optional GPU backend that runs the DXIL shaders | Driver, not bundled |
 | stb_image / stb_image_write | Vendored in `vendor/` | Image validation and import (`tools/assets/import.c`), checkerboard keyer (`tools/assets/keyer.c`), and texture atlas packer | Public domain or MIT |
+| Parson | Vendored in `vendor/parson.c` and `vendor/parson.h` | Versioned human-editable save JSON (`src/game/save.zig`) | MIT |
 
 ## Progress
 

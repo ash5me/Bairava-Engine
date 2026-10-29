@@ -11,6 +11,7 @@ The project is a prototype, not a production-ready engine. The core rendering an
 - Batched sprites and a texture atlas generated during the build.
 - A cross-platform checkerboard-background keyer for source images (`zig build asset-keyer`).
 - A cross-platform sprite importer that copies images into the project, registers them in the atlas manifest, and validates image readability (`zig build asset-import`).
+- Versioned JSON save/load for player movement components and game/display progress, using Parson (`F5` saves, `F9` loads).
 - A text tile-map format with ground, decoration, and foreground layers; tile collision and a spawn point.
 - Directional player animation and movement with sliding against solid tiles.
 - Keyboard and mouse input, configurable key bindings, and window settings.

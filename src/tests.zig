@@ -63,6 +63,8 @@ const key_scancodes = [_]struct { key: Key, code: c.SDL_Scancode }{
     .{ .key = .e, .code = c.SDL_SCANCODE_E },
     .{ .key = .f, .code = c.SDL_SCANCODE_F },
     .{ .key = .r, .code = c.SDL_SCANCODE_R },
+    .{ .key = .f5, .code = c.SDL_SCANCODE_F5 },
+    .{ .key = .f9, .code = c.SDL_SCANCODE_F9 },
 };
 
 /// A key event as SDL fills one in. `repeat` marks an auto-repeated key-down.

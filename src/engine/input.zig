@@ -25,6 +25,8 @@ pub const Key = enum {
     e,
     f,
     r,
+    f5,
+    f9,
 };
 
 /// Number of keys in `Key`. Per-key arrays are indexed by `@intFromEnum(key)`.
@@ -171,6 +173,8 @@ fn scancode(key: Key) c.SDL_Scancode {
         .e => c.SDL_SCANCODE_E,
         .f => c.SDL_SCANCODE_F,
         .r => c.SDL_SCANCODE_R,
+        .f5 => c.SDL_SCANCODE_F5,
+        .f9 => c.SDL_SCANCODE_F9,
     };
 }
 
@@ -238,6 +242,8 @@ test "keys map to the SDL scancodes the controls expect" {
     try std.testing.expectEqual(@as(?Key, .e), keyFromScancode(c.SDL_SCANCODE_E));
     try std.testing.expectEqual(@as(?Key, .f), keyFromScancode(c.SDL_SCANCODE_F));
     try std.testing.expectEqual(@as(?Key, .r), keyFromScancode(c.SDL_SCANCODE_R));
+    try std.testing.expectEqual(@as(?Key, .f5), keyFromScancode(c.SDL_SCANCODE_F5));
+    try std.testing.expectEqual(@as(?Key, .f9), keyFromScancode(c.SDL_SCANCODE_F9));
 }
 
 test "every key has its own scancode, and that scancode maps back to it" {

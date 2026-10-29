@@ -213,6 +213,7 @@ pub fn build(b: *std.Build) void {
     // builds the quads that src/engine/ui.zig draws. None of it touches SDL or the GPU.
     exe.root_module.addIncludePath(b.path("src/engine/ui"));
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
+    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/text.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
 
@@ -342,6 +343,7 @@ pub fn build(b: *std.Build) void {
     test_module.addIncludePath(b.path("vendor"));
     test_module.addIncludePath(b.path("src/engine"));
     test_module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
+    test_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
     test_module.addCSourceFile(.{ .file = b.path("src/engine/log_file.c") });
     test_module.addImport("ztracy", ztracy.module("root"));
     const tests = b.addTest(.{ .root_module = test_module });

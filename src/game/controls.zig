@@ -21,6 +21,8 @@ pub const Action = enum {
     zoom_in,
     zoom_out,
     zoom_reset,
+    save_game,
+    load_game,
 };
 
 const action_count = std.enums.values(Action).len;
@@ -35,6 +37,8 @@ const toggle_scale_keys = [_]engine.Key{.i};
 const zoom_in_keys = [_]engine.Key{ .equal, .keypad_plus };
 const zoom_out_keys = [_]engine.Key{ .minus, .keypad_minus };
 const zoom_reset_keys = [_]engine.Key{.zero};
+const save_game_keys = [_]engine.Key{.f5};
+const load_game_keys = [_]engine.Key{.f9};
 
 /// The default keys for an action. The switch has no default, so an action without keys is a compile error.
 fn defaultKeys(action: Action) []const engine.Key {
@@ -48,6 +52,8 @@ fn defaultKeys(action: Action) []const engine.Key {
         .zoom_in => &zoom_in_keys,
         .zoom_out => &zoom_out_keys,
         .zoom_reset => &zoom_reset_keys,
+        .save_game => &save_game_keys,
+        .load_game => &load_game_keys,
     };
 }
 

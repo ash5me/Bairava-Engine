@@ -15,8 +15,8 @@ vsync = true
 
 # Key bindings. Each bind line replaces the keys of one action. Separate keys with commas, up to 4
 # per action. Actions: move_left, move_right, move_up, move_down, quit, toggle_scale, zoom_in,
-# zoom_out, zoom_reset. Key names: escape, left, right, up, down, w, a, s, d, i, equal, minus, zero,
-# keypad_plus, keypad_minus, space, enter, tab, q, e, f, r.
+# zoom_out, zoom_reset, save_game, load_game. Key names: escape, left, right, up, down, w, a, s, d,
+# i, equal, minus, zero, keypad_plus, keypad_minus, space, enter, tab, q, e, f, r, f5, f9.
 bind move_left = left, a
 bind move_right = right, d
 bind move_up = up, w
@@ -26,3 +26,5 @@ bind toggle_scale = i
 bind zoom_in = equal, keypad_plus
 bind zoom_out = minus, keypad_minus
 bind zoom_reset = zero
+bind save_game = f5
+bind load_game = f9

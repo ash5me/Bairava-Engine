@@ -18,7 +18,7 @@ const speed: f32 = 80.0;
 const walk_frame_seconds: f32 = 0.12;
 
 /// Which way the player faces. Each facing is one row of the sheet, in this order.
-const Facing = enum(u32) {
+pub const Facing = enum(u32) {
     down,
     right,
     up,
@@ -69,6 +69,17 @@ pub const Player = struct {
             .prev_y = y,
             .anim = engine.animation.Animator.init(clipFor(.down, false)),
         };
+    }
+
+    /// Restores persisted movement state without interpolating from an unrelated previous frame.
+    pub fn restore(self: *Player, x: f32, y: f32, facing: Facing, moving: bool, elapsed: f32) void {
+        self.x = x;
+        self.y = y;
+        self.prev_x = x;
+        self.prev_y = y;
+        self.facing = facing;
+        self.anim.play(clipFor(facing, moving));
+        self.anim.time = @mod(@max(elapsed, 0), self.anim.clip.duration());
     }
 
     /// Top-left corner to draw at, blended between the last two updates. `alpha` is 0 at the
