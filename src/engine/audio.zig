@@ -17,6 +17,7 @@ const std = @import("std");
 
 const c = @import("sdl.zig").c;
 const rules = @import("audio_voices.zig");
+const ima = @import("ima.zig");
 pub const Handle = rules.Handle;
 
 const log = @import("log.zig").scoped("audio");
@@ -31,7 +32,7 @@ pub const Error = error{
     NoDevice,
     /// Every voice is busy. The caller decides whether that matters.
     NoFreeVoice,
-    /// The file couldn't be read or decoded as WAV.
+    /// The file couldn't be read or decoded as WAV or BRAD IMA ADPCM.
     LoadFailed,
     /// The decoded sound couldn't be converted to the device format.
     ConvertFailed,
@@ -120,10 +121,12 @@ pub const Audio = struct {
         self.* = .{};
     }
 
-    /// Loads a WAV file and converts it to the device's format. `path` is a path the OS can open.
-    /// The caller frees the result with `Sound.deinit`.
+    /// Loads a build-encoded BRAD IMA ADPCM sidecar when present, otherwise loads the WAV source,
+    /// then converts samples once to the playback device's format. `path` names the WAV input;
+    /// its encoded sidecar is `path.ima`. The caller frees the result with `Sound.deinit`.
     pub fn loadSound(self: *const Audio, path: [:0]const u8) Error!Sound {
         if (self.device == 0) return error.NoDevice;
+        if (try self.loadImaSidecar(path)) |sound| return sound;
 
         var source_spec: c.SDL_AudioSpec = undefined;
         var source_buf: [*c]u8 = null;
@@ -153,6 +156,42 @@ pub const Audio = struct {
         }
         const ptr: [*]u8 = @ptrCast(converted);
         return .{ .samples = ptr[0..@intCast(converted_len)] };
+    }
+
+    fn loadImaSidecar(self: *const Audio, path: [:0]const u8) Error!?Sound {
+        var path_buf: [4096]u8 = undefined;
+        const sidecar_path = std.fmt.bufPrintZ(&path_buf, "{s}.ima", .{path}) catch return null;
+        var size: usize = 0;
+        const file = c.SDL_LoadFile(sidecar_path.ptr, &size) orelse return null;
+        defer c.SDL_free(file);
+        const bytes: [*]const u8 = @ptrCast(file);
+        var decoded = ima.decode(std.heap.page_allocator, bytes[0..size]) catch |err| {
+            log.warn("could not decode audio sidecar '{s}': {s}; trying WAV source", .{ sidecar_path, @errorName(err) });
+            return null;
+        };
+        defer decoded.deinit();
+        const max_audio_bytes: usize = @intCast(std.math.maxInt(c_int));
+        if (@as(usize, decoded.sample_rate) > max_audio_bytes or decoded.samples.len > max_audio_bytes / @sizeOf(i16)) return error.ConvertFailed;
+
+        var source_spec = std.mem.zeroes(c.SDL_AudioSpec);
+        source_spec.format = c.SDL_AUDIO_S16;
+        source_spec.channels = decoded.channels;
+        source_spec.freq = @intCast(decoded.sample_rate);
+        var converted: [*c]u8 = null;
+        var converted_len: c_int = 0;
+        const source: [*c]u8 = @ptrCast(decoded.samples.ptr);
+        const source_len: c_int = @intCast(decoded.samples.len * @sizeOf(i16));
+        if (!c.SDL_ConvertAudioSamples(&source_spec, source, source_len, &self.format, &converted, &converted_len)) {
+            log.warn("could not convert audio sidecar '{s}' to the device format: {s}", .{ sidecar_path, c.SDL_GetError() });
+            return error.ConvertFailed;
+        }
+        if (converted_len <= 0 or converted == null) {
+            c.SDL_free(@ptrCast(converted));
+            return .{ .samples = &.{} };
+        }
+        const samples: [*]u8 = @ptrCast(converted);
+        log.debug("loaded compact audio {s} ({d} Hz, {d} channels)", .{ sidecar_path, decoded.sample_rate, decoded.channels });
+        return .{ .samples = samples[0..@intCast(converted_len)] };
     }
 
     /// Starts `sound` on a free voice and returns its handle. The voice ends by itself when a

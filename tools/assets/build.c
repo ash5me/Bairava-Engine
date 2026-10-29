@@ -296,7 +296,7 @@ static int valid_kind(const entry *item) {
             fprintf(stderr, "asset_build: invalid image '%s': %s\n", item->source, stbi_failure_reason());
             return 0;
         }
-    } else if (strcmp(item->type, "audio") == 0) {
+    } else if (strcmp(item->type, "audio") == 0 || strcmp(item->type, "wav") == 0) {
         unsigned char header[12];
         FILE *file = fopen(item->source, "rb");
         if (file == NULL || fread(header, 1, sizeof header, file) != sizeof header || fclose(file) != 0 ||
@@ -340,6 +340,148 @@ static int copy_file(const char *source, const char *destination) {
     if (ferror(input)) ok = 0;
     if (fclose(input) != 0 || fclose(output) != 0) ok = 0;
     if (!ok) remove(destination);
+    return ok;
+}
+
+typedef struct {
+    unsigned int sample_rate;
+    unsigned int channels;
+    unsigned int frames;
+    short *samples;
+} pcm_wav;
+
+static unsigned short read_u16le(const unsigned char *p) {
+    return (unsigned short)(p[0] | ((unsigned short)p[1] << 8));
+}
+
+static unsigned int read_u32le(const unsigned char *p) {
+    return (unsigned int)p[0] | ((unsigned int)p[1] << 8) | ((unsigned int)p[2] << 16) | ((unsigned int)p[3] << 24);
+}
+
+static int load_pcm_wav(const char *path, pcm_wav *wav) {
+    memset(wav, 0, sizeof *wav);
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return 0;
+    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return 0; }
+    long file_length = ftell(file);
+    if (file_length < 12 || fseek(file, 0, SEEK_SET) != 0) { fclose(file); return 0; }
+    size_t size = (size_t)file_length;
+    unsigned char *bytes = (unsigned char *)malloc(size);
+    if (bytes == NULL) { fclose(file); return 0; }
+    int read_ok = fread(bytes, 1, size, file) == size;
+    fclose(file);
+    if (!read_ok || memcmp(bytes, "RIFF", 4) != 0 || memcmp(bytes + 8, "WAVE", 4) != 0) { free(bytes); return 0; }
+
+    unsigned int channels = 0, sample_rate = 0, block_align = 0, bits = 0, encoding = 0;
+    const unsigned char *pcm = NULL;
+    size_t pcm_size = 0;
+    size_t cursor = 12;
+    while (cursor + 8 <= size) {
+        const unsigned char *chunk = bytes + cursor;
+        unsigned int chunk_size = read_u32le(chunk + 4);
+        size_t data_offset = cursor + 8;
+        if ((size_t)chunk_size > size - data_offset) { free(bytes); return 0; }
+        if (memcmp(chunk, "fmt ", 4) == 0 && chunk_size >= 16) {
+            encoding = read_u16le(bytes + data_offset);
+            channels = read_u16le(bytes + data_offset + 2);
+            sample_rate = read_u32le(bytes + data_offset + 4);
+            block_align = read_u16le(bytes + data_offset + 12);
+            bits = read_u16le(bytes + data_offset + 14);
+        } else if (memcmp(chunk, "data", 4) == 0) {
+            pcm = bytes + data_offset;
+            pcm_size = chunk_size;
+        }
+        cursor = data_offset + chunk_size + (chunk_size & 1u);
+    }
+    if (encoding != 1 || channels == 0 || channels > 2 || sample_rate == 0 ||
+        (bits != 8 && bits != 16) || block_align != channels * (bits / 8) ||
+        pcm == NULL || pcm_size == 0 || pcm_size % block_align != 0 ||
+        pcm_size / block_align > 0xffffffffu) {
+        free(bytes); return 0;
+    }
+    unsigned int frames = (unsigned int)(pcm_size / block_align);
+    size_t sample_count = (size_t)frames * channels;
+    short *samples = (short *)malloc(sample_count * sizeof *samples);
+    if (samples == NULL) { free(bytes); return 0; }
+    for (size_t i = 0; i < sample_count; i++) {
+        samples[i] = bits == 16 ? (short)read_u16le(pcm + i * 2) : (short)(((int)pcm[i] - 128) << 8);
+    }
+    free(bytes);
+    wav->sample_rate = sample_rate;
+    wav->channels = channels;
+    wav->frames = frames;
+    wav->samples = samples;
+    return 1;
+}
+
+static const int ima_step_table[89] = {
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
+    50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253,
+    279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166,
+    1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026,
+    4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
+    15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
+};
+static const int ima_index_table[16] = { -1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8 };
+
+static unsigned char ima_encode_sample(short sample, int *predictor, int *step_index) {
+    int step = ima_step_table[*step_index];
+    int delta = (int)sample - *predictor;
+    unsigned char code = 0;
+    if (delta < 0) { code = 8; delta = -delta; }
+    int difference = step >> 3;
+    if (delta >= step) { code |= 4; delta -= step; difference += step; }
+    if (delta >= (step >> 1)) { code |= 2; delta -= step >> 1; difference += step >> 1; }
+    if (delta >= (step >> 2)) { code |= 1; difference += step >> 2; }
+    *predictor += (code & 8) ? -difference : difference;
+    if (*predictor > 32767) *predictor = 32767;
+    if (*predictor < -32768) *predictor = -32768;
+    *step_index += ima_index_table[code];
+    if (*step_index < 0) *step_index = 0;
+    if (*step_index > 88) *step_index = 88;
+    return code;
+}
+
+static int encode_ima_wav(const char *source, const char *destination) {
+    pcm_wav wav;
+    if (!load_pcm_wav(source, &wav)) {
+        fprintf(stderr, "asset_build: '%s' must be uncompressed PCM WAV (8/16-bit, mono/stereo) for IMA encoding\n", source);
+        return 0;
+    }
+    size_t bytes_per_channel = 4 + wav.frames / 2;
+    size_t payload_size = bytes_per_channel * wav.channels;
+    size_t total_size = 24 + payload_size;
+    unsigned char *output = (unsigned char *)calloc(total_size, 1);
+    if (output == NULL) { free(wav.samples); return 0; }
+    memcpy(output, "BRAD", 4);
+    output[4] = 1;
+    output[5] = (unsigned char)wav.channels;
+    write_u32le(output + 8, wav.sample_rate);
+    write_u32le(output + 12, wav.frames);
+    write_u32le(output + 16, (unsigned int)payload_size);
+    for (unsigned int channel = 0; channel < wav.channels; channel++) {
+        size_t channel_offset = 24 + bytes_per_channel * channel;
+        int predictor = wav.samples[channel];
+        unsigned short predictor_bits = (unsigned short)predictor;
+        int step_index = 0;
+        output[channel_offset] = (unsigned char)predictor_bits;
+        output[channel_offset + 1] = (unsigned char)(predictor_bits >> 8);
+        output[channel_offset + 2] = 0;
+        for (unsigned int frame = 1; frame < wav.frames; frame++) {
+            unsigned char code = ima_encode_sample(wav.samples[(size_t)frame * wav.channels + channel], &predictor, &step_index);
+            size_t nibble_index = frame - 1;
+            size_t byte_index = channel_offset + 4 + nibble_index / 2;
+            if ((nibble_index & 1u) == 0) output[byte_index] = code;
+            else output[byte_index] |= (unsigned char)(code << 4);
+        }
+    }
+    FILE *file = fopen(destination, "wb");
+    int ok = file != NULL;
+    if (ok && fwrite(output, 1, total_size, file) != total_size) ok = 0;
+    if (file != NULL && fclose(file) != 0) ok = 0;
+    if (!ok) { fprintf(stderr, "asset_build: cannot encode audio to '%s'\n", destination); remove(destination); }
+    free(output);
+    free(wav.samples);
     return ok;
 }
 
@@ -418,7 +560,7 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
     if (snprintf(index_path, sizeof index_path, "%s%casset-index.txt", output_dir, PATH_SEPARATOR) >= (int)sizeof index_path) { free(entries); return 1; }
     FILE *index = fopen(index_path, "w");
     if (index == NULL) { fprintf(stderr, "asset_build: cannot create '%s'\n", index_path); free(entries); return 1; }
-    fprintf(index, "# asset-index-v1\n# name type path source dependencies rgba8 bc1 bc3 astc\n");
+    fprintf(index, "# asset-index-v1\n# name type path source dependencies rgba8 bc1 bc3 astc audio_ima\n");
     for (size_t i = 0; i < count; i++) {
         char relative_output[FIELD_SIZE];
         size_t output_length = strlen(entries[i].output);
@@ -434,10 +576,15 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         if (!copy_file(entries[i].source, destination)) { failed = 1; break; }
         int astc_available = 0;
         if (strcmp(entries[i].type, "image") == 0 && !build_texture_variants(&entries[i], destination, output_dir, &astc_available)) { failed = 1; break; }
+        char ima_path[FIELD_SIZE * 2] = {0};
+        if (strcmp(entries[i].type, "audio") == 0) {
+            if (snprintf(ima_path, sizeof ima_path, "%s.ima", destination) >= (int)sizeof ima_path || !encode_ima_wav(entries[i].source, ima_path)) { failed = 1; break; }
+        }
         const char *source_for_index = safe_relative_path(entries[i].source) ? entries[i].source : "generated";
         fprintf(index, "%s %s %s %s %s", entries[i].name, entries[i].type, entries[i].output, source_for_index, entries[i].dependencies);
         if (strcmp(entries[i].type, "image") == 0) fprintf(index, " %s.rgba %s.bc1 %s.bc3 %s", entries[i].output, entries[i].output, entries[i].output, astc_available ? entries[i].output : "-");
         if (strcmp(entries[i].type, "image") == 0 && astc_available) fprintf(index, ".astc");
+        if (strcmp(entries[i].type, "audio") == 0) fprintf(index, " %s.ima", entries[i].output);
         fputc('\n', index);
     }
     if (fclose(index) != 0) failed = 1;

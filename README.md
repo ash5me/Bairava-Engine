@@ -49,9 +49,9 @@ zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to s
 zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
 
-`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Images, WAV audio, and TrueType/OpenType fonts are format-checked; maps and generic files are checked for existence. Image entries emit BC1 and BC3 GPU texture variants alongside the source image; when `astcenc` is installed and available on `PATH`, the builder also emits ASTC 4x4. The sprite atlas is packed from `assets/sprites.txt` and sent through the same texture processor, with its regions written to `atlas.txt`. At runtime, SDL's format support query picks ASTC, BC3, or BC1 when the active device can sample that format; otherwise the original image is decoded and uploaded as RGBA8.
+`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Image, WAV, and TrueType/OpenType inputs are format-checked; maps and generic files are checked for existence. Image entries emit BC1, BC3, and RGBA8 GPU texture variants alongside the source image; when `astcenc` is installed and available on `PATH`, the builder also emits ASTC 4x4. The sprite atlas is packed from `assets/sprites.txt` and sent through the same texture processor, with its regions written to `atlas.txt`. At runtime, SDL's format support query picks ASTC, BC3, or BC1 when the active device can sample that format; otherwise the prebuilt RGBA8 variant or decoded source image is used. Audio entries are copied as WAV and encoded to compact IMA ADPCM sidecars; `wav` entries are copied uncompressed. The audio system prefers the sidecar and falls back to WAV, then converts samples to the playback device's format.
 
-Run `zig build asset-build` to validate and stage the general asset set without installing the game. The build graph tracks the manifest, its source files, and the generated atlas input, so edits rebuild the asset step. Install Arm's `astcenc` command line tool and put it on `PATH` to generate ASTC variants; BC1, BC3, and prebuilt RGBA8 `.rgba` fallback variants do not need an extra tool.
+Run `zig build asset-build` to validate and stage the general asset set without installing the game. Use `audio` for uncompressed PCM WAV inputs that should also get an IMA ADPCM sidecar, or `wav` to keep only the WAV runtime file. The build graph tracks the manifest, its source files, and the generated atlas input, so edits rebuild the asset step. Install Arm's `astcenc` command line tool and put it on `PATH` to generate ASTC variants; BC1, BC3, RGBA8, and IMA ADPCM outputs do not need extra tools.
 
 The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root and need a TrueType font, and `zig build test` doesn't run them:
 
@@ -214,7 +214,8 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   ├── animation.zig      Sprite-sheet clips and the animator that plays them
 │   │   ├── input.zig          Key enum, held, pressed, and released state for keys and the left mouse button, mouse position
 │   │   ├── settings.zig       Settings file: name = value lines, the window settings (resolution, fullscreen, vsync), and the line reader
-│   │   ├── audio.zig          Sound output: one playback device, WAV sounds converted to its format, voices as SDL audio streams
+│   │   ├── audio.zig          Sound output: WAV or IMA ADPCM loading, device-format conversion, SDL audio-stream voices
+│   │   ├── ima.zig            BRAD IMA ADPCM decoder to interleaved signed 16-bit PCM
 │   │   ├── audio_voices.zig   Voice handles, gain, and the finish and loop rules (no SDL)
 │   │   ├── view.zig           Fits the view to the window for each zoom and scale mode, and maps mouse positions from window to view and world
 │   │   ├── log.zig            Logging to the terminal and the log file, the panic record, and assertions
@@ -252,7 +253,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 ├── tools/
 │   ├── assets/keyer.c         Cross-platform checkerboard-background removal tool
 │   ├── assets/import.c        Copies and registers atlas sprites
-│   ├── assets/build.c          Validates assets, emits BC1/BC3 and optional ASTC texture variants, and writes the asset index
+│   ├── assets/build.c          Validates assets, emits BC1/BC3/ASTC textures and IMA ADPCM audio, and writes the asset index
 │   └── atlas/pack.c           Build-time texture atlas packer; writes atlas.png and atlas.txt
 ├── tests/
 │   └── ui/
@@ -426,12 +427,12 @@ These estimates are rough. They measure how close each area is to something usab
 | View mapping | `view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
 | Build | `build.zig`, `.github/workflows/ci.yml` | Functional | 70% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, optional DXIL and MSL), the texture atlas, the asset keyer, run step, and test step. CI builds and tests on Linux, macOS, and Windows. |
 | Assets | `tools/assets/keyer.c` | Utility | 30% | Cross-platform checkerboard keyer with configurable color thresholds, connected-border flood fill, and PNG output. It replaces the old one-off PowerShell script; it is not a general asset pipeline. |
-| Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, camera, animation, input, shader format selection, and renderer. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). Missing: tests that open a window or create a GPU device. |
+| Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, compressed texture headers, IMA ADPCM decoding, math, view, tile map, camera, animation, input, shader format selection, and renderer. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). Missing: tests that open a window or create a GPU device. |
 | Vector | `vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
 | Entities | `entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
 | Debug overlay | `debug_overlay.zig`, `frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
 | Collision | none | Not started | 0% | |
-| Audio | `audio.zig`, `audio_voices.zig` | Early | 40% | One default playback device, WAV files converted to its format at load, and voices that each use one SDL audio stream, which SDL mixes. Master and per-voice gain, looping, and finish checks in `update`. Not yet compiled or run, and the game plays no sounds. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
+| Audio | `audio.zig`, `audio_voices.zig`, `ima.zig` | Early | 45% | One default playback device, WAV input plus build-generated IMA ADPCM sidecars, device-format conversion at load, and voices that each use one SDL audio stream, which SDL mixes. Decoder and voice rules have unit tests. The game plays no sounds yet. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
 | Text | `ui/text.c`, `ui/text.h`, `ui.zig` | Early | 40% | TTF baking with stb_truetype, one quad per glyph, UTF-8 input. Tested with the C harness. Not yet checked in the running game. Missing: kerning, shaping for Tamil and other complex scripts, and hinting. The baked range is fixed at 32 to 255. |
 | UI widgets | `ui/imgui.c`, `ui/imgui.h` | Early | 35% | Label, button, and slider with hot and active ids and `##` suffixes. Tested with the C harness using scripted input. Not yet checked in the running game. Missing: checkbox, panels and layouts beyond one column, text input, keyboard focus, scrolling. |
 | Scenes and state | none | Not started | 0% | |
@@ -516,7 +517,7 @@ These are the natural extension points. Each one reuses existing code.
 - [ ] Asset manager with caching. Executable-relative paths already work. The cache module exists in `asset_cache.zig`, but the game doesn't load its textures through it yet.
 - [x] Asynchronous texture uploads.
 - [x] Shader embedding at build time.
-- [ ] Audio through SDL3 audio streams. The module is in place (`audio.zig`), but it isn't compiled yet, and the game doesn't play any sounds yet.
+- [x] Audio through SDL3 audio streams, with PCM WAV support and optional build-encoded IMA ADPCM sidecars. The demo game doesn't play sounds yet.
 - [ ] Text rendering and basic UI widgets.
 - [ ] On-screen debug overlay with a frame-time graph, replacing the title stats.
 - [x] Profiling zones (for example Tracy), and log file output.

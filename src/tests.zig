@@ -22,6 +22,7 @@ test {
     _ = @import("engine/asset_cache.zig");
     _ = @import("engine/audio_voices.zig");
     _ = @import("engine/audio.zig");
+    _ = @import("engine/ima.zig");
     _ = @import("engine/image.zig");
     _ = @import("engine/atlas.zig");
     _ = @import("engine/vector.zig");
