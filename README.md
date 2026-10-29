@@ -49,7 +49,9 @@ zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to s
 zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
 
-`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. `zig build` also packs the sprites listed in `assets/sprites.txt` into `zig-out/bin/assets/atlas.png`, and writes where each sprite sits to `atlas.txt` beside it.
+`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Images, WAV audio, and TrueType/OpenType fonts are format-checked; maps and generic files are checked for existence. The current processors preserve source bytes, leaving conversion and compression to future processors. The sprite atlas remains a specialized build output: sprites listed in `assets/sprites.txt` are packed into `atlas.png`, with regions in `atlas.txt`.
+
+Run `zig build asset-build` to validate and stage the general asset set without installing the game. The build graph tracks the manifest and its source files, so edits rebuild the asset step.
 
 The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root and need a TrueType font, and `zig build test` doesn't run them:
 
@@ -196,7 +198,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 
 ```
 .
-├── build.zig                  Build graph: SDL3, stb_image, cglm, ztracy (with `-Dtracy=true`), log.c and its glue, shader compilation and embedding (SPIR-V, plus optional DXIL and MSL), the texture atlas, run and test steps
+├── build.zig                  Build graph: SDL3, stb_image, cglm, ztracy (with `-Dtracy=true`), log.c and its glue, shader compilation and embedding (SPIR-V, plus optional DXIL and MSL), manifest-driven asset staging, the texture atlas, run and test steps
 ├── build.zig.zon              Package manifest and pinned dependencies
 ├── src/
 │   ├── main.zig               Entry point: hands the game to the engine
@@ -250,12 +252,14 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 ├── tools/
 │   ├── assets/keyer.c         Cross-platform checkerboard-background removal tool
 │   ├── assets/import.c        Copies and registers atlas sprites
+│   ├── assets/build.c          Validates manifest assets, stages runtime files, and writes the asset index
 │   └── atlas/pack.c           Build-time texture atlas packer; writes atlas.png and atlas.txt
 ├── tests/
 │   └── ui/
 │       ├── test_imgui.c       Scripted-input checks for the widgets (C, see Building and running)
 │       └── test_text.c        Checks for the baked atlas and the glyph quads text produces (C)
 ├── assets/
+│   ├── asset_manifest.txt     Runtime asset names, kinds, source/output paths, and dependencies
 │   ├── sprites.txt            Sprite names and image paths used by the atlas build
 │   ├── tile.png               Tile texture used by the map, packed into the atlas at build time
 │   ├── warrior.png            Original warrior artwork (kept unchanged)

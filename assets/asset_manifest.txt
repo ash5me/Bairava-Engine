@@ -1,0 +1,6 @@
+# name type source output dependencies
+tile image assets/tile.png tile.png -
+warrior image assets/warrior_16x32.png warrior_16x32.png -
+font font assets/font.ttf font.ttf -
+level1 map assets/maps/level1.txt maps/level1.txt tile
+wind1 audio assets/wind1.wav wind1.wav -
