@@ -8,6 +8,7 @@ const c = @import("engine/sdl.zig").c;
 const input = @import("engine/input.zig");
 const renderer = @import("engine/renderer.zig");
 const sprite = @import("engine/sprite.zig");
+const math = @import("engine/math.zig");
 const Texture = @import("engine/texture.zig").Texture;
 const tilemap = @import("engine/tilemap.zig");
 const camera = @import("engine/camera.zig");
@@ -305,6 +306,7 @@ fn testBatch(no_vertices: *[0]sprite.Vertex, no_batches: *[0]sprite.Batch) sprit
 fn freeTestBatch(batch: *sprite.SpriteBatch) void {
     if (batch.vertices.len != 0) std.heap.page_allocator.free(batch.vertices);
     if (batch.batches.len != 0) std.heap.page_allocator.free(batch.batches);
+    if (batch.quads.len != 0) std.heap.page_allocator.free(batch.quads);
 }
 
 test "drawSprite keeps every sprite of a frame, past the old 8192 limit" {
@@ -321,9 +323,10 @@ test "drawSprite keeps every sprite of a frame, past the old 8192 limit" {
     while (i < count) : (i += 1) {
         // Each sprite gets its own tint, so the last vertices can be checked against their sprite.
         const tint = @as(f32, @floatFromInt(i)) / 10000.0;
-        batch.drawSprite(&tex, quad, quad, .{ tint, tint, tint });
+        batch.drawSprite(&tex, quad, quad, .{ .tint = .{ tint, tint, tint } });
     }
     try std.testing.expectEqual(count, batch.sprite_count);
+    batch.prepare();
     try std.testing.expectEqual(count * 4, batch.vertex_count);
     const last_tint = @as(f32, @floatFromInt(count - 1)) / 10000.0;
     try std.testing.expectApproxEqAbs(last_tint, batch.vertices[batch.vertex_count - 1].color[0], 1e-6);
@@ -343,8 +346,9 @@ test "drawSprite batches past the old 256 texture-switch limit" {
     while (i < 600) : (i += 1) {
         // Alternating textures makes every sprite start a new batch.
         const tex = if (i % 2 == 0) &tex_a else &tex_b;
-        batch.drawSprite(tex, quad, quad, .{ 1, 1, 1 });
+        batch.drawSprite(tex, quad, quad, .{});
     }
+    batch.prepare();
     try std.testing.expectEqual(@as(u32, 600), batch.batch_count);
     var b: u32 = 0;
     while (b < 600) : (b += 1) {
@@ -387,8 +391,9 @@ test "each quad's indices name its own four vertices, in a batch with many quads
     var srcs: [3]sprite.Rect = undefined;
     for (&srcs, 0..) |*src, q| {
         src.* = .{ .x = @floatFromInt(q * 16), .y = 0, .w = 16, .h = 16 };
-        batch.drawSprite(&tex, src.*, dst, .{ 1, 1, 1 });
+        batch.drawSprite(&tex, src.*, dst, .{});
     }
+    batch.prepare();
     try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
     for (srcs, 0..) |src, q| try expectQuadUvs(&batch, q, src, 48, 16);
 }
@@ -409,13 +414,175 @@ test "quads in later batches name their own vertices too" {
     while (i < 6) : (i += 1) {
         const tex = if (i % 2 == 0) &tex_a else &tex_b;
         srcs[i] = .{ .x = @floatFromInt(i * 8), .y = 0, .w = 8, .h = 8 };
-        batch.drawSprite(tex, srcs[i], dst, .{ 1, 1, 1 });
+        batch.drawSprite(tex, srcs[i], dst, .{});
     }
+    batch.prepare();
     try std.testing.expectEqual(@as(u32, 6), batch.batch_count);
     for (srcs, 0..) |src, q| {
         const w: f32 = if (q % 2 == 0) 48 else 32;
         const h: f32 = if (q % 2 == 0) 16 else 32;
         try expectQuadUvs(&batch, q, src, w, h);
+    }
+}
+
+/// Checks that a two-value point (a position or a UV) matches, within a small tolerance.
+fn expectNear2(expected: [2]f32, actual: [2]f32) !void {
+    try std.testing.expectApproxEqAbs(expected[0], actual[0], 1e-5);
+    try std.testing.expectApproxEqAbs(expected[1], actual[1], 1e-5);
+}
+
+test "default options place the corners on the destination rectangle" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+    const dst = sprite.Rect{ .x = 32, .y = 24, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&tex, quad, dst, .{});
+    batch.prepare();
+    try expectNear2(math.transformPoint(&batch.projection, 32, 24), batch.vertices[0].pos);
+    try expectNear2(math.transformPoint(&batch.projection, 48, 40), batch.vertices[2].pos);
+}
+
+test "flip mirrors the texture coordinates" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&tex, quad, quad, .{ .flip_x = true, .flip_y = true });
+    batch.prepare();
+    // Both axes flipped: the top-left corner shows the texture's bottom-right, and the top-right
+    // corner shows its bottom-left.
+    try expectNear2(.{ 1, 1 }, batch.vertices[0].uv);
+    try expectNear2(.{ 0, 1 }, batch.vertices[3].uv);
+}
+
+test "rotation turns the sprite clockwise around its origin" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+    const dst = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&tex, quad, dst, .{ .rotation = std.math.pi / 2.0 });
+    batch.prepare();
+    // A quarter turn clockwise about the top-left corner: the top-right corner moves below the origin,
+    // and the bottom-left corner moves to its left. The order is top-left, bottom-left, bottom-right,
+    // top-right.
+    try expectNear2(math.transformPoint(&batch.projection, 0, 0), batch.vertices[0].pos);
+    try expectNear2(math.transformPoint(&batch.projection, -16, 0), batch.vertices[1].pos);
+    try expectNear2(math.transformPoint(&batch.projection, -16, 16), batch.vertices[2].pos);
+    try expectNear2(math.transformPoint(&batch.projection, 0, 16), batch.vertices[3].pos);
+}
+
+test "the origin stays where it is while the sprite turns" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+    const dst = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&tex, quad, dst, .{ .origin = .{ 8, 8 }, .rotation = 0.7 });
+    batch.prepare();
+    // A rotation about the middle of the sprite keeps the middle in place, so the four corners
+    // average to the origin.
+    var sum = [2]f32{ 0, 0 };
+    for (0..4) |k| {
+        sum[0] += batch.vertices[k].pos[0];
+        sum[1] += batch.vertices[k].pos[1];
+    }
+    try expectNear2(math.transformPoint(&batch.projection, 8, 8), .{ sum[0] / 4, sum[1] / 4 });
+}
+
+test "alpha goes into the vertex color, next to the tint" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&tex, quad, quad, .{ .tint = .{ 0.5, 0.25, 1 }, .alpha = 0.25 });
+    batch.prepare();
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), batch.vertices[0].color[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.25), batch.vertices[0].color[1], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), batch.vertices[0].color[2], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.25), batch.vertices[0].color[3], 1e-6);
+}
+
+test "sprites draw in z order, and equal z keeps the order they were added" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    // The tint marks each sprite. The first one added has the highest z, so it draws last.
+    batch.drawSprite(&tex, quad, quad, .{ .tint = .{ 0.1, 0.1, 0.1 }, .z = 1 });
+    batch.drawSprite(&tex, quad, quad, .{ .tint = .{ 0.2, 0.2, 0.2 }, .z = 0 });
+    batch.drawSprite(&tex, quad, quad, .{ .tint = .{ 0.3, 0.3, 0.3 }, .z = 0 });
+    batch.prepare();
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), batch.vertices[0].color[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.3), batch.vertices[4].color[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.1), batch.vertices[8].color[0], 1e-6);
+    // All three share a texture, so they still draw as one batch.
+    try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
+}
+
+test "the z sort orders many sprites, with ties in the order they were added" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+    const count: u32 = 300;
+
+    // A fixed pseudo-random sequence gives each sprite a z from 0 to 5. The tint records the
+    // insertion index in red and the z in green, so the sorted order can be read from the vertices.
+    batch.begin(320, 180);
+    var seed: u32 = 12345;
+    var i: u32 = 0;
+    while (i < count) : (i += 1) {
+        seed = seed *% 1664525 +% 1013904223;
+        const z: i32 = @intCast((seed >> 16) % 6);
+        const index_tint = @as(f32, @floatFromInt(i)) / 1000.0;
+        const z_tint = @as(f32, @floatFromInt(z)) / 10.0;
+        batch.drawSprite(&tex, quad, quad, .{ .tint = .{ index_tint, z_tint, 0 }, .z = z });
+    }
+    batch.prepare();
+
+    // Read the quads back in draw order. Z must never drop, and within one z the insertion index
+    // must rise.
+    var prev_z: f32 = -1;
+    var prev_index: f32 = -1;
+    var q: u32 = 0;
+    while (q < count) : (q += 1) {
+        const color = batch.vertices[q * 4].color;
+        const index = @round(color[0] * 1000);
+        const z = @round(color[1] * 10);
+        if (q > 0) {
+            try std.testing.expect(z >= prev_z);
+            if (z == prev_z) try std.testing.expect(index > prev_index);
+        }
+        prev_z = z;
+        prev_index = index;
     }
 }
 
@@ -429,7 +596,8 @@ test "begin starts a new frame but keeps the storage a frame grew" {
 
     batch.begin(320, 180);
     var i: u32 = 0;
-    while (i < 3000) : (i += 1) batch.drawSprite(&tex, quad, quad, .{ 1, 1, 1 });
+    while (i < 3000) : (i += 1) batch.drawSprite(&tex, quad, quad, .{});
+    batch.prepare();
     const grown = batch.vertices.len;
     try std.testing.expect(grown >= 3000 * 4);
 

@@ -17,8 +17,6 @@ const speed: f32 = 80.0;
 /// Time each walk frame is shown, in seconds.
 const walk_frame_seconds: f32 = 0.12;
 
-const white = [3]f32{ 1.0, 1.0, 1.0 };
-
 /// Which way the player faces. Each facing is one row of the sheet, in this order.
 const Facing = enum(u32) {
     down,
@@ -149,6 +147,6 @@ pub const Player = struct {
             .w = width,
             .h = height,
         };
-        batch.drawSprite(sheet, src, dst, white);
+        batch.drawSprite(sheet, src, dst, .{});
     }
 };

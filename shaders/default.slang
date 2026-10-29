@@ -5,13 +5,13 @@
 struct VSInput {
     [vk::location(0)] float2 position : POSITION;
     [vk::location(1)] float2 uv : TEXCOORD0;
-    [vk::location(2)] float3 color : COLOR0;
+    [vk::location(2)] float4 color : COLOR0;
 };
 
 struct VSOutput {
     float4 position : SV_Position;
     [vk::location(0)] float2 uv : TEXCOORD0;
-    [vk::location(1)] float3 color : COLOR0;
+    [vk::location(1)] float4 color : COLOR0;
 };
 
 [shader("vertex")]
@@ -45,5 +45,5 @@ float4 sampleTex(float2 uv) {
 
 [shader("fragment")]
 float4 fragmentMain(VSOutput input) : SV_Target {
-    return sampleTex(input.uv) * float4(input.color, 1.0);
+    return sampleTex(input.uv) * input.color;
 }

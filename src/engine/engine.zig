@@ -167,7 +167,6 @@ const idle_sleep_ms: u32 = 16;
 /// Longest full asset path the loader builds, in bytes. A longer path panics with a clear message.
 const max_full_path = 1024;
 
-const white = [3]f32{ 1.0, 1.0, 1.0 };
 const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
@@ -376,7 +375,7 @@ pub fn run(comptime Game: type, config: Config) void {
         };
         const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
         screen_batch.begin(win_wf, win_hf);
-        screen_batch.drawSprite(&target, view_rect, dst_rect, white);
+        screen_batch.drawSprite(&target, view_rect, dst_rect, .{});
         screen_batch.upload(frame.cmd);
         const screen_pass = Renderer.beginPass(frame.cmd, frame.swapchain, black);
         screen_batch.draw(screen_pass);

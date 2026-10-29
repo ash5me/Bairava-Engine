@@ -79,7 +79,7 @@ pub const Level = struct {
                     .w = tile_px,
                     .h = tile_px,
                 };
-                batch.drawSprite(tileset, src, dst, .{ 1.0, 1.0, 1.0 });
+                batch.drawSprite(tileset, src, dst, .{});
             }
         }
     }

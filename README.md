@@ -158,7 +158,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - **Camera** `x` and `y` give the world position of the view's top-left corner. They keep fractions while the camera eases. Each sprite and tile rounds its screen position once, with `Camera.screenX` and `screenY`, so everything stays on whole pixels without the camera stepping on its own.
 - **Sprite destinations** are in view pixels, so world positions have the camera subtracted. `SpriteBatch` multiplies them by the projection from `math.ortho2d`, which gives normalized device coordinates with y pointing up.
 - **Sprite sources** are in texels. `drawSprite` converts them to 0 to 1 UV coordinates.
-- **Tint** is an RGB multiplier. There is no alpha tint.
+- **Tint** is an RGB multiplier, and **alpha** is a separate per-sprite multiplier. Both are set through `drawSprite`'s options.
 - **Zoom** changes the view size, not the world units. At zoom 2 the view covers half as many world pixels, so the camera, culling, and mouse mapping need no zoom-specific code.
 - **Mouse** positions from SDL are in window points. `Context.mouseWorld` converts them to world pixels, using the layout and camera of the last frame drawn.
 
@@ -202,6 +202,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 
 **2D rendering**
 - Sprite batching: quads buffered per frame as four vertices drawn through an index buffer, one draw call per run of the same texture, alpha blending, tint, source rectangles, and no fixed sprite or texture-switch limit.
+- Per-sprite options through `drawSprite`: flip, rotation around an origin, alpha, and z-order. Sprites are sorted by z once per frame, and sprites with equal z keep the order they were added in.
 - Tile world rendering with view culling and a one-tile margin.
 - Camera follow with frame-rate-independent smoothing, edge clamping, pixel snapping, and centering when the world is smaller than the view.
 - Camera zoom from keys. Each press multiplies or divides the zoom by 1.25, and the camera eases to the new zoom in logarithmic steps. Zoom changes the view size, so the camera, culling, and mouse mapping work unchanged. Integer mode rounds the zoomed scale to a whole number.
@@ -244,7 +245,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Strings | `string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
 | Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, checked against `std.StringHashMap`. Missing: removal. |
 | Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. Missing: loading, caching, unloading. |
-| Sprites | `sprite.zig` | Functional | 65% | Batched quads with four vertices each and a 32-bit index buffer, plus source rectangles. Storage grows with each frame. Missing: rotation, flip, origin, alpha tint, z-order. |
+| Sprites | `sprite.zig` | Functional | 75% | Batched quads with four vertices each and a 32-bit index buffer. Per-sprite tint, alpha, flip, rotation around an origin, and z-order, sorted once per frame. Storage grows with each frame. Missing: instancing. |
 | Camera | `camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
 | Animation | `animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
 | Level | `game/level.zig` | Early | 50% | Tile map drawn one layer at a time with culling, in ground, decoration, player, foreground order. Solid tiles block the player. No tile animation. |
@@ -298,7 +299,7 @@ These are the natural extension points. Each one reuses existing code.
 
 7. **Fixed: texture uploads blocked.** `Texture.initRgba8` used to wait for the GPU to go idle. It now queues the copy and returns. `Texture.isReady` reports when the copy finishes, and `SpriteBatch.draw` skips a texture until then, so a texture can be loaded at any time.
 
-8. **Fixed: sprite batches had hard limits.** `SpriteBatch` used to panic above 8192 sprites or 256 texture switches in one frame. Its vertex storage, batch list, and GPU buffers now double when they fill. The one ceiling left is SDL's 32-bit buffer size, about 38 million sprites in one frame.
+8. **Fixed: sprite batches had hard limits.** `SpriteBatch` used to panic above 8192 sprites or 256 texture switches in one frame. Its vertex storage, batch list, and GPU buffers now double when they fill. The one ceiling left is SDL's 32-bit buffer size, about 33 million sprites in one frame.
 
 9. **Fixed: the package file list omitted build inputs.** `.paths` in `build.zig.zon` now includes `shaders` and `vendor`, which the build needs. `assets` stays out, since the build doesn't read it.
 
@@ -331,7 +332,7 @@ These are the natural extension points. Each one reuses existing code.
 
 - [ ] Texture atlas with packing at build time.
 - [x] Index buffer for quads (4 vertices instead of 6). The vertex and index buffers grow together.
-- [ ] Sprite flip, rotation, origin, per-sprite alpha, and z-order.
+- [x] Sprite flip, rotation, origin, per-sprite alpha, and z-order, passed as `drawSprite` options.
 - [ ] Entity system: an array of structs first, ECS later if the number of entity types requires it.
 - [ ] Asset manager with caching. Executable-relative paths already work.
 - [x] Asynchronous texture uploads.
