@@ -29,6 +29,7 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 - **slangc**, the Slang shader compiler, on your `PATH`. Building the optional DXIL shaders (`-Ddxil=true`) also needs a `slangc` that can emit DXIL.
 - **A GPU driver with Vulkan support.** SPIR-V shaders are always built, so by default SDL selects a Vulkan backend, and the renderer requests Vulkan 1.2. Building with `-Ddxil=true` also embeds DXIL shaders and lets the device accept them, which is the route to Direct3D 12 (see Known issues).
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
+- **`vendor/stb_rect_pack.h` and `vendor/stb_image_write.h`**, used by the build to pack the texture atlas. Both are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h`.
 - **Optional:** Windows PowerShell with .NET's `System.Drawing`, for the asset script.
 
 ## Building and running
@@ -43,7 +44,7 @@ zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
 zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
 
-`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written.
+`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. `zig build` also packs the sprites listed in `atlas_sprites` in `build.zig` into `zig-out/bin/assets/atlas.png`, and writes where each sprite sits to `atlas.txt` beside it.
 
 ## Debugging
 
@@ -76,7 +77,7 @@ Keys are bound to named actions in `game/controls.zig`.
 
 ```
 .
-├── build.zig                  Build graph: SDL3, stb_image, cglm, shader compilation and embedding (SPIR-V, plus DXIL with `-Ddxil=true`), run and test steps
+├── build.zig                  Build graph: SDL3, stb_image, cglm, shader compilation and embedding (SPIR-V, plus DXIL with `-Ddxil=true`), the texture atlas, run and test steps
 ├── build.zig.zon              Package manifest and pinned dependencies
 ├── src/
 │   ├── main.zig               Entry point: hands the game to the engine
@@ -97,6 +98,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── string.zig         Validated fixed-capacity Name and Path types
 │   │   ├── hash_map.zig       StringMap: open-addressing hash map keyed by Name
 │   │   ├── assets.zig         Asset Table: names to ids and validated paths
+│   │   ├── atlas.zig          Texture atlas index: the rectangle of each sprite in the atlas image
 │   │   └── tilemap.zig        Tile map format and parser, layers, solid tiles, box movement against tiles
 │   ├── game/                  Gameplay code. Uses the engine only through engine/engine.zig.
 │   │   ├── game.zig           Game state, asset loading, update and draw
@@ -108,14 +110,17 @@ Keys are bound to named actions in `game/controls.zig`.
 │   └── tests.zig              Test root for `zig build test`: every unit test. Pure modules, plus input and renderer, which import SDL. Opens no window.
 ├── shaders/
 │   └── default.slang          Sprite vertex and fragment shaders. Compiled once per target, and `-DDXIL_TARGET` selects the D3D12 sampler layout
+├── tools/
+│   └── atlas/
+│       └── pack.c             Build-time texture atlas packer (stb_rect_pack). Writes atlas.png and atlas.txt
 ├── assets/
-│   ├── tile.png               Tile texture used by the map
+│   ├── tile.png               Tile texture used by the map, packed into the atlas at build time
 │   ├── warrior.png            Original warrior artwork (kept unchanged)
-│   ├── warrior_16x32.png      Runtime sprite sheet: 5 columns × 4 rows of 16×32 cells
+│   ├── warrior_16x32.png      Sprite sheet, 5 columns × 4 rows of 16×32 cells, packed into the atlas at build time
 │   └── maps/level1.txt        Level 1 tile map: layers of tile IDs, solid tiles, spawn cell
 ├── scripts/
 │   └── key_checker.ps1        Windows tool that keys out a checkerboard background
-├── vendor/                    stb_image.h and stb_image_impl.c; cglm (headers, C sources, license) in vendor/cglm/
+├── vendor/                    stb_image.h and stb_image_impl.c; stb_image_write.h and stb_rect_pack.h for the atlas packer; cglm (headers, C sources, license) in vendor/cglm/
 └── .gitignore
 ```
 
@@ -169,6 +174,8 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | Zig | 0.16.0-dev, pinned by `minimum_zig_version` | Language, build system, standard library | MIT |
 | SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard state, SDL_GPU API, file loading, timing, memory | zlib |
 | stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8 | Public domain or MIT |
+| stb_image_write | Vendored in `vendor/` | Writing `atlas.png` in the build's atlas packer | Public domain or MIT |
+| stb_rect_pack | Vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
 | cglm | 0.9.7, vendored in `vendor/cglm/`: headers, the 46 C sources its CMake lists, and its license | Vector and matrix math, the pixel projection, and transforms | MIT |
 | Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
@@ -199,6 +206,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Render-target textures in the swapchain format.
 - Nearest-neighbor sampler with clamp-to-edge addressing.
 - Assets installed beside the executable and loaded through `SDL_GetBasePath`, so the game runs from any directory.
+- Build-time texture atlas: `tools/atlas/pack.c` packs the sprites listed in `atlas_sprites` (`build.zig`) into one square PNG with stb_rect_pack. The square is the smallest power of two that fits, and each sprite has one transparent texel of padding on every side. `engine/atlas.zig` reads the index written beside the image, and the game draws every sprite from that one texture.
 
 **2D rendering**
 - Sprite batching: quads buffered per frame as four vertices drawn through an index buffer, one draw call per run of the same texture, alpha blending, tint, source rectangles, and no fixed sprite or texture-switch limit.
@@ -239,12 +247,13 @@ These estimates are rough. They measure how close each area is to something usab
 | Gameplay | `game/` | Prototype | 20% | Player with directional walk clips, one level loaded from `assets/maps/level1.txt` and drawn in layers, and movement and quit actions bound in `game/controls.zig`. No entities or rules. |
 | Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Asks the device for DXIL only when the build embeds it. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, Metal support, pass helpers. |
 | Shaders | `shader.zig` | Basic | 55% | Picks the first shader format the device accepts (SPIR-V, then DXIL) and creates GPU shaders from code embedded at build time. DXIL is optional (`-Ddxil=true`). Per-shader entry points and resource counts are declared in `sprite.zig`. Missing: MSL, reflection. Uniform buffer count is supported but unused. |
-| Textures | `texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: atlases, unload and reload. |
+| Textures | `texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: unload and reload. |
+| Atlas | `atlas.zig`, `tools/atlas/pack.c` | Functional | 60% | Build-time packing with stb_rect_pack, index parsing with validation, and lookup by name. Missing: runtime packing, several atlas pages, rotated sprites. |
 | Images | `image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
 | Math | `math.zig` | Functional | 60% | cglm wrappers: identity, mul, invert, transpose, translate, scale, rotate, ortho, perspective, look-at, point and vector transforms, 3D vector helpers, and quaternions (slerp, look rotation, billboard). 18 tests. Only the 2D parts are used so far. |
 | Strings | `string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
 | Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, checked against `std.StringHashMap`. Missing: removal. |
-| Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. Missing: loading, caching, unloading. |
+| Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. The game no longer uses it, since its sprites come from the atlas. Missing: loading, caching, unloading. |
 | Sprites | `sprite.zig` | Functional | 75% | Batched quads with four vertices each and a 32-bit index buffer. Per-sprite tint, alpha, flip, rotation around an origin, and z-order, sorted once per frame. Storage grows with each frame. Missing: instancing. |
 | Camera | `camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
 | Animation | `animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
@@ -252,7 +261,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Tile map | `engine/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |
 | Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. Clicks are captured but have no position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `src/tests.zig`. |
 | View mapping | `view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
-| Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, cglm, embedded shaders (SPIR-V, and DXIL with `-Ddxil=true`), the run step, and the test step. Installs `assets/` beside the executable. Missing: a Metal (MSL) shader target. |
+| Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, cglm, embedded shaders (SPIR-V, and DXIL with `-Ddxil=true`), the texture atlas, the run step, and the test step. Installs `assets/` beside the executable. Missing: a Metal (MSL) shader target. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
 | Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, camera, animation, input, and renderer. Missing: tests that open a window or create a GPU device. |
 | Entities | none | Not started | 0% | The player is a struct in `game/player.zig`. There is no entity list yet. |
@@ -265,7 +274,7 @@ These estimates are rough. They measure how close each area is to something usab
 
 These are the natural extension points. Each one reuses existing code.
 
-**Character sprite and animation.** The warrior is loaded once from `assets/warrior_16x32.png` and drawn through the existing `drawSprite` source-rectangle API. Each cell is 16×32 pixels. `game/player.zig` keeps a facing and an `engine.animation.Animator`. Each update, `clipFor` picks the clip for the facing and whether the player is moving, and the animator restarts only when the clip changes. The back-facing row uses four frames, while the other rows use five, and the clip for standing still shows frame 0. To add an animation, define a `Clip` (sheet row, frame count, frame time, loop mode) and select it in `clipFor`.
+**Character sprite and animation.** The warrior is a region of the texture atlas, found by name at startup, and drawn through the existing `drawSprite` source-rectangle API, offset by that region. Each cell is 16×32 pixels. `game/player.zig` keeps a facing and an `engine.animation.Animator`. Each update, `clipFor` picks the clip for the facing and whether the player is moving, and the animator restarts only when the clip changes. The back-facing row uses four frames, while the other rows use five, and the clip for standing still shows frame 0. To add an animation, define a `Clip` (sheet row, frame count, frame time, loop mode) and select it in `clipFor`.
 
 **Add a tile layer.** Layers are the `Layer` enum in `engine/tilemap.zig`, and `all_layers` lists them. To add one, add an enum value and its name to `parseLayer`, then call `Level.drawLayer` for it in `Game.draw` at the point in the draw order where it belongs. A solid ID on any layer blocks movement.
 
@@ -279,7 +288,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
 
-**Add an asset.** Add a `{ .name, .path }` entry to `assets` in `game/config.zig`. The name must follow the rules in `engine/string.zig`, and the path is relative to the executable's folder. Files in the project's `assets/` folder are installed to `zig-out/bin/assets/`, so an entry looks like `assets/tile.png`. Both are checked when the game starts. Look the asset up once with `table.find(name)` and keep the returned id.
+**Add a sprite.** Add a `.{ .name, .file }` row to `atlas_sprites` in `build.zig`. The next `zig build` packs it into the atlas. The name must follow the rules in `engine/string.zig`. In the game, look the sprite up once with `Game.atlas_index.find(name)` and keep the returned region. Draw it by offsetting the source rectangle by the region's position in the atlas, as `Level.drawLayer` and `Player.draw` do.
 
 **Add entities.** Store entities in an array of structs with a position, a velocity, and a sprite or animation. Update and draw them in the loop, subtracting the camera from world positions the same way `Player.draw` does. Once there are several entity types, consider the ECS approach from the roadmap.
 
@@ -330,7 +339,7 @@ These are the natural extension points. Each one reuses existing code.
 
 ### Phase 3: engine infrastructure
 
-- [ ] Texture atlas with packing at build time.
+- [x] Texture atlas with packing at build time.
 - [x] Index buffer for quads (4 vertices instead of 6). The vertex and index buffers grow together.
 - [x] Sprite flip, rotation, origin, per-sprite alpha, and z-order, passed as `drawSprite` options.
 - [ ] Entity system: an array of structs first, ECS later if the number of entity types requires it.
@@ -357,10 +366,10 @@ These are the natural extension points. Each one reuses existing code.
 
 - Units: world, camera, and sprite positions are in native pixels, and time is `f32` seconds.
 - Game `update` runs at the fixed rate `update_hz` in `game/config.zig`, and `ctx.dt` is that step. `draw` runs once per frame and gets `alpha`, which blends between the last two updates.
-- Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, so a config entry such as `assets/warrior_16x32.png` works from any directory.
-- `assets/warrior.png` is the original source art; the game loads the prepared 80×128 `assets/warrior_16x32.png` sheet instead.
+- Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
+- `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
 - Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
-- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, and `animation.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
+- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `atlas.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, and `animation.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.

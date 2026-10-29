@@ -33,26 +33,11 @@ comptime {
     if (!(zoom_min > 0.0 and zoom_min <= 1.0 and zoom_max >= 1.0)) @compileError("zoom bounds must be positive and include 1");
     if (!(zoom_step > 1.0)) @compileError("zoom_step must be greater than 1");
 }
-/// One asset the game loads at startup: the name code uses to refer to it, and its path relative to
-/// the project root.
-pub const Asset = struct {
-    name: []const u8,
-    path: []const u8,
-};
-
-/// Upper bound on registered assets. The asset table is sized from it.
-pub const max_assets: u32 = 32;
-
-/// Every asset the game registers at startup. Names follow the rules in engine/string.zig and must
-/// be unique.
-pub const assets = [_]Asset{
-    .{ .name = "tile", .path = "assets/tile.png" },
-    .{ .name = "warrior", .path = "assets/warrior_16x32.png" },
-};
-
-comptime {
-    if (assets.len > max_assets) @compileError("config.assets has more entries than max_assets");
-}
+/// The texture atlas: one image that holds every sprite, and an index of where each sprite sits in
+/// it. `zig build` makes both from the sprite list in build.zig, and installs them beside the
+/// executable. Paths are relative to the executable's folder.
+pub const atlas_image_path = "assets/atlas.png";
+pub const atlas_index_path = "assets/atlas.txt";
 
 /// The tile map the game loads at startup, relative to the executable's folder.
 pub const level_path = "assets/maps/level1.txt";

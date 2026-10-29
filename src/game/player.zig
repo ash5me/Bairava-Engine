@@ -131,12 +131,20 @@ pub const Player = struct {
         engine.log.assert(std.math.isFinite(self.x) and std.math.isFinite(self.y), @src(), "player position is not finite: ({d}, {d})", .{ self.x, self.y });
     }
 
-    /// Queues the current frame at the blended position, relative to the camera.
-    pub fn draw(self: *const Player, batch: *engine.SpriteBatch, sheet: *const engine.Texture, cam: *const engine.Camera, alpha: f32) void {
+    /// Queues the current frame at the blended position, relative to the camera. `atlas` is the
+    /// texture that holds every sprite, and `sheet` is the warrior's region of it.
+    pub fn draw(
+        self: *const Player,
+        batch: *engine.SpriteBatch,
+        atlas: *const engine.Texture,
+        sheet: engine.atlas.Region,
+        cam: *const engine.Camera,
+        alpha: f32,
+    ) void {
         const pos = self.drawPosition(alpha);
         const src = engine.Rect{
-            .x = @as(f32, @floatFromInt(self.anim.frame())) * width,
-            .y = @as(f32, @floatFromInt(self.anim.clip.row)) * height,
+            .x = @as(f32, @floatFromInt(sheet.x)) + @as(f32, @floatFromInt(self.anim.frame())) * width,
+            .y = @as(f32, @floatFromInt(sheet.y)) + @as(f32, @floatFromInt(self.anim.clip.row)) * height,
             .w = width,
             .h = height,
         };
@@ -147,6 +155,6 @@ pub const Player = struct {
             .w = width,
             .h = height,
         };
-        batch.drawSprite(sheet, src, dst, .{});
+        batch.drawSprite(atlas, src, dst, .{});
     }
 };

@@ -32,6 +32,8 @@ pub const strings = @import("string.zig");
 pub const hash_map = @import("hash_map.zig");
 /// Asset names, ids, and validated paths.
 pub const assets = @import("assets.zig");
+/// Texture atlas index: the rectangle of each sprite inside the atlas image.
+pub const atlas = @import("atlas.zig");
 /// Tile maps: the map file format, layers, solid tiles, and box movement against them.
 pub const tilemap = @import("tilemap.zig");
 /// Sprite-sheet animation: clips that name a row of frames, and an animator that plays them.

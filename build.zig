@@ -152,6 +152,21 @@ fn embeddedSource(b: *std.Build, dxil_enabled: bool) []const u8 {
     return source;
 }
 
+/// One sprite packed into the texture atlas. `name` is the handle game code looks it up by, through
+/// engine/atlas.zig, and follows the rules in engine/string.zig. `file` is relative to the project root.
+const AtlasSprite = struct {
+    name: []const u8,
+    file: []const u8,
+};
+
+/// Every sprite the game draws. `zig build` packs them into zig-out/bin/assets/atlas.png, and writes
+/// where each one sits to atlas.txt beside it. To add a sprite, add a row here, then look it up by its
+/// name in the game. Names must be unique.
+const atlas_sprites = [_]AtlasSprite{
+    .{ .name = "tile", .file = "assets/tile.png" },
+    .{ .name = "warrior", .file = "assets/warrior_16x32.png" },
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -195,6 +210,32 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "assets",
     });
     b.getInstallStep().dependOn(&install_assets.step);
+
+    // Texture atlas: every sprite in one image, packed at build time by tools/atlas/pack.c with
+    // stb_rect_pack. The packer runs on the build machine, so it is built for the host, not the target.
+    const atlas_tool = b.addExecutable(.{
+        .name = "atlas_pack",
+        .root_module = b.createModule(.{
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+        }),
+    });
+    atlas_tool.root_module.addIncludePath(b.path("vendor"));
+    atlas_tool.root_module.addCSourceFile(.{ .file = b.path("tools/atlas/pack.c") });
+
+    const pack = b.addRunArtifact(atlas_tool);
+    const atlas_png = pack.addOutputFileArg("atlas.png");
+    const atlas_index = pack.addOutputFileArg("atlas.txt");
+    for (atlas_sprites) |sprite| {
+        pack.addArg(sprite.name);
+        pack.addFileArg(b.path(sprite.file));
+    }
+    // The game reads both files from the executable's folder, beside the assets it already installs.
+    const install_atlas_png = b.addInstallFile(atlas_png, "bin/assets/atlas.png");
+    const install_atlas_index = b.addInstallFile(atlas_index, "bin/assets/atlas.txt");
+    b.getInstallStep().dependOn(&install_atlas_png.step);
+    b.getInstallStep().dependOn(&install_atlas_index.step);
 
     // Compile each shader entry point for each target, and embed the results in the executable
     // through a generated module, so the game reads no shader files at runtime. DXIL is optional:

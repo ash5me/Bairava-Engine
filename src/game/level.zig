@@ -36,21 +36,22 @@ pub const Level = struct {
         return @as(f32, @floatFromInt(self.map.rows)) * tile_px;
     }
 
-    /// How many tiles a tileset texture holds. The tiles form a grid, read left to right, then down.
-    pub fn tileCount(tileset: *const engine.Texture) u32 {
-        return tilesAcross(tileset) * (tileset.height / engine.tilemap.tile_size);
+    /// How many tiles the tileset region holds. The tiles form a grid, read left to right, then down.
+    pub fn tileCount(tileset: engine.atlas.Region) u32 {
+        return tilesAcross(tileset) * (tileset.h / engine.tilemap.tile_size);
     }
 
-    fn tilesAcross(tileset: *const engine.Texture) u32 {
-        return tileset.width / engine.tilemap.tile_size;
+    fn tilesAcross(tileset: engine.atlas.Region) u32 {
+        return tileset.w / engine.tilemap.tile_size;
     }
 
-    /// Queues the tiles of one layer that overlap the camera's view. Each cell draws the tile its
-    /// ID names. Empty cells draw nothing.
+    /// Queues the tiles of one layer that overlap the camera's view. `tileset` is the region of the
+    /// atlas that holds the tiles. Each cell draws the tile its ID names. Empty cells draw nothing.
     pub fn drawLayer(
         self: *const Level,
         batch: *engine.SpriteBatch,
-        tileset: *const engine.Texture,
+        atlas: *const engine.Texture,
+        tileset: engine.atlas.Region,
         cam: *const engine.Camera,
         layer: engine.tilemap.Layer,
     ) void {
@@ -66,9 +67,10 @@ pub const Level = struct {
             var col = first_col;
             while (col < last_col) : (col += 1) {
                 const id: u32 = self.map.idAt(layer, @intCast(col), @intCast(row)) orelse continue;
+                // The region's corner offsets the tile's grid cell inside the atlas.
                 const src = engine.Rect{
-                    .x = @as(f32, @floatFromInt(id % across)) * tile_px,
-                    .y = @as(f32, @floatFromInt(id / across)) * tile_px,
+                    .x = @as(f32, @floatFromInt(tileset.x + (id % across) * engine.tilemap.tile_size)),
+                    .y = @as(f32, @floatFromInt(tileset.y + (id / across) * engine.tilemap.tile_size)),
                     .w = tile_px,
                     .h = tile_px,
                 };
@@ -79,7 +81,7 @@ pub const Level = struct {
                     .w = tile_px,
                     .h = tile_px,
                 };
-                batch.drawSprite(tileset, src, dst, .{});
+                batch.drawSprite(atlas, src, dst, .{});
             }
         }
     }
