@@ -18,6 +18,13 @@ pub const Key = enum {
     zero,
     keypad_plus,
     keypad_minus,
+    space,
+    enter,
+    tab,
+    q,
+    e,
+    f,
+    r,
 };
 
 /// Number of keys in `Key`. Per-key arrays are indexed by `@intFromEnum(key)`.
@@ -157,6 +164,13 @@ fn scancode(key: Key) c.SDL_Scancode {
         .zero => c.SDL_SCANCODE_0,
         .keypad_plus => c.SDL_SCANCODE_KP_PLUS,
         .keypad_minus => c.SDL_SCANCODE_KP_MINUS,
+        .space => c.SDL_SCANCODE_SPACE,
+        .enter => c.SDL_SCANCODE_RETURN,
+        .tab => c.SDL_SCANCODE_TAB,
+        .q => c.SDL_SCANCODE_Q,
+        .e => c.SDL_SCANCODE_E,
+        .f => c.SDL_SCANCODE_F,
+        .r => c.SDL_SCANCODE_R,
     };
 }
 
@@ -217,6 +231,13 @@ test "keys map to the SDL scancodes the controls expect" {
     try std.testing.expectEqual(@as(?Key, .zero), keyFromScancode(c.SDL_SCANCODE_0));
     try std.testing.expectEqual(@as(?Key, .keypad_plus), keyFromScancode(c.SDL_SCANCODE_KP_PLUS));
     try std.testing.expectEqual(@as(?Key, .keypad_minus), keyFromScancode(c.SDL_SCANCODE_KP_MINUS));
+    try std.testing.expectEqual(@as(?Key, .space), keyFromScancode(c.SDL_SCANCODE_SPACE));
+    try std.testing.expectEqual(@as(?Key, .enter), keyFromScancode(c.SDL_SCANCODE_RETURN));
+    try std.testing.expectEqual(@as(?Key, .tab), keyFromScancode(c.SDL_SCANCODE_TAB));
+    try std.testing.expectEqual(@as(?Key, .q), keyFromScancode(c.SDL_SCANCODE_Q));
+    try std.testing.expectEqual(@as(?Key, .e), keyFromScancode(c.SDL_SCANCODE_E));
+    try std.testing.expectEqual(@as(?Key, .f), keyFromScancode(c.SDL_SCANCODE_F));
+    try std.testing.expectEqual(@as(?Key, .r), keyFromScancode(c.SDL_SCANCODE_R));
 }
 
 test "every key has its own scancode, and that scancode maps back to it" {

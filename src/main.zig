@@ -31,5 +31,8 @@ pub fn main() void {
         .debug_font_path = config.ui_font_path,
         .debug_font_px = config.ui_font_px,
         .log_file = config.log_file_name,
+        .settings_file = config.settings_file_name,
+        .fullscreen = config.fullscreen,
+        .vsync = config.vsync,
     });
 }

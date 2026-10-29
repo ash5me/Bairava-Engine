@@ -1,0 +1,28 @@
+# Semkootru settings. Read at startup. Changes apply the next time the game starts.
+# Copy this file beside the Semkootru executable to edit it. A missing file uses the defaults.
+# F11 still toggles fullscreen while playing.
+
+# Window size in pixels, as WIDTHxHEIGHT. With fullscreen = true the monitor's own mode is used,
+# so this size applies when the window is windowed.
+resolution = 960x540
+
+# Start full screen.
+fullscreen = false
+
+# Wait for the display's refresh before each frame. Off presents frames as soon as they are ready,
+# which can tear. Systems that can't turn vsync off keep it on.
+vsync = true
+
+# Key bindings. Each bind line replaces the keys of one action. Separate keys with commas, up to 4
+# per action. Actions: move_left, move_right, move_up, move_down, quit, toggle_scale, zoom_in,
+# zoom_out, zoom_reset. Key names: escape, left, right, up, down, w, a, s, d, i, equal, minus, zero,
+# keypad_plus, keypad_minus, space, enter, tab, q, e, f, r.
+bind move_left = left, a
+bind move_right = right, d
+bind move_up = up, w
+bind move_down = down, s
+bind quit = escape
+bind toggle_scale = i
+bind zoom_in = equal, keypad_plus
+bind zoom_out = minus, keypad_minus
+bind zoom_reset = zero

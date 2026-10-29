@@ -33,6 +33,8 @@ pub const Game = struct {
     /// Demo panel state: how often the button was clicked, and the slider value.
     clicks: u32,
     volume: f32,
+    /// Key bindings from the settings file, with the defaults for anything it leaves out.
+    bindings: controls.Bindings,
 
     pub fn init(ctx: *engine.Context) Game {
         const zone = engine.profile.zoneNamed(@src(), "game init");
@@ -53,6 +55,7 @@ pub const Game = struct {
 
         const ui_font = loadUiFont(ctx);
         const ui = createUi(ui_font);
+        const bindings = controls.Bindings.load(ctx.settings_text);
 
         return .{
             .level = level,
@@ -65,6 +68,7 @@ pub const Game = struct {
             .ui = ui,
             .clicks = 0,
             .volume = 0.5,
+            .bindings = bindings,
         };
     }
 
@@ -80,27 +84,27 @@ pub const Game = struct {
     /// Runs at the fixed update rate. `ctx.dt` is the length of the step.
     pub fn update(self: *Game, ctx: *engine.Context) void {
         const input = ctx.input;
-        if (controls.pressed(input, .quit)) {
+        if (self.bindings.pressed(input, .quit)) {
             log.info("quit action pressed", .{});
             ctx.running = false;
         }
-        if (controls.pressed(input, .toggle_scale)) {
+        if (self.bindings.pressed(input, .toggle_scale)) {
             ctx.scale_mode = switch (ctx.scale_mode) {
                 .fit => .integer,
                 .integer => .fit,
             };
         }
-        if (controls.pressed(input, .zoom_in)) ctx.zoomBy(config.zoom_step);
-        if (controls.pressed(input, .zoom_out)) ctx.zoomBy(1.0 / config.zoom_step);
-        if (controls.pressed(input, .zoom_reset)) ctx.resetZoom();
+        if (self.bindings.pressed(input, .zoom_in)) ctx.zoomBy(config.zoom_step);
+        if (self.bindings.pressed(input, .zoom_out)) ctx.zoomBy(1.0 / config.zoom_step);
+        if (self.bindings.pressed(input, .zoom_reset)) ctx.resetZoom();
 
         // Each movement action contributes one unit on its axis.
         var dx: f32 = 0;
         var dy: f32 = 0;
-        if (controls.held(input, .move_left)) dx -= 1;
-        if (controls.held(input, .move_right)) dx += 1;
-        if (controls.held(input, .move_up)) dy -= 1;
-        if (controls.held(input, .move_down)) dy += 1;
+        if (self.bindings.held(input, .move_left)) dx -= 1;
+        if (self.bindings.held(input, .move_right)) dx += 1;
+        if (self.bindings.held(input, .move_up)) dy -= 1;
+        if (self.bindings.held(input, .move_down)) dy += 1;
 
         self.player.update(dx, dy, ctx.dt, &self.level.map);
         self.updateUi(ctx);

@@ -118,7 +118,20 @@ defer zone.End();
 | 0 | Reset zoom to 1× |
 | Left mouse button | Presses the demo panel's button and drags its slider. |
 
-Keys are bound to named actions in `game/controls.zig`.
+Keys are bound to named actions in `game/controls.zig`. The defaults are in the table above, and `settings.txt` can rebind them.
+
+### Settings file
+
+The game reads `settings.txt` from beside the executable at startup. The project root has a copy with the defaults. Copy it into the folder with `Semkootru` (for example `zig-out/bin/`) to edit it. Changes apply the next time the game starts. A missing file means the defaults. The file holds `name = value` lines, and lines that start with `#` are comments.
+
+| Setting | Values | Default |
+|---|---|---|
+| `resolution` | `WIDTHxHEIGHT` in pixels, each from 64 to 8192 | `960x540` |
+| `fullscreen` | `true` or `false` | `false` |
+| `vsync` | `true` or `false`. Off presents frames as soon as they are ready, which can tear. | `true` |
+| `bind <action> = <key>, ...` | Replaces the keys for one action, up to 4 keys. Key names are listed in `settings.txt`. | The keys in the table above |
+
+With `fullscreen = true` the window uses the monitor's own mode, so `resolution` applies when the window is windowed. F11 still toggles fullscreen during play. A bad value or an unknown name is written to the log and the default is kept.
 
 ## Project structure
 
@@ -139,6 +152,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── camera.zig         View position, follow target, smoothing, edge clamping, zoom easing
 │   │   ├── animation.zig      Sprite-sheet clips and the animator that plays them
 │   │   ├── input.zig          Key enum, held, pressed, and released state for keys and the left mouse button, mouse position
+│   │   ├── settings.zig       Settings file: name = value lines, the window settings (resolution, fullscreen, vsync), and the line reader
 │   │   ├── audio.zig          Sound output: one playback device, WAV sounds converted to its format, voices as SDL audio streams
 │   │   ├── audio_voices.zig   Voice handles, gain, and the finish and loop rules (no SDL)
 │   │   ├── view.zig           Fits the view to the window for each zoom and scale mode, and maps mouse positions from window to view and world
@@ -166,7 +180,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   └── tilemap.zig        Tile map format and parser, layers, solid tiles, box movement against tiles
 │   ├── game/                  Gameplay code. Uses the engine only through engine/engine.zig.
 │   │   ├── game.zig           Game state, asset loading, the UI font, the demo panel, update and draw
-│   │   ├── controls.zig       Named actions and the keys bound to them
+│   │   ├── controls.zig       Named actions, default keys, and the `bind` lines that rebind them
 │   │   ├── player.zig         Player position, facing, walk clips, drawing
 │   │   ├── level.zig          Level: loads the tile map, draws one layer at a time with view culling
 │   │   └── config.zig         Title, window and native sizes, level path, UI font path and size, background color, update rate, scale mode, camera rate, zoom limits and step, asset list
@@ -261,7 +275,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 ### Implemented
 
 **Platform and application**
-- SDL3 initialization and a resizable, high-DPI window that starts at 960x540.
+- SDL3 initialization and a resizable, high-DPI window that starts at 960x540 unless `settings.txt` says otherwise.
 - Quit on window close or Esc. F11 toggles fullscreen.
 - Fixed-timestep update loop (60 steps per second by default) with an accumulator. Frame time is capped at 0.1 s, and `draw` gets an interpolation factor.
 - Live stats in an on-screen debug overlay with a frame-time graph, toggled with F3. The window title is no longer used for stats.
@@ -370,7 +384,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add camera effects.** The camera is a position and a view size. `followSmooth` eases toward the clamped target, and `camera_rate` in `game/config.zig` sets how fast. Shake is an offset applied after `follow`. Zoom is already in place: `Context.zoomBy` and `resetZoom` set the target, `engine/engine.zig` eases `Camera.zoom` toward it each frame, and `view.chooseFit` turns the zoom into a scale and a view size. Drawing and culling read the view size, so they need no changes. To change the limits or the step, edit `zoom_min`, `zoom_max`, `zoom_step`, and `zoom_rate` in `game/config.zig`.
 
-**Add input actions.** Add a name to `Action` in `game/controls.zig`, bind its keys in `keysFor`, and query it with `controls.held`, `controls.pressed`, or `controls.released`. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input.zig` and map it to its SDL scancode.
+**Add input actions.** Add a name to `Action` in `game/controls.zig`, give it default keys in `defaultKeys`, and query it with `self.bindings.held`, `self.bindings.pressed`, or `self.bindings.released`. The settings file can then bind it with a `bind` line. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input.zig` and map it to its SDL scancode. A new key name works in `bind` lines as soon as it is in `Key`.
 
 **Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `sprite.zig` with the stage, resource counts, and embedded code for both formats (for example `.code = .{ .spirv = embedded.default_vert, .dxil = embedded.default_vert_dxil }`; the DXIL slice is empty unless the build used `-Ddxil=true`). If the shader samples a texture, follow the `DXIL_TARGET` split in `default.slang`, since Vulkan and D3D12 declare samplers differently. Load it with `shader.load` and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
 
@@ -442,7 +456,7 @@ These are the natural extension points. Each one reuses existing code.
 - [ ] Text rendering and basic UI widgets.
 - [ ] On-screen debug overlay with a frame-time graph, replacing the title stats.
 - [x] Profiling zones (for example Tracy), and log file output.
-- [ ] Settings file for resolution, fullscreen, vsync, and key bindings.
+- [x] Settings file for resolution, fullscreen, vsync, and key bindings.
 - [x] Unit tests wired into `zig build test`.
 
 ### Phase 4: platforms and tooling

@@ -5,8 +5,15 @@ const engine = @import("../engine/engine.zig");
 
 /// Window title. The engine appends play stats to it.
 pub const title: [:0]const u8 = "Semkootru";
+/// Window size in pixels at startup. The settings file can change it with `resolution`.
 pub const window_w: c_int = 960;
 pub const window_h: c_int = 540;
+/// Fullscreen and vsync at startup. The settings file can change both.
+pub const fullscreen = false;
+pub const vsync = true;
+/// The settings file, beside the executable. It sets the resolution, fullscreen, vsync, and key
+/// bindings. A missing file means these defaults. Copy `settings.txt` there to edit it.
+pub const settings_file_name = "settings.txt";
 /// The reference view size, in native pixels. At zoom 1 it fits the window on its limiting axis,
 /// so the view is exactly this size on that axis. The pixel art is designed at this size.
 pub const native_w: u32 = 320;

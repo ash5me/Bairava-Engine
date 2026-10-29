@@ -46,6 +46,8 @@ pub const tilemap = @import("tilemap.zig");
 pub const animation = @import("animation.zig");
 /// Sound output through SDL3 audio streams: the playback device, sounds, and voices.
 pub const audio = @import("audio.zig");
+/// The settings file: `name = value` lines, and the window settings the engine reads from them.
+pub const settings = @import("settings.zig");
 
 /// Text and widgets: fonts baked with stb_truetype, and the IMGUI widgets in src/engine/ui/.
 pub const ui = @import("ui.zig");
@@ -87,6 +89,13 @@ pub const Config = struct {
     /// Name of the log file, written beside the executable. Each run replaces the file from the
     /// last run. Null logs to the terminal only.
     log_file: ?[:0]const u8 = null,
+    /// Settings file, beside the executable. Its window settings override `window_w`, `window_h`,
+    /// `fullscreen`, and `vsync`. A missing file keeps these values.
+    settings_file: []const u8 = "settings.txt",
+    /// Start full screen, unless the settings file says otherwise.
+    fullscreen: bool = false,
+    /// Wait for vsync, unless the settings file says otherwise.
+    vsync: bool = true,
 };
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
@@ -117,6 +126,9 @@ pub const Context = struct {
     /// Sound output. Load sounds with `loadSound` and play them through this. It stays silent when
     /// no playback device could be opened.
     audio: *Audio,
+    /// Text of the settings file, read at startup. Empty when there is no file. The game reads its
+    /// key bindings from it in `init`.
+    settings_text: []const u8 = "",
 
     /// The mouse position in world pixels, as the player sees it. It is the cursor's place in the
     /// view drawn last frame, plus that frame's camera position. Use this in `update` rather than
@@ -203,6 +215,38 @@ const max_full_path = 1024;
 
 const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
 
+/// Reads the settings file in the executable's folder. Returns null when there is no file. The
+/// caller frees the result with `std.heap.page_allocator`.
+fn readSettings(base_path: []const u8, name: []const u8) ?[]u8 {
+    var buf: [max_full_path]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ base_path, name }) catch {
+        elog.warn("settings file name '{s}' is too long, so the defaults are used", .{name});
+        return null;
+    };
+    var size: usize = 0;
+    const data = c.SDL_LoadFile(path.ptr, &size) orelse {
+        elog.info("no settings file at {s}, so the defaults are used", .{path});
+        return null;
+    };
+    defer c.SDL_free(data);
+    elog.info("settings file {s}", .{path});
+    const bytes: [*]const u8 = @ptrCast(data);
+    return std.heap.page_allocator.dupe(u8, bytes[0..size]) catch null;
+}
+
+/// Reads the window settings over `defaults`. A value that can't be read is logged, and its default is kept.
+fn loadWindowSettings(text: []const u8, defaults: settings.Window) settings.Window {
+    var window = defaults;
+    var lines = settings.Lines.init(text);
+    while (lines.next()) |line| {
+        const value = line.value orelse continue;
+        if (settings.applyWindowLine(&window, line.key, value) == .bad_value) {
+            elog.warn("settings line {d}: '{s}' has a value that isn't valid, so the default is used", .{ line.number, line.key });
+        }
+    }
+    return window;
+}
+
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 pub fn run(comptime Game: type, config: Config) void {
     // The executable's folder comes first, so the log file can sit beside the executable. SDL3 owns
@@ -230,21 +274,37 @@ pub fn run(comptime Game: type, config: Config) void {
     logging.assert(config.zoom_min > 0 and config.zoom_min <= 1.0 and config.zoom_max >= 1.0, @src(), "zoom bounds {d} to {d} must be positive and include 1", .{ config.zoom_min, config.zoom_max });
     const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
 
+    // The settings file sets the window here, and the game reads its key bindings in `init`.
+    const settings_bytes = readSettings(base_path, config.settings_file);
+    defer if (settings_bytes) |bytes| std.heap.page_allocator.free(bytes);
+    const settings_text: []const u8 = settings_bytes orelse "";
+    const window_settings = loadWindowSettings(settings_text, .{
+        .width = config.window_w,
+        .height = config.window_h,
+        .fullscreen = config.fullscreen,
+        .vsync = config.vsync,
+    });
+
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
         std.debug.panic("SDL_Init failed: {s}", .{c.SDL_GetError()});
     }
     defer c.SDL_Quit();
 
-    const window = c.SDL_CreateWindow(config.title.ptr, config.window_w, config.window_h, c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY) orelse {
+    const window_flags: u64 = @as(u64, c.SDL_WINDOW_RESIZABLE) | @as(u64, c.SDL_WINDOW_HIGH_PIXEL_DENSITY) |
+        (if (window_settings.fullscreen) @as(u64, c.SDL_WINDOW_FULLSCREEN) else 0);
+    const window = c.SDL_CreateWindow(config.title.ptr, window_settings.width, window_settings.height, window_flags) orelse {
         std.debug.panic("SDL_CreateWindow failed: {s}", .{c.SDL_GetError()});
     };
     defer c.SDL_DestroyWindow(window);
     elog.info("window {d}x{d}, native view {d}x{d}, {d} update steps per second", .{
-        config.window_w, config.window_h, config.native_w, config.native_h, config.update_hz,
+        window_settings.width, window_settings.height, config.native_w, config.native_h, config.update_hz,
     });
 
     var gpu = Renderer.init(window, build_options.gpu_debug);
     defer gpu.deinit();
+    if (!gpu.setVsync(window_settings.vsync)) elog.warn("immediate present is not available on this display, so vsync stays on", .{});
+    const vsync_label: []const u8 = if (window_settings.vsync) "on" else "off";
+    elog.info("vsync {s}", .{vsync_label});
 
     const format = gpu.swapchainFormat();
     const gpu_debug_label: []const u8 = if (build_options.gpu_debug) "on" else "off";
@@ -288,6 +348,7 @@ pub fn run(comptime Game: type, config: Config) void {
         .camera = &cam,
         .base_path = base_path,
         .audio = &audio_out,
+        .settings_text = settings_text,
     };
     var game = Game.init(&ctx);
     defer game.deinit();

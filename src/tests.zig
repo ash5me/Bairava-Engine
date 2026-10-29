@@ -27,6 +27,7 @@ test {
     _ = @import("engine/entity.zig");
     _ = @import("engine/math.zig");
     _ = @import("engine/view.zig");
+    _ = @import("engine/settings.zig");
 }
 
 const Input = input.Input;
@@ -54,6 +55,13 @@ const key_scancodes = [_]struct { key: Key, code: c.SDL_Scancode }{
     .{ .key = .zero, .code = c.SDL_SCANCODE_0 },
     .{ .key = .keypad_plus, .code = c.SDL_SCANCODE_KP_PLUS },
     .{ .key = .keypad_minus, .code = c.SDL_SCANCODE_KP_MINUS },
+    .{ .key = .space, .code = c.SDL_SCANCODE_SPACE },
+    .{ .key = .enter, .code = c.SDL_SCANCODE_RETURN },
+    .{ .key = .tab, .code = c.SDL_SCANCODE_TAB },
+    .{ .key = .q, .code = c.SDL_SCANCODE_Q },
+    .{ .key = .e, .code = c.SDL_SCANCODE_E },
+    .{ .key = .f, .code = c.SDL_SCANCODE_F },
+    .{ .key = .r, .code = c.SDL_SCANCODE_R },
 };
 
 /// A key event as SDL fills one in. `repeat` marks an auto-repeated key-down.

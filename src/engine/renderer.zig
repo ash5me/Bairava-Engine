@@ -60,6 +60,14 @@ pub const Renderer = struct {
         return c.SDL_GetGPUSwapchainTextureFormat(self.device, self.window);
     }
 
+    /// Sets vsync. On is the default, so it changes nothing. Off presents frames as soon as they are
+    /// ready, which can tear. Returns false when the window can't present without vsync, and vsync stays on.
+    pub fn setVsync(self: *Renderer, vsync: bool) bool {
+        if (vsync) return true;
+        if (!c.SDL_WindowSupportsGPUPresentMode(self.device, self.window, c.SDL_GPU_PRESENTMODE_IMMEDIATE)) return false;
+        return c.SDL_SetGPUSwapchainParameters(self.device, self.window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, c.SDL_GPU_PRESENTMODE_IMMEDIATE);
+    }
+
     /// Acquires a command buffer and the swapchain texture.
     /// Returns null when the frame should be skipped, such as while the window is minimized.
     pub fn beginFrame(self: *Renderer) ?Frame {
