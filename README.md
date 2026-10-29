@@ -76,6 +76,7 @@ Assertions check invariants. A failed one prints the file and line, then panics 
 | Arrow keys, or W A S D | Move |
 | Esc | Quit |
 | F11 | Toggle fullscreen |
+| F3 | Show or hide the debug overlay |
 | I | Toggle integer scale |
 | = or keypad + | Zoom in |
 | - or keypad - | Zoom out |
@@ -107,6 +108,8 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── audio_voices.zig   Voice handles, gain, and the finish and loop rules (no SDL)
 │   │   ├── view.zig           Fits the view to the window for each zoom and scale mode, and maps mouse positions from window to view and world
 │   │   ├── log.zig            Logging and assertions for debugging
+│   │   ├── debug_overlay.zig  On-screen frame-time graph and frame stats, toggled with F3
+│   │   ├── frame_history.zig  Frame-time history and statistics. Pure math, covered by zig build test
 │   │   ├── math.zig           cglm wrappers: projection, transforms, normalization. The only cglm import.
 │   │   ├── string.zig         Validated fixed-capacity Name and Path types
 │   │   ├── hash_map.zig       StringMap: open-addressing hash map keyed by Name
@@ -174,16 +177,16 @@ Zoom multiplies the scale, and the view size follows from it. At zoom 2 the scal
 The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing runs once per frame.
 
 1. Measure the frame time since the last frame, capped at 0.1 s.
-2. Drain the SDL event queue. The engine handles quit requests and F11. Key and mouse events update the held state, and presses, releases, and clicks wait in `Input` for the next update step.
+2. Drain the SDL event queue. The engine handles quit requests, F11, and F3. Key and mouse events update the held state, and presses, releases, and clicks wait in `Input` for the next update step.
 3. Add the frame time to an accumulator. While it holds at least one fixed step (1/60 s by default), latch the pending input so it reaches exactly one update, run game `update` with `ctx.dt` set to that step, and subtract the step. Stop early if the game sets `running` to false.
 4. Game `update`: read actions from `game/controls.zig`. Quit, scale toggle, and zoom act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and solid tiles stop the player's feet on each axis, so the player slides along walls.
 5. Compute `alpha`, the leftover fraction of a step, from 0 to 1. Drawing blends between the last two updates with it, so motion stays smooth when the display rate and update rate differ.
 6. Read the window size in pixels. If either side is zero, the window is minimized, so sleep for 16 ms (`idle_sleep_ms` in `engine/engine.zig`) and start the next frame. Otherwise, ease the camera's zoom toward the zoom the game asked for, choose the scale for the current scale mode and zoom (see Rendering model), then compute the view size. The reference native view is 320×180 in `game/config.zig`.
 7. If the view size changed, wait for the GPU to go idle and recreate the native target.
 8. Acquire a command buffer and swapchain texture. If either is unavailable, sleep for the same 16 ms and start the next frame, so a minimized window doesn't spin.
-9. Pass 1: game `draw` points the camera at the player's blended center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target.
+9. Pass 1: game `draw` points the camera at the player's blended center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target. The debug overlay is queued after the game, in the same pass.
 10. Pass 2: queue one quad that stretches the native target across the window. In fit mode it covers the whole window. In integer mode it covers a centered whole-number multiple of the view.
-11. Submit the command buffer. Every 0.5 s, refresh the window title with FPS, sprite count, draw calls, scale, scale mode, and view size.
+11. Submit the command buffer.
 
 ### Coordinate systems
 
@@ -220,7 +223,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - SDL3 initialization and a resizable, high-DPI window that starts at 960x540.
 - Quit on window close or Esc. F11 toggles fullscreen.
 - Fixed-timestep update loop (60 steps per second by default) with an accumulator. Frame time is capped at 0.1 s, and `draw` gets an interpolation factor.
-- Live stats in the window title.
+- Live stats in an on-screen debug overlay with a frame-time graph, toggled with F3. The window title is no longer used for stats.
 - A minimized window idles instead of spinning the CPU.
 
 **GPU and shaders**
@@ -305,6 +308,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, camera, animation, input, and renderer. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). Missing: tests that open a window or create a GPU device. |
 | Vector | `vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
 | Entities | `entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
+| Debug overlay | `debug_overlay.zig`, `frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
 | Collision | none | Not started | 0% | |
 | Audio | `audio.zig`, `audio_voices.zig` | Early | 40% | One default playback device, WAV files converted to its format at load, and voices that each use one SDL audio stream, which SDL mixes. Master and per-voice gain, looping, and finish checks in `update`. Not yet compiled or run, and the game plays no sounds. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
 | Text | `ui/text.c`, `ui/text.h`, `ui.zig` | Early | 40% | TTF baking with stb_truetype, one quad per glyph, UTF-8 input. Tested with the C harness. Not yet checked in the running game. Missing: kerning, shaping for Tamil and other complex scripts, and hinting. The baked range is fixed at 32 to 255. |

@@ -13,6 +13,7 @@ const image = @import("image.zig");
 const Audio = @import("audio.zig").Audio;
 const logging = @import("log.zig");
 const Renderer = @import("renderer.zig").Renderer;
+const debug_overlay = @import("debug_overlay.zig");
 
 const elog = logging.scoped("engine");
 
@@ -56,7 +57,7 @@ pub const ScaleMode = view.ScaleMode;
 
 /// Settings the game passes to `run`.
 pub const Config = struct {
-    /// Window title. Play stats are appended to it.
+    /// Window title.
     title: [:0]const u8,
     window_w: c_int,
     window_h: c_int,
@@ -77,6 +78,10 @@ pub const Config = struct {
     zoom_max: f32,
     /// How fast the camera eases to a new zoom, per second. Zero snaps.
     zoom_rate: f32,
+    /// Font for the debug overlay: a TrueType file relative to the executable's folder, and its
+    /// height in native pixels.
+    debug_font_path: []const u8,
+    debug_font_px: f32,
 };
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
@@ -182,8 +187,6 @@ pub const DrawContext = struct {
 /// Longest frame time the loop will use. A longer stall is cut short, so the game slows down
 /// rather than racing to catch up.
 const max_dt: f32 = 0.1;
-/// How often the window title is refreshed, in seconds.
-const title_interval: f32 = 0.5;
 /// How long to sleep when there is nothing to draw, in milliseconds. A minimized window has no
 /// pixels to draw into, so the loop idles instead of spinning. The sleep is short enough that a
 /// restored window shows up within a frame, and SDL keeps queuing events while the loop sleeps.
@@ -267,20 +270,31 @@ pub fn run(comptime Game: type, config: Config) void {
     defer game.deinit();
     var last_mode = ctx.scale_mode;
 
+    // The debug overlay has its own font, read through the same asset rules as everything else.
+    const overlay_ttf = ctx.readFile(config.debug_font_path) catch |err| {
+        std.debug.panic("debug overlay font '{s}' could not be read: {s}", .{ config.debug_font_path, @errorName(err) });
+    };
+    defer std.heap.page_allocator.free(overlay_ttf);
+    var overlay = debug_overlay.Overlay.init(gpu.device, overlay_ttf, config.debug_font_px) catch |err| {
+        std.debug.panic("debug overlay font '{s}' could not be baked: {s}", .{ config.debug_font_path, @errorName(err) });
+    };
+    defer overlay.deinit();
+
     var last_ns = c.SDL_GetTicksNS();
     var accumulator: f32 = 0;
-    var title_timer: f32 = 0;
-    var frames: u32 = 0;
     var total_frames: u64 = 0;
-    var title_buf: [160:0]u8 = undefined;
+    var last_draw_calls: u32 = 0;
 
     while (ctx.running) {
         // Frame timing: seconds since the last frame, capped at max_dt.
         const now_ns = c.SDL_GetTicksNS();
-        const frame_dt = @min(@as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0, max_dt);
+        // The overlay graphs the raw time, so a long stall shows in full. The update loop uses the capped time.
+        const frame_seconds = @as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0;
+        const frame_dt = @min(frame_seconds, max_dt);
         last_ns = now_ns;
+        overlay.record(frame_seconds);
 
-        // Events: quit requests, F11 fullscreen, and key and mouse state. Presses and clicks wait
+        // Events: quit requests, F11 fullscreen, F3 overlay, and key and mouse state. Presses and clicks wait
         // in Input until an update step takes them.
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
@@ -291,6 +305,9 @@ pub fn run(comptime Game: type, config: Config) void {
             if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F11 and !event.key.repeat) {
                 const fullscreen = (c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_FULLSCREEN) != 0;
                 _ = c.SDL_SetWindowFullscreen(window, !fullscreen);
+            }
+            if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F3 and !event.key.repeat) {
+                overlay.toggle();
             }
             input_state.handleEvent(&event);
         }
@@ -377,6 +394,17 @@ pub fn run(comptime Game: type, config: Config) void {
             .dt = frame_dt,
         };
         game.draw(&draw_ctx);
+        // The overlay goes above the game in the same native view. Its draw-call count is from the
+        // last frame, since this frame's batches are not drawn until below.
+        overlay.draw(&world_batch, view_wf, .{
+            .sprites = world_batch.sprite_count,
+            .draw_calls = last_draw_calls,
+            .mode = mode_label,
+            .scale = fit.scale,
+            .zoom = cam.zoom,
+            .view_w = view_w,
+            .view_h = view_h,
+        });
         world_batch.upload(frame.cmd);
         const world_pass = Renderer.beginPass(frame.cmd, target.texture, clear);
         world_batch.draw(world_pass);
@@ -415,19 +443,9 @@ pub fn run(comptime Game: type, config: Config) void {
 
         Renderer.endFrame(frame);
 
-        // Window title: FPS, sprite count, draw calls, scale, scale mode, zoom, and view size, refreshed a few times a second.
-        frames += 1;
+        // The window title stays as configured. The frame stats are in the debug overlay (F3).
+        last_draw_calls = world_batch.draw_calls + screen_batch.draw_calls;
         total_frames += 1;
-        title_timer += frame_dt;
-        if (title_timer >= title_interval) {
-            const fps = @as(f32, @floatFromInt(frames)) / title_timer;
-            const title = std.fmt.bufPrintZ(&title_buf, "{s} | {d:.0} fps | {d} sprites | {d} draw calls | {d:.0}% {s} | zoom {d:.2}x | view {d}x{d}", .{
-                config.title, fps, world_batch.sprite_count, world_batch.draw_calls + screen_batch.draw_calls, fit.scale * 100.0, mode_label, cam.zoom, view_w, view_h,
-            }) catch null;
-            if (title) |t| _ = c.SDL_SetWindowTitle(window, t.ptr);
-            frames = 0;
-            title_timer = 0;
-        }
     }
     elog.info("main loop ended after {d} frames", .{total_frames});
 }

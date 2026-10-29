@@ -17,5 +17,7 @@ pub fn main() void {
         .zoom_min = config.zoom_min,
         .zoom_max = config.zoom_max,
         .zoom_rate = config.zoom_rate,
+        .debug_font_path = config.ui_font_path,
+        .debug_font_px = config.ui_font_px,
     });
 }

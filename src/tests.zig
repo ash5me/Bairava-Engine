@@ -16,6 +16,7 @@ const animation = @import("engine/animation.zig");
 
 test {
     _ = @import("engine/string.zig");
+    _ = @import("engine/frame_history.zig");
     _ = @import("engine/hash_map.zig");
     _ = @import("engine/assets.zig");
     _ = @import("engine/asset_cache.zig");
