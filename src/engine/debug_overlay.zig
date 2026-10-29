@@ -136,7 +136,7 @@ pub const Overlay = struct {
             text_y += line_h;
         }
 
-        ui.queueQuads(batch, &self.font.texture, list, z);
+        ui.queueQuads(batch, &self.font, list, z);
     }
 };
 

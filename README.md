@@ -31,7 +31,8 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 - **A GPU backend supported by SDL3.** The default build provides SPIR-V and requests Vulkan 1.2. `-Ddxil=true` adds DXIL for Direct3D 12, and `-Dmetal=true` adds MSL for Metal.
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
 - **cglm 0.9.7** is vendored under `vendor/cglm/`, including the C sources and headers used by the build.
-- **`vendor/stb_rect_pack.h`, `vendor/stb_image_write.h`, and `vendor/stb_truetype.h`**. The build uses the first two to pack the texture atlas and `stb_truetype.h` to preprocess fonts. All three are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h` and `stb_truetype.h`.
+- **`vendor/stb_rect_pack.h`, `vendor/stb_image_write.h`, and `vendor/stb_truetype.h`**. The build uses the first two to pack the texture atlas and `stb_truetype.h` for TrueType preprocessing. All three are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h` and `stb_truetype.h`.
+- **FreeType 2.15.0** is vendored under `vendor/freetype-2.15.0/` with its FreeType License. The minimal in-tree build rasterizes TrueType and OpenType CFF outlines and generates SDF glyphs.
 - **Optional:** the cross-platform checkerboard keyer can be built through Zig; see [Asset keyer](#asset-keyer).
 - **Optional:** the Tracy profiler, version 0.14.1, to view profiling zones with `-Dtracy=true`. Get it from [wolfpld/tracy](https://github.com/wolfpld/tracy/releases/tag/v0.14.1). The game's Tracy client is built from source by `build.zig`, through ztracy, so only the viewer is separate. See Debugging.
 
@@ -49,20 +50,11 @@ zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to s
 zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
 
-`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Image, WAV, and TrueType/OpenType inputs are format-checked; maps and generic files are checked for existence. Image entries emit BC1, BC3, and RGBA8 GPU texture variants alongside the source image; when `astcenc` is installed and available on `PATH`, the builder also emits ASTC 4x4. The sprite atlas is packed from `assets/sprites.txt` and sent through the same texture processor, with its regions written to `atlas.txt`. At runtime, SDL's format support query picks ASTC, BC3, or BC1 when the active device can sample that format; otherwise the prebuilt RGBA8 variant or decoded source image is used. Audio entries are copied as WAV and encoded to compact IMA ADPCM sidecars; `wav` entries are copied uncompressed. Font entries generate `.bfnt` files containing an alpha-only glyph atlas, baked metrics, and the codepoint range. The UI and debug overlay load a sidecar that matches their configured pixel height and fall back to TTF baking if it is absent, malformed, or sized differently. The audio system prefers an IMA sidecar and falls back to WAV, then converts samples to the playback device's format.
+`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Image, WAV, and TrueType/OpenType inputs are format-checked; maps and generic files are checked for existence. Image entries emit BC1, BC3, and RGBA8 GPU texture variants alongside the source image; when `astcenc` is installed and available on `PATH`, the builder also emits ASTC 4x4. The sprite atlas is packed from `assets/sprites.txt` and sent through the same texture processor, with its regions written to `atlas.txt`. At runtime, SDL's format support query picks ASTC, BC3, or BC1 when the active device can sample that format; otherwise the prebuilt RGBA8 variant or decoded source image is used. Audio entries are copied as WAV and encoded to compact IMA ADPCM sidecars; `wav` entries are copied uncompressed. Font entries generate `.bfnt` files containing a packed glyph atlas, metrics, codepoint range, and kerning pairs; bitmap atlases are default, while font rows may request SDF output. The UI and debug overlay load a sidecar that matches their configured pixel height and fall back to TTF baking if it is absent, malformed, or sized differently. The audio system prefers an IMA sidecar and falls back to WAV, then converts samples to the playback device's format.
 
-Run `zig build asset-build` to validate and stage the general asset set without installing the game. Use `audio` for uncompressed PCM WAV inputs that should also get an IMA ADPCM sidecar, or `wav` to keep only the WAV runtime file. Font rows include bake height, first codepoint, and glyph count after dependencies, for example `font font assets/font.ttf font.ttf - 10 32 224`. The build graph tracks the manifest, its source files, and the generated atlas input, so edits rebuild the asset step. Install Arm's `astcenc` command line tool and put it on `PATH` to generate ASTC variants; BC1, BC3, RGBA8, IMA ADPCM, and `.bfnt` outputs do not need extra tools.
+Run `zig build asset-build` to validate and stage the general asset set without installing the game. Use `audio` for uncompressed PCM WAV inputs that should also get an IMA ADPCM sidecar, or `wav` to keep only the WAV runtime file. Font rows include bake height, first codepoint, and glyph count after dependencies, for example `font font assets/font.ttf font.ttf - 10 32 224`; append `sdf` to generate a scalable distance-field atlas instead of the default bitmap atlas. The build graph tracks the manifest, its source files, and the generated atlas input, so edits rebuild the asset step. Install Arm's `astcenc` command line tool and put it on `PATH` to generate ASTC variants; BC1, BC3, RGBA8, IMA ADPCM, and `.bfnt` outputs do not need extra tools.
 
-The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root and need a TrueType font, and `zig build test` doesn't run them:
-
-```
-zig cc -std=c99 -Wall -Wextra -Ivendor -Isrc/engine/ui tests/ui/test_imgui.c src/engine/ui/imgui.c src/engine/ui/text.c vendor/stb_truetype_impl.c -o test_imgui
-./test_imgui path/to/font.ttf
-zig cc -std=c99 -Wall -Wextra -Ivendor -Isrc/engine/ui tests/ui/test_text.c src/engine/ui/text.c vendor/stb_truetype_impl.c -o test_text
-./test_text path/to/font.ttf
-```
-
-On Windows, name the outputs `test_imgui.exe` and `test_text.exe`, and run them as `.\test_imgui.exe` followed by the font path. A passing run prints `imgui: all checks passed` and `text: all checks passed`.
+The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root, take a font path, and `zig build test` doesn't run them. Since font baking now links the vendored FreeType sources, compile these harnesses with the include path, macro, and source list configured by `addFreeType` in `build.zig`, plus `vendor/stb_truetype_impl.c`, `src/engine/ui/text.c`, and the relevant harness source. A passing run prints `imgui: all checks passed` and `text: all checks passed`.
 
 ## Continuous integration
 
@@ -235,8 +227,8 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   ├── ui.zig             Bridge to the GPU: loads preprocessed font data or bakes TTF fallback, then queues UI quads
 │   │   ├── ui/                C text and widgets. Pure C with no SDL or GPU use, compiled into the executable
 │   │   │   ├── ui_draw.h      Quad and draw list types, shared by text and widgets
-│   │   │   ├── text.h         Font baking and text drawing API. Does not include stb_truetype.h
-│   │   │   ├── text.c         stb_truetype font baking, BFNT metadata loading, and one quad per glyph
+│   │   │   ├── text.h         Font baking and text drawing API. Does not include rasterizer headers
+│   │   │   ├── text.c         stb_truetype and FreeType font baking, BFNT metadata loading, and one quad per glyph
 │   │   │   ├── imgui.h        Immediate-mode UI API: begin and end a frame, label, button, slider
 │   │   │   └── imgui.c        The widgets, with hot and active ids, and ## suffixes for duplicate labels
 │   │   └── tilemap.zig        Tile map format and parser, layers, solid tiles, box movement against tiles
@@ -265,9 +257,9 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   ├── tile.png               Tile texture used by the map, packed into the atlas at build time
 │   ├── warrior.png            Original warrior artwork (kept unchanged)
 │   ├── warrior_16x32.png      Sprite sheet, 5 columns × 4 rows of 16×32 cells, packed into the atlas at build time
-│   ├── font.ttf               UI font, TrueType. Not in the repo, so copy one in (Arial works). Loaded at startup, see config.zig
+│   ├── font.ttf               UI font; TrueType and OpenType CFF outlines are supported. Copy a font here; fonts are not included.
 │   └── maps/level1.txt        Level 1 tile map: layers of tile IDs, solid tiles, spawn cell
-├── vendor/                    log.c and log.h, rxi's logging library, for the log file; stb_image.h and stb_image_impl.c; stb_image_write.h and stb_rect_pack.h for the atlas packer; stb_truetype.h and stb_truetype_impl.c for fonts; cglm (headers, C sources, license) in vendor/cglm/
+├── vendor/                    log.c and log.h; stb image and atlas tools; stb_truetype; FreeType 2.15.0 source and license; cglm (headers, C sources, license) in vendor/cglm/
 └── .gitignore
 ```
 
@@ -325,6 +317,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | stb_image_write | Vendored in `vendor/` | Writing `atlas.png` in the build's atlas packer | Public domain or MIT |
 | stb_rect_pack | Vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
 | stb_truetype | Vendored in `vendor/` | Build-time font preprocessing and TTF fallback baking (`tools/assets/build.c`, `src/engine/ui/text.c`) | Public domain or MIT |
+| FreeType | 2.15.0, vendored in `vendor/freetype-2.15.0/` | CFF-capable font baking, SDF rasterization, and dynamic glyph caching | FreeType License |
 | cglm | 0.9.7, vendored in `vendor/cglm/`: headers, the 46 C sources its CMake lists, and its license | Vector and matrix math, the pixel projection, and transforms | MIT |
 | log.c | rxi's log.c, 2020 (`log_Event` API), vendored in `vendor/log.c` and `vendor/log.h` | Delivers each message to the log file through `src/engine/log_file.c` | MIT |
 | ztracy | Zig bindings, pinned to commit `2d06ebe` in `build.zig.zon` | Tracy zones and frame marks, compiled in with `-Dtracy=true` through `src/engine/profile.zig` | MIT |
@@ -372,8 +365,9 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Fit and integer scale modes, set in `game/config.zig` or toggled with I.
 
 **Text and UI**
-- TTF fonts are preprocessed at build time with stb_truetype into compact `.bfnt` sidecars containing the alpha glyph atlas, metrics, and codepoint range. Runtime loading expands the atlas to RGBA for GPU upload and falls back to TTF baking if a sidecar is unavailable or incompatible. The atlas starts at 128 pixels and doubles until every glyph fits.
-- Text becomes one quad per glyph, decoded from UTF-8. Codepoints outside the baked range (32 to 255) draw as `?`.
+- TrueType fonts are preprocessed at build time into compact `.bfnt` v2 bitmap sidecars containing the glyph atlas, metrics, codepoint range, and kerning pairs. FreeType handles CFF-based OpenType fonts. The runtime still accepts v1 sidecars and expands sidecars to RGBA for GPU upload. It falls back to source-font baking if a sidecar is unavailable or incompatible.
+- Font manifest entries can opt into `.bfnt` v3 SDF atlases by appending `sdf`; bitmap output stays the default. `Font.bakeSdf` is also available for runtime baking, and `ui_font_draw_text_scaled` scales glyph quads while the sprite shader reconstructs smooth coverage.
+- Text becomes one quad per glyph, decoded from UTF-8. `Font.load` lazily rasterizes and caches codepoints outside the baked range from the retained font source; unsupported glyphs draw as `?`.
 - Immediate-mode widgets in `src/engine/ui/imgui.c`: label, button, and slider. Hover and press are tracked through two ids, and a `##` suffix tells duplicate labels apart without drawing the suffix.
 - `src/engine/ui.zig` uploads the font and queues the UI quads as sprites at z 1000, so they draw above the world.
 - Input tracks the left button's held state, and its press and release each reach one update step.
@@ -433,7 +427,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Debug overlay | `debug_overlay.zig`, `frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
 | Collision | none | Not started | 0% | |
 | Audio | `audio.zig`, `audio_voices.zig`, `ima.zig` | Early | 45% | One default playback device, WAV input plus build-generated IMA ADPCM sidecars, device-format conversion at load, and voices that each use one SDL audio stream, which SDL mixes. Decoder and voice rules have unit tests. The game plays no sounds yet. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
-| Text | `ui/text.c`, `ui/text.h`, `ui.zig` | Early | 45% | Build-time TTF preprocessing into versioned `.bfnt` sidecars with glyph atlas, metrics, and codepoint range; runtime falls back to TTF baking when needed. One quad per glyph, UTF-8 input. The C harness covers preprocessing round-trip and malformed sidecars. Missing: kerning, shaping for Tamil and other complex scripts, hinting, and manifest-configurable ranges beyond the current 32 to 255. |
+| Text | `ui/text.c`, `ui/text.h`, `ui.zig` | Early | 45% | Build-time TTF/CFF preprocessing into `.bfnt` v2 bitmap or v3 SDF sidecars with glyph atlas, metrics, codepoint range, and kerning pairs; v1 sidecars remain readable. `Font.load` lazily rasterizes and caches missing codepoints, growing the atlas and refreshing its GPU texture. One quad per glyph, UTF-8 input. Missing: shaping for Tamil and other complex scripts. |
 | UI widgets | `ui/imgui.c`, `ui/imgui.h` | Early | 35% | Label, button, and slider with hot and active ids and `##` suffixes. Tested with the C harness using scripted input. Not yet checked in the running game. Missing: checkbox, panels and layouts beyond one column, text input, keyboard focus, scrolling. |
 | Scenes and state | none | Not started | 0% | |
 
@@ -487,7 +481,7 @@ These are the natural extension points. Each one reuses existing code.
 
 12. **Zoom recreates the native target.** A zoom step that changes the view size rebuilds the native target and waits for the GPU to go idle, as a window resize does. Zoom eases over a fraction of a second, so one zoom can cause several rebuilds. The target is small, so this should be cheap, but it has not been measured. In fit mode a fractional zoom leaves some native pixels one screen pixel larger than others, as fit mode already does. Integer mode rounds zoom to whole scales, so its steps are coarser than fit mode's, and at a base scale of 1 it cannot zoom out at all.
 
-13. **Fonts must be TrueType, and the baked text range is fixed.** `ui_font_bake` reads TrueType outlines through stb_truetype. A CFF-based `.otf` font fails to bake, and the game panics at startup with "could not be baked". The text covers codepoints 32 to 255 at one pixel height, with no kerning, hinting, or shaping, so Tamil and other complex scripts won't render correctly.
+13. **Complex shaping isn't supported.** TrueType and OpenType CFF outlines can be rasterized and kerning is applied, but text is laid out one Unicode codepoint per glyph. Tamil and other complex scripts that need substitutions or contextual positioning won't render correctly.
 
 ## Roadmap
 
@@ -548,7 +542,11 @@ The engine is currently a 2D project, so prioritize textures, audio, and fonts r
 
 ### Phase 6: native and vector font processing
 
-- [ ] Extend SpriteFont processing and text rendering to support TTF/OTF inputs, including CFF outlines, configurable packed glyph atlases, dynamic glyph rasterization and caching, kerning, and SDF rendering for scalable text.
+- [x] Complete SpriteFont support for native TTF/OTF inputs, including CFF outlines.
+  - [x] Preprocess configurable codepoint ranges into packed bitmap or SDF atlases with kerning metadata (`.bfnt` v2/v3).
+  - [x] Rasterize and cache missing glyphs from TrueType outlines at runtime, growing and refreshing the GPU atlas.
+  - [x] Render and scale SDF glyphs through the sprite shader.
+  - [x] Add FreeType rasterization for CFF-based OpenType fonts, including dynamic glyph caching.
 
 ## Conventions
 
@@ -557,7 +555,7 @@ The engine is currently a 2D project, so prioritize textures, audio, and fonts r
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
 - Only `sdl.zig` imports SDL's C headers, only `math.zig` imports cglm's, and only `profile.zig` imports ztracy.
-- The C code for text and widgets lives in `src/engine/ui/` and never touches SDL or the GPU. Only `text.c` and `vendor/stb_truetype_impl.c` include `stb_truetype.h`. `ui.zig` is the one bridge from that code to the sprite batch.
+- The C code for text and widgets lives in `src/engine/ui/` and never touches SDL or the GPU. `text.c` uses stb_truetype for TrueType and FreeType for CFF-capable font rasterization; `vendor/stb_truetype_impl.c` provides stb_truetype's implementation. `ui.zig` is the one bridge from that code to the sprite batch.
 - `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `asset_cache.zig`, `atlas.zig`, `vector.zig`, `entity.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, `animation.zig`, and `audio_voices.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.

@@ -40,6 +40,7 @@ typedef struct {
     float font_pixel_height;
     int font_first;
     int font_count;
+    int font_sdf;
 } entry;
 
 enum { TEX_RGBA8 = 0, TEX_BC1 = 1, TEX_BC3 = 2, TEX_ASTC_4X4 = 3 };
@@ -343,7 +344,10 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     if (!read_ok) { free(ttf); return 0; }
 
     ui_font font;
-    if (ui_font_bake(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, &font) != 0) {
+    int bake_result = item->font_sdf
+        ? ui_font_bake_sdf(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, 8.0f, &font)
+        : ui_font_bake(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, &font);
+    if (bake_result != 0) {
         fprintf(stderr, "asset_build: could not bake font '%s' at %.2f px\n", item->name, item->font_pixel_height);
         free(ttf);
         return 0;
@@ -357,10 +361,10 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     FILE *output = fopen(prebaked_path, "wb");
     if (output == NULL) { ui_font_destroy(&font); return 0; }
 
-    unsigned char header[48] = {0};
+    unsigned char header[56] = {0};
     memcpy(header, "BFNT", 4);
-    write_u16le(header + 4, 1);
-    write_u16le(header + 6, sizeof header);
+    write_u16le(header + 4, font.sdf ? 3 : 2);
+    write_u16le(header + 6, font.sdf ? 56 : 52);
     unsigned int pixel_height_bits = 0;
     memcpy(&pixel_height_bits, &font.pixel_height, sizeof pixel_height_bits);
     write_u32le(header + 8, pixel_height_bits);
@@ -375,8 +379,11 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     write_u16le(header + 42, (unsigned short)font.white.y);
     write_u16le(header + 44, (unsigned short)font.white.w);
     write_u16le(header + 46, (unsigned short)font.white.h);
+    write_u32le(header + 48, (unsigned int)font.kerning_count);
+    write_u32le(header + 52, font.sdf ? 1u : 0u);
 
-    int ok = fwrite(header, 1, sizeof header, output) == sizeof header;
+    size_t header_size = font.sdf ? 56 : 52;
+    int ok = fwrite(header, 1, header_size, output) == header_size;
     for (int i = 0; ok && i < font.count; i++) {
         unsigned char glyph[20];
         const ui_glyph *g = &font.glyphs[i];
@@ -386,6 +393,15 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
         memcpy(&xoff_bits, &g->xoff, 4); memcpy(&yoff_bits, &g->yoff, 4); memcpy(&advance_bits, &g->xadvance, 4);
         write_u32le(glyph + 8, xoff_bits); write_u32le(glyph + 12, yoff_bits); write_u32le(glyph + 16, advance_bits);
         ok = fwrite(glyph, 1, sizeof glyph, output) == sizeof glyph;
+    }
+    for (int i = 0; ok && i < font.kerning_count; i++) {
+        unsigned char kerning[12];
+        unsigned int advance_bits = 0;
+        write_u32le(kerning, font.kernings[i].left);
+        write_u32le(kerning + 4, font.kernings[i].right);
+        memcpy(&advance_bits, &font.kernings[i].advance, 4);
+        write_u32le(kerning + 8, advance_bits);
+        ok = fwrite(kerning, 1, sizeof kerning, output) == sizeof kerning;
     }
     for (unsigned int i = 0; ok && i < atlas_pixels; i++) ok = fwrite(&font.rgba[(size_t)i * 4 + 3], 1, 1, output) == 1;
     if (fclose(output) != 0) ok = 0;
@@ -578,11 +594,12 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
         entry item = {0};
         char font_height_text[32] = {0}, font_first_text[32] = {0}, font_count_text[32] = {0}, extra[2];
-        int fields = sscanf(line, "%1023s %31s %1023s %1023s %1023s %31s %31s %31s %1s",
+        char font_mode_text[16] = {0};
+        int fields = sscanf(line, "%1023s %31s %1023s %1023s %1023s %31s %31s %31s %15s %1s",
                             item.name, item.type, item.source, item.output, item.dependencies,
-                            font_height_text, font_first_text, font_count_text, extra);
-        if (fields < 5 || (strcmp(item.type, "font") == 0 ? fields != 8 : fields != 5)) {
-            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight for fonts\n", manifest_path, line_number); failed = 1; break;
+                            font_height_text, font_first_text, font_count_text, font_mode_text, extra);
+        if (fields < 5 || (strcmp(item.type, "font") == 0 ? (fields != 8 && fields != 9) : fields != 5)) {
+            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight/nine for fonts\n", manifest_path, line_number); failed = 1; break;
         }
         if (strcmp(item.type, "font") == 0) {
             char *end = NULL;
@@ -600,6 +617,12 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
                 fprintf(stderr, "asset_build: %s:%zu: invalid font glyph count\n", manifest_path, line_number); failed = 1; break;
             }
             item.font_count = (int)glyph_count;
+            if (fields == 9) {
+                if (strcmp(font_mode_text, "sdf") == 0) item.font_sdf = 1;
+                else if (strcmp(font_mode_text, "bitmap") != 0) {
+                    fprintf(stderr, "asset_build: %s:%zu: font mode must be bitmap or sdf\n", manifest_path, line_number); failed = 1; break;
+                }
+            }
         }
         if (!safe_name(item.name) || !safe_relative_path(item.source) || !safe_relative_path(item.output) ||
             count == MAX_ENTRIES || !file_exists(item.source) || !valid_kind(&item)) {

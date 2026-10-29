@@ -31,7 +31,7 @@ typedef struct ui_theme {
 } ui_theme;
 
 typedef struct ui_context {
-    const ui_font *font;
+    ui_font *font;
     ui_theme theme;
     ui_input in;
     unsigned hot;          /* the widget under the pointer, or 0 */
@@ -40,7 +40,7 @@ typedef struct ui_context {
     ui_quad_list list;     /* this frame's quads, in draw order */
 } ui_context;
 
-void ui_init(ui_context *ui, const ui_font *font);
+void ui_init(ui_context *ui, ui_font *font);
 void ui_begin(ui_context *ui, const ui_input *in, float x, float y, float w);
 void ui_end(ui_context *ui);
 

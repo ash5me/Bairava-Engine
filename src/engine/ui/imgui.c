@@ -60,7 +60,7 @@ static int interact(ui_context *ui, unsigned id, ui_rect r) {
     return ui->active == id;
 }
 
-void ui_init(ui_context *ui, const ui_font *font) {
+void ui_init(ui_context *ui, ui_font *font) {
     memset(ui, 0, sizeof *ui);
     ui->font = font;
     ui->theme = (ui_theme){

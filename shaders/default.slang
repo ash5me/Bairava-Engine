@@ -6,12 +6,14 @@ struct VSInput {
     [vk::location(0)] float2 position : POSITION;
     [vk::location(1)] float2 uv : TEXCOORD0;
     [vk::location(2)] float4 color : COLOR0;
+    [vk::location(3)] float sdf : TEXCOORD1;
 };
 
 struct VSOutput {
     float4 position : SV_Position;
     [vk::location(0)] float2 uv : TEXCOORD0;
     [vk::location(1)] float4 color : COLOR0;
+    [vk::location(2)] float sdf : TEXCOORD1;
 };
 
 [shader("vertex")]
@@ -20,6 +22,7 @@ VSOutput vertexMain(VSInput input) {
     output.position = float4(input.position, 0.0, 1.0);
     output.uv = input.uv;
     output.color = input.color;
+    output.sdf = input.sdf;
     return output;
 }
 
@@ -45,5 +48,10 @@ float4 sampleTex(float2 uv) {
 
 [shader("fragment")]
 float4 fragmentMain(VSOutput input) : SV_Target {
-    return sampleTex(input.uv) * input.color;
+    float4 texel = sampleTex(input.uv);
+    if (input.sdf > 0.5) {
+        float edge = fwidth(texel.a);
+        texel.a = smoothstep(0.5 - edge, 0.5 + edge, texel.a);
+    }
+    return texel * input.color;
 }

@@ -22,16 +22,24 @@ pub const Texture = struct {
         defer zone.End();
         const expected_len = @as(usize, width) * height * 4;
         logging.assert(pixels.len == expected_len, @src(), "pixel buffer is {d} bytes, expected {d} for a {d}x{d} texture", .{ pixels.len, expected_len, width, height });
-        return upload(device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height);
+        return upload(device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height, false);
+    }
+
+    /// Uploads RGBA8 pixels with linear filtering. Use for signed distance field textures, where
+    /// interpolated distance values are required for smooth edge reconstruction.
+    pub fn initRgba8Linear(device: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const u8) Texture {
+        const expected_len = @as(usize, width) * height * 4;
+        logging.assert(pixels.len == expected_len, @src(), "pixel buffer is {d} bytes, expected {d} for a {d}x{d} texture", .{ pixels.len, expected_len, width, height });
+        return upload(device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height, true);
     }
 
     /// Uploads tightly packed BC1, BC3, or ASTC 4x4 blocks. The caller checks that the active GPU
     /// supports `format` for sampled 2D textures before selecting this path.
     pub fn initCompressed(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, blocks: []const u8) Texture {
-        return upload(device, width, height, format, blocks, 0, 0);
+        return upload(device, width, height, format, blocks, 0, 0, false);
     }
 
-    fn upload(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, pixels: []const u8, pixels_per_row: u32, rows_per_layer: u32) Texture {
+    fn upload(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, pixels: []const u8, pixels_per_row: u32, rows_per_layer: u32, linear: bool) Texture {
         const texture = createTexture(device, width, height, format, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
 
         // Stage the pixels in an upload buffer, then copy them into the texture.
@@ -83,7 +91,7 @@ pub const Texture = struct {
         return .{
             .device = device,
             .texture = texture,
-            .sampler = createNearestSampler(device),
+            .sampler = createSampler(device, linear),
             .width = width,
             .height = height,
             .upload_fence = fence,
@@ -96,7 +104,7 @@ pub const Texture = struct {
         return .{
             .device = device,
             .texture = createTexture(device, width, height, format, c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | c.SDL_GPU_TEXTUREUSAGE_SAMPLER),
-            .sampler = createNearestSampler(device),
+            .sampler = createSampler(device, false),
             .width = width,
             .height = height,
         };
@@ -136,10 +144,10 @@ fn createTexture(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SD
     };
 }
 
-fn createNearestSampler(device: *c.SDL_GPUDevice) *c.SDL_GPUSampler {
+fn createSampler(device: *c.SDL_GPUDevice, linear: bool) *c.SDL_GPUSampler {
     var info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
-    info.min_filter = c.SDL_GPU_FILTER_NEAREST;
-    info.mag_filter = c.SDL_GPU_FILTER_NEAREST;
+    info.min_filter = if (linear) c.SDL_GPU_FILTER_LINEAR else c.SDL_GPU_FILTER_NEAREST;
+    info.mag_filter = if (linear) c.SDL_GPU_FILTER_LINEAR else c.SDL_GPU_FILTER_NEAREST;
     info.mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
     info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;

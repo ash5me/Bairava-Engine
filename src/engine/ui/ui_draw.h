@@ -23,6 +23,7 @@ typedef struct ui_quad {
     ui_rect dst;    /* where to draw, in pixels from the top-left of the UI */
     ui_rect src;    /* what to draw, in texels of the font atlas */
     ui_color color; /* RGB tints the texel, and alpha multiplies its alpha */
+    int sdf;        /* sample alpha as a signed distance field */
 } ui_quad;
 
 typedef struct ui_quad_list {
@@ -41,6 +42,7 @@ static inline void ui_quad_push(ui_quad_list *list, ui_rect dst, ui_rect src, ui
     q->dst = dst;
     q->src = src;
     q->color = color;
+    q->sdf = 0;
 }
 
 #endif

@@ -51,6 +51,29 @@ const cglm_sources = [_][]const u8{
     "vendor/cglm/src/clipspace/project_zo.c",
 };
 
+/// Minimal FreeType sources for TTF and OpenType CFF rasterization. Optional compressed-font
+/// modules are disabled in the vendored ftoption.h, so this remains dependency-free.
+const freetype_sources = [_][]const u8{
+    "vendor/freetype-2.15.0/src/autofit/autofit.c",
+    "vendor/freetype-2.15.0/src/base/ftbase.c",
+    "vendor/freetype-2.15.0/src/base/ftbbox.c",
+    "vendor/freetype-2.15.0/src/base/ftbitmap.c",
+    "vendor/freetype-2.15.0/src/base/ftglyph.c",
+    "vendor/freetype-2.15.0/src/base/ftinit.c",
+    "vendor/freetype-2.15.0/src/base/ftmm.c",
+    "vendor/freetype-2.15.0/src/base/ftsystem.c",
+    "vendor/freetype-2.15.0/src/base/ftdebug.c",
+    "vendor/freetype-2.15.0/src/cff/cff.c",
+    "vendor/freetype-2.15.0/src/psaux/psaux.c",
+    "vendor/freetype-2.15.0/src/pshinter/pshinter.c",
+    "vendor/freetype-2.15.0/src/psnames/psnames.c",
+    "vendor/freetype-2.15.0/src/raster/raster.c",
+    "vendor/freetype-2.15.0/src/sdf/sdf.c",
+    "vendor/freetype-2.15.0/src/sfnt/sfnt.c",
+    "vendor/freetype-2.15.0/src/smooth/smooth.c",
+    "vendor/freetype-2.15.0/src/truetype/truetype.c",
+};
+
 /// Gives `module` cglm's headers and compiles cglm's C sources into it. Two macros must match the
 /// @cImport in src/engine/math.zig, so the C library and the translated headers agree.
 /// CGLM_ALL_UNALIGNED stops cglm from assuming 16-byte alignment, which Zig arrays don't guarantee.
@@ -78,6 +101,12 @@ fn addCglm(b: *std.Build, module: *std.Build.Module) void {
     for (cglm_sources) |path| {
         module.addCSourceFile(.{ .file = b.path(path), .flags = &cglm_simd_flags });
     }
+}
+
+fn addFreeType(b: *std.Build, module: *std.Build.Module) void {
+    module.addIncludePath(b.path("vendor/freetype-2.15.0/include"));
+    module.addCMacro("FT2_BUILD_LIBRARY", "1");
+    for (freetype_sources) |path| module.addCSourceFile(.{ .file = b.path(path) });
 }
 
 /// One entry point of shaders/default.slang. To add a shader, add a row here, then declare a
@@ -211,9 +240,10 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addIncludePath(b.path("vendor"));
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
 
-    // Text and UI: stb_truetype bakes fonts from vendor/, and the C widget code in src/engine/ui/
-    // builds the quads that src/engine/ui.zig draws. None of it touches SDL or the GPU.
+    // Text and UI: stb_truetype and FreeType bake fonts from vendor/, and the C widget code in
+    // src/engine/ui/ builds the quads that src/engine/ui.zig draws. None of it touches SDL or the GPU.
     exe.root_module.addIncludePath(b.path("src/engine/ui"));
+    addFreeType(b, exe.root_module);
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/text.c") });
@@ -269,6 +299,7 @@ pub fn build(b: *std.Build) void {
     });
     asset_builder.root_module.addIncludePath(b.path("vendor"));
     asset_builder.root_module.addIncludePath(b.path("src/engine/ui"));
+    addFreeType(b, asset_builder.root_module);
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/build.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
@@ -294,8 +325,12 @@ pub fn build(b: *std.Build) void {
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs pixel height");
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs first codepoint");
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs glyph count");
+            if (fields.next()) |mode| {
+                if (!std.mem.eql(u8, mode, "bitmap") and !std.mem.eql(u8, mode, "sdf"))
+                    @panic("assets/asset_manifest.txt: font mode must be bitmap or sdf");
+            }
         }
-        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or font pixel height, first codepoint, and glyph count");
+        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or font pixel height, first codepoint, glyph count, and optional mode");
         run_asset_builder.addFileInput(b.path(source));
     }
     const install_runtime_assets = b.addInstallDirectory(.{

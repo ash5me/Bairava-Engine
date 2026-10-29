@@ -13,6 +13,7 @@ pub const Vertex = extern struct {
     pos: [2]f32,
     uv: [2]f32,
     color: [4]f32,
+    sdf: f32,
 };
 
 /// A rectangle in pixels (for destinations) or texels (for sources).
@@ -42,6 +43,8 @@ pub const Options = struct {
     /// Draw order. Lower values draw first. Sprites with equal values keep the order they were added in.
     /// Batches only merge neighbors with the same texture, so alternating textures in z order costs draw calls.
     z: i32 = 0,
+    /// Treat the texture alpha channel as a signed distance field and reconstruct smooth coverage.
+    sdf: bool = false,
 };
 
 /// Storage starts at these sizes and doubles when a frame needs more. A frame has no sprite or
@@ -168,6 +171,7 @@ pub const SpriteBatch = struct {
             .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "pos") },
             .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
             .{ .location = 2, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, .offset = @offsetOf(Vertex, "color") },
+            .{ .location = 3, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, .offset = @offsetOf(Vertex, "sdf") },
         };
 
         var pipeline_info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
@@ -448,11 +452,12 @@ fn cornersFor(projection: *const math.Mat4, texture: *const Texture, src: Rect, 
     const p_tr = math.transformPoint(projection, pivot_x + o_tr[0], pivot_y + o_tr[1]);
 
     const color = [4]f32{ opts.tint[0], opts.tint[1], opts.tint[2], opts.alpha };
+    const sdf: f32 = if (opts.sdf) 1 else 0;
     return .{
-        .{ .pos = p_tl, .uv = .{ u_left, v_top }, .color = color },
-        .{ .pos = p_bl, .uv = .{ u_left, v_bottom }, .color = color },
-        .{ .pos = p_br, .uv = .{ u_right, v_bottom }, .color = color },
-        .{ .pos = p_tr, .uv = .{ u_right, v_top }, .color = color },
+        .{ .pos = p_tl, .uv = .{ u_left, v_top }, .color = color, .sdf = sdf },
+        .{ .pos = p_bl, .uv = .{ u_left, v_bottom }, .color = color, .sdf = sdf },
+        .{ .pos = p_br, .uv = .{ u_right, v_bottom }, .color = color, .sdf = sdf },
+        .{ .pos = p_tr, .uv = .{ u_right, v_top }, .color = color, .sdf = sdf },
     };
 }
 

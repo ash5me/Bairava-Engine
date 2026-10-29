@@ -198,7 +198,7 @@ pub const Game = struct {
         self.level.drawLayer(dc.batch, &self.atlas, self.tile, dc.cam, .foreground);
 
         // The panel goes last. Its quads were built in the update step, so this only queues them.
-        engine.ui.queueQuads(dc.batch, &self.ui_font.texture, &self.ui.list, ui_z);
+        engine.ui.queueQuads(dc.batch, self.ui_font, &self.ui.list, ui_z);
     }
 
     /// Builds the demo panel for this frame. It runs in the update step, so each press and release
