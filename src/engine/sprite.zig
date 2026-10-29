@@ -74,13 +74,13 @@ const vertex_source = shader.Source{
     .name = "default.vert",
     .entry = "vertexMain",
     .stage = c.SDL_GPU_SHADERSTAGE_VERTEX,
-    .code = .{ .spirv = embedded.default_vert, .dxil = embedded.default_vert_dxil },
+    .code = .{ .spirv = embedded.default_vert, .dxil = embedded.default_vert_dxil, .msl = embedded.default_vert_msl },
 };
 const fragment_source = shader.Source{
     .name = "default.frag",
     .entry = "fragmentMain",
     .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
-    .code = .{ .spirv = embedded.default_frag, .dxil = embedded.default_frag_dxil },
+    .code = .{ .spirv = embedded.default_frag, .dxil = embedded.default_frag_dxil, .msl = embedded.default_frag_msl },
     // The fragment shader samples one texture, which takes one sampler slot.
     .resources = .{ .samplers = 1 },
 };

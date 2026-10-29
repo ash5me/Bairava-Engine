@@ -28,6 +28,7 @@ test {
     _ = @import("engine/math.zig");
     _ = @import("engine/view.zig");
     _ = @import("engine/settings.zig");
+    _ = @import("engine/shader.zig");
 }
 
 const Input = input.Input;

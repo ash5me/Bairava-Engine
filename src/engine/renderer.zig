@@ -40,6 +40,11 @@ pub const Renderer = struct {
         if (embedded.default_vert_dxil.len != 0) {
             _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, true);
         }
+        // Ask for MSL only when this build embeds it (-Dmetal=true), so SDL won't select a format
+        // the executable cannot provide.
+        if (embedded.default_vert_msl.len != 0) {
+            _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
+        }
         _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, gpu_debug);
         _ = c.SDL_SetPointerProperty(props, c.SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER, &vk_opts);
 

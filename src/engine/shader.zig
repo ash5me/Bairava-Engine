@@ -8,21 +8,24 @@ const c = @import("sdl.zig").c;
 pub const Format = enum {
     spirv,
     dxil,
+    msl,
 
     /// The SDL flag the device must accept for this format to be usable.
     fn sdlFlag(self: Format) c.SDL_GPUShaderFormat {
         return switch (self) {
             .spirv => c.SDL_GPU_SHADERFORMAT_SPIRV,
             .dxil => c.SDL_GPU_SHADERFORMAT_DXIL,
+            .msl => c.SDL_GPU_SHADERFORMAT_MSL,
         };
     }
 
     /// The entry point name inside the compiled code. Slang names SPIR-V entry points "main" whatever
-    /// the function is called in the source. DXIL keeps the source name, so it is passed in.
+    /// the function is called in the source. DXIL and MSL keep the source name, so it is passed in.
     fn entryName(self: Format, source_entry: [:0]const u8) [:0]const u8 {
         return switch (self) {
             .spirv => "main",
             .dxil => source_entry,
+            .msl => source_entry,
         };
     }
 
@@ -31,6 +34,7 @@ pub const Format = enum {
         return switch (self) {
             .spirv => source.code.spirv,
             .dxil => source.code.dxil,
+            .msl => source.code.msl,
         };
     }
 };
@@ -43,11 +47,12 @@ pub const Resources = struct {
 
 /// Compiled code for one shader, with one field per format. The bytes come from the build's
 /// generated `embedded_shaders` module, so no file is read at runtime. SPIR-V and DXIL are read as
-/// 32-bit words, so their slices carry 4-byte alignment. DXIL is empty unless the build was run with
-/// -Ddxil=true, and the renderer only asks for DXIL when it isn't empty.
+/// 32-bit words, so their slices carry 4-byte alignment. DXIL and MSL are empty unless enabled at
+/// build time, and the renderer only asks SDL to accept formats that are embedded.
 pub const Code = struct {
     spirv: []align(4) const u8,
     dxil: []align(4) const u8,
+    msl: []const u8,
 };
 
 /// One shader program: its name for error messages, its compiled code, the stage it runs in, and
@@ -66,10 +71,19 @@ pub const Source = struct {
 /// nothing can be drawn without a shader format.
 pub fn pickFormat(device: *c.SDL_GPUDevice) Format {
     const supported = c.SDL_GetGPUShaderFormats(device);
+    return pickFormatFromFlags(supported) orelse std.debug.panic(
+        "device accepts no shader format the engine supports (flags {d})",
+        .{supported},
+    );
+}
+
+/// Selects the first supported format in the engine's preference order. Kept separate from the SDL
+/// query so the selection logic can be covered without creating a GPU device.
+fn pickFormatFromFlags(supported: c.SDL_GPUShaderFormat) ?Format {
     for (std.enums.values(Format)) |format| {
         if ((supported & format.sdlFlag()) != 0) return format;
     }
-    std.debug.panic("device accepts no shader format the engine supports (flags {d})", .{supported});
+    return null;
 }
 
 /// Creates a GPU shader from `source` compiled in `format`. The code is already in the executable,
@@ -89,4 +103,30 @@ pub fn load(device: *c.SDL_GPUDevice, format: Format, source: Source) *c.SDL_GPU
     return c.SDL_CreateGPUShader(device, &info) orelse {
         std.debug.panic("SDL_CreateGPUShader('{s}') failed: {s}", .{ source.name, c.SDL_GetError() });
     };
+}
+
+test "shader format selection prefers SPIR-V, then DXIL, then MSL" {
+    const all_formats = c.SDL_GPU_SHADERFORMAT_SPIRV |
+        c.SDL_GPU_SHADERFORMAT_DXIL |
+        c.SDL_GPU_SHADERFORMAT_MSL;
+    try std.testing.expectEqual(Format.spirv, pickFormatFromFlags(all_formats).?);
+    try std.testing.expectEqual(Format.dxil, pickFormatFromFlags(
+        c.SDL_GPU_SHADERFORMAT_DXIL | c.SDL_GPU_SHADERFORMAT_MSL,
+    ).?);
+    try std.testing.expectEqual(Format.msl, pickFormatFromFlags(c.SDL_GPU_SHADERFORMAT_MSL).?);
+    try std.testing.expectEqual(@as(?Format, null), pickFormatFromFlags(0));
+}
+
+test "MSL shaders use their source entry point and embedded source" {
+    const source_text = "vertex float4 vertexMain() { return 0; }";
+    const source = Source{
+        .name = "test.msl",
+        .entry = "vertexMain",
+        .stage = c.SDL_GPU_SHADERSTAGE_VERTEX,
+        .code = .{ .spirv = &.{}, .dxil = &.{}, .msl = source_text },
+    };
+
+    try std.testing.expectEqualStrings("vertexMain", Format.msl.entryName(source.entry));
+    try std.testing.expectEqualStrings(source_text, Format.msl.codeOf(source));
+    try std.testing.expectEqual(c.SDL_GPU_SHADERFORMAT_MSL, Format.msl.sdlFlag());
 }

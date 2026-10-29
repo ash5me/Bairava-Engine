@@ -1,6 +1,6 @@
 # Bairava
 
-A 2D pixel-art game engine in progress, written in Zig. It draws a tile map at a fixed native resolution, scales it to any window size with nearest-neighbor filtering, and lets a player walk around while a camera follows and zooms. Rendering goes through SDL3's GPU API, with shaders written in Slang and compiled to SPIR-V, and optionally to DXIL for Direct3D 12.
+A 2D pixel-art game engine in progress, written in Zig. It draws a tile map at a fixed native resolution, scales it to any window size with nearest-neighbor filtering, and lets a player walk around while a camera follows and zooms. Rendering goes through SDL3's GPU API, with shaders written in Slang and compiled to SPIR-V, and optionally to DXIL for Direct3D 12 or MSL for Metal.
 
 ⚠️ The engine is not stable for production use (yet).
 
@@ -27,7 +27,8 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 
 - **Zig** at the version named by `minimum_zig_version` in `build.zig.zon`, currently `0.16.0-dev.3142+5ccfeb926`.
 - **slangc**, the Slang shader compiler, on your `PATH`. Building the optional DXIL shaders (`-Ddxil=true`) also needs a `slangc` that can emit DXIL.
-- **A GPU driver with Vulkan support.** SPIR-V shaders are always built, so by default SDL selects a Vulkan backend, and the renderer requests Vulkan 1.2. Building with `-Ddxil=true` also embeds DXIL shaders and lets the device accept them, which is the route to Direct3D 12 (see Known issues).
+- **For Metal:** build with `-Dmetal=true`; `slangc` must support its Metal target.
+- **A GPU backend supported by SDL3.** The default build provides SPIR-V and requests Vulkan 1.2. `-Ddxil=true` adds DXIL for Direct3D 12, and `-Dmetal=true` adds MSL for Metal.
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
 - **`vendor/stb_rect_pack.h`, `vendor/stb_image_write.h`, and `vendor/stb_truetype.h`**. The build uses the first two to pack the texture atlas, and the game uses `stb_truetype.h` to bake fonts. All three are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h` and `stb_truetype.h`.
 - **Optional:** Windows PowerShell with .NET's `System.Drawing`, for the asset script.
@@ -43,6 +44,7 @@ zig build run                      # build and launch the game
 zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 zig build run -Dtracy=true         # launch with Tracy profiling zones, for a Tracy profiler that is already running
 zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
+zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to select Metal
 zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
 
@@ -58,6 +60,10 @@ zig cc -std=c99 -Wall -Wextra -Ivendor -Isrc/engine/ui tests/ui/test_text.c src/
 ```
 
 On Windows, name the outputs `test_imgui.exe` and `test_text.exe`, and run them as `.\test_imgui.exe` followed by the font path. A passing run prints `imgui: all checks passed` and `text: all checks passed`.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` builds and runs the unit tests on GitHub-hosted Linux, macOS, and Windows runners. It installs the Zig version declared by `build.zig.zon` and Slang 2026.20. The macOS job also builds with `-Dmetal=true` to compile the Metal shaders.
 
 ## Debugging
 
@@ -137,7 +143,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 
 ```
 .
-├── build.zig                  Build graph: SDL3, stb_image, cglm, ztracy (with `-Dtracy=true`), log.c and its glue, shader compilation and embedding (SPIR-V, plus DXIL with `-Ddxil=true`), the texture atlas, run and test steps
+├── build.zig                  Build graph: SDL3, stb_image, cglm, ztracy (with `-Dtracy=true`), log.c and its glue, shader compilation and embedding (SPIR-V, plus optional DXIL and MSL), the texture atlas, run and test steps
 ├── build.zig.zon              Package manifest and pinned dependencies
 ├── src/
 │   ├── main.zig               Entry point: hands the game to the engine
@@ -145,7 +151,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   ├── engine.zig         Public engine API: window, fixed-timestep loop, scale modes, Config, Context, DrawContext
 │   │   ├── sdl.zig            The only SDL3 C import
 │   │   ├── renderer.zig       GPU device, swapchain, command buffers, render passes
-│   │   ├── shader.zig         Picks a shader format (SPIR-V, then DXIL) and creates GPU shaders from embedded code
+│   │   ├── shader.zig         Picks a shader format (SPIR-V, DXIL, or MSL) and creates GPU shaders from embedded code
 │   │   ├── texture.zig        2D textures, render targets, nearest-neighbor sampler
 │   │   ├── image.zig          Decodes image files to RGBA8 with stb_image
 │   │   ├── sprite.zig         Batched textured quads, sprite pipeline, vertex upload
@@ -343,8 +349,8 @@ These estimates are rough. They measure how close each area is to something usab
 | Logging and assertions | `engine/log.zig`, `log_file.c`, `vendor/log.c` | Functional | 85% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Terminal and log file output through log.c, with panics recorded in the file. Missing: rotation, and keeping logs from earlier runs. |
 | Profiling | `profile.zig`, `engine/engine.zig` | Functional | 60% | Tracy zones for the frame, events, updates, passes, uploads, submit, and asset loads, plus frame marks. Compiled in only with `-Dtracy=true`. A captured session checked the zone names and counts. Missing: GPU timing zones, allocation tracking, and plots. |
 | Gameplay | `game/` | Prototype | 20% | Player with directional walk clips, one level loaded from `assets/maps/level1.txt` and drawn in layers, and movement and quit actions bound in `game/controls.zig`. No entities or rules. |
-| Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Asks the device for DXIL only when the build embeds it. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, Metal support, pass helpers. |
-| Shaders | `shader.zig` | Basic | 55% | Picks the first shader format the device accepts (SPIR-V, then DXIL) and creates GPU shaders from code embedded at build time. DXIL is optional (`-Ddxil=true`). Per-shader entry points and resource counts are declared in `sprite.zig`. Missing: MSL, reflection. Uniform buffer count is supported but unused. |
+| Renderer | `renderer.zig` | Solid base | 75% | Device, swapchain, and passes work. Asks the device for DXIL and MSL only when the build embeds those formats. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, pass helpers. |
+| Shaders | `shader.zig` | Basic | 65% | Picks the first shader format the device accepts (SPIR-V, DXIL, then MSL) and creates GPU shaders from code embedded at build time. DXIL (`-Ddxil=true`) and MSL (`-Dmetal=true`) are optional. Per-shader entry points and resource counts are declared in `sprite.zig`. Missing: reflection. Uniform buffer count is supported but unused. |
 | Textures | `texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: unload and reload. |
 | Atlas | `atlas.zig`, `tools/atlas/pack.c` | Functional | 60% | Build-time packing with stb_rect_pack, index parsing with validation, and lookup by name. Missing: runtime packing, several atlas pages, rotated sprites. |
 | Images | `image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
@@ -360,9 +366,9 @@ These estimates are rough. They measure how close each area is to something usab
 | Tile map | `engine/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |
 | Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. The left button's held, pressed, and released state is tracked for the UI. Clicks don't store a position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `src/tests.zig`. |
 | View mapping | `view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
-| Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, and DXIL with `-Ddxil=true`), the texture atlas, the run step, and the test step. Installs `assets/` beside the executable. Missing: a Metal (MSL) shader target. |
+| Build | `build.zig`, `.github/workflows/ci.yml` | Functional | 70% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, optional DXIL and MSL), the texture atlas, the run step, and the test step. CI builds and tests on Linux, macOS, and Windows. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
-| Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, camera, animation, input, and renderer. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). Missing: tests that open a window or create a GPU device. |
+| Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, camera, animation, input, shader format selection, and renderer. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). Missing: tests that open a window or create a GPU device. |
 | Vector | `vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
 | Entities | `entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
 | Debug overlay | `debug_overlay.zig`, `frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
@@ -386,7 +392,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add input actions.** Add a name to `Action` in `game/controls.zig`, give it default keys in `defaultKeys`, and query it with `self.bindings.held`, `self.bindings.pressed`, or `self.bindings.released`. The settings file can then bind it with a `bind` line. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input.zig` and map it to its SDL scancode. A new key name works in `bind` lines as soon as it is in `Key`.
 
-**Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `sprite.zig` with the stage, resource counts, and embedded code for both formats (for example `.code = .{ .spirv = embedded.default_vert, .dxil = embedded.default_vert_dxil }`; the DXIL slice is empty unless the build used `-Ddxil=true`). If the shader samples a texture, follow the `DXIL_TARGET` split in `default.slang`, since Vulkan and D3D12 declare samplers differently. Load it with `shader.load` and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
+**Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `sprite.zig` with the stage, resource counts, and embedded code for each format. DXIL and MSL slices are empty unless enabled with `-Ddxil=true` or `-Dmetal=true`. Follow the target-specific resource declarations in `default.slang`; Slang emits Metal texture and sampler arguments for MSL. Load it with `shader.load` and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
 
 **Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
 
@@ -404,7 +410,7 @@ These are the natural extension points. Each one reuses existing code.
 
 3. **Fixed: a minimized window spun the CPU.** A zero-size window, or a frame with no swapchain, used to restart the loop without waiting. Both cases now sleep for 16 ms first, so a minimized window idles.
 
-4. **Vulkan is the default backend. Direct3D 12 is opt-in, and Metal isn't supported.** SPIR-V shaders are always built, and the renderer always sets Vulkan 1.2 options. `zig build -Ddxil=true` also compiles DXIL (`sm_6_0`) and tells the device to accept it. `shader.pickFormat` then takes the first format the device accepts, with SPIR-V ahead of DXIL. Metal needs MSL shaders, which don't exist yet. `default.slang` declares its sampler two ways: a combined `Sampler2D` at `[vk::binding(0, 2)]` for Vulkan, and separate `t0` and `s0` registers in space 2 for DXIL, chosen by the `-DDXIL_TARGET` define that `build.zig` passes. Vertex locations are explicit and match the attributes in `sprite.zig`.
+4. **Vulkan is the default backend. Direct3D 12 and Metal formats are opt-in.** SPIR-V shaders are always built. `zig build -Ddxil=true` embeds DXIL (`sm_6_0`), and `zig build -Dmetal=true` embeds MSL; the renderer tells SDL which optional formats are available. `shader.pickFormat` selects the first supported format. SDL consumes Slang's MSL source with the original entry-point names. The `default.slang` sampler declarations cover Vulkan and D3D12; Slang maps the texture and sampler to Metal arguments for MSL. Vertex locations match the attributes in `sprite.zig`.
 
 5. **Fixed: names didn't match.** The package is `Bairava` in `build.zig.zon`, the executable and window are `Semkootru`, and the sprite shader is `default.slang`.
 
@@ -462,8 +468,8 @@ These are the natural extension points. Each one reuses existing code.
 ### Phase 4: platforms and tooling
 
 - [x] Compile shaders to DXIL (Direct3D 12) alongside SPIR-V, opt-in with `-Ddxil=true`, and enable that device format.
-- [ ] Compile shaders to MSL (Metal) and enable that device format.
-- [ ] Linux and macOS builds, plus continuous integration.
+- [x] Compile shaders to MSL (Metal) and enable that device format, opt-in with `-Dmetal=true`.
+- [x] Linux and macOS native build coverage and continuous integration in `.github/workflows/ci.yml` (the workflow also covers Windows).
 - [ ] A cross-platform asset tool to replace `key_checker.ps1`.
 - [ ] A level editor or import workflow.
 - [ ] Save and load.

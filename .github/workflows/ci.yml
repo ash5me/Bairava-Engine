@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Zig from build.zig.zon
+        uses: mlugg/setup-zig@v2
+
+      - name: Install Slang on Linux and macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          SLANG_VERSION: 2026.20
+        run: |
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            Linux-X64) archive="slang-${SLANG_VERSION}-linux-x86_64-glibc-2.27.tar.gz" ;;
+            Linux-ARM64) archive="slang-${SLANG_VERSION}-linux-aarch64.tar.gz" ;;
+            macOS-X64) archive="slang-${SLANG_VERSION}-macos-x86_64.zip" ;;
+            macOS-ARM64) archive="slang-${SLANG_VERSION}-macos-aarch64.zip" ;;
+            *) echo "Unsupported Slang runner: ${RUNNER_OS}-${RUNNER_ARCH}" >&2; exit 1 ;;
+          esac
+
+          url="https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/${archive}"
+          install_dir="${RUNNER_TEMP}/slang"
+          mkdir -p "$install_dir"
+          if [[ "$archive" == *.zip ]]; then
+            curl --fail --location --retry 3 "$url" -o "${RUNNER_TEMP}/${archive}"
+            unzip -q "${RUNNER_TEMP}/${archive}" -d "$install_dir"
+          else
+            curl --fail --location --retry 3 "$url" -o "${RUNNER_TEMP}/${archive}"
+            tar -xzf "${RUNNER_TEMP}/${archive}" -C "$install_dir"
+          fi
+
+          slang_bin="$(find "$install_dir" -type f -name slangc -print -quit)"
+          if [[ -z "$slang_bin" ]]; then
+            echo "slangc was not found in ${archive}" >&2
+            exit 1
+          fi
+          chmod +x "$slang_bin"
+          dirname "$slang_bin" >> "$GITHUB_PATH"
+          "$slang_bin" -version
+
+      - name: Install Slang on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          SLANG_VERSION: 2026.20
+        run: |
+          $archive = "slang-$env:SLANG_VERSION-windows-x86_64.zip"
+          $url = "https://github.com/shader-slang/slang/releases/download/v$env:SLANG_VERSION/$archive"
+          $archivePath = Join-Path $env:RUNNER_TEMP $archive
+          $installDir = Join-Path $env:RUNNER_TEMP 'slang'
+          Invoke-WebRequest -Uri $url -OutFile $archivePath
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $installDir -Force
+          $compiler = Get-ChildItem -LiteralPath $installDir -Recurse -Filter slangc.exe | Select-Object -First 1
+          if ($null -eq $compiler) { throw "slangc.exe was not found in $archive" }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $compiler.DirectoryName
+          & $compiler.FullName -version
+
+      - name: Build
+        run: zig build
+
+      - name: Build Metal shaders on macOS
+        if: runner.os == 'macOS'
+        run: zig build -Dmetal=true
+
+      - name: Run unit tests
+        run: zig build test

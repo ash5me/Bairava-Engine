@@ -110,9 +110,8 @@ const ShaderTarget = struct {
     /// An extra slangc argument, or null. DXIL compiles pass -DDXIL_TARGET so the shader can pick
     /// the D3D12 register layout.
     define: ?[]const u8,
-    /// Built only when -Ddxil=true. When off, the generated module declares an empty slice for it,
-    /// so a machine without DXIL support still builds the SPIR-V game.
-    optional: bool,
+    /// Build option that enables this format, or null when it is always built.
+    option: ?[]const u8,
 };
 
 const shader_targets = [_]ShaderTarget{
@@ -121,27 +120,41 @@ const shader_targets = [_]ShaderTarget{
         .args = &.{ "-target", "spirv", "-profile", "spirv_1_5" },
         .suffix = "",
         .define = null,
-        .optional = false,
+        .option = null,
     },
     .{
         .ext = "dxil",
         .args = &.{ "-target", "dxil", "-profile", "sm_6_0" },
         .suffix = "_dxil",
         .define = "-DDXIL_TARGET",
-        .optional = true,
+        .option = "dxil",
+    },
+    .{
+        .ext = "msl",
+        .args = &.{"-target", "metal"},
+        .suffix = "_msl",
+        .define = null,
+        .option = "metal",
     },
 };
+
+fn shaderTargetEnabled(target: ShaderTarget, dxil_enabled: bool, metal_enabled: bool) bool {
+    const option = target.option orelse return true;
+    if (std.mem.eql(u8, option, "dxil")) return dxil_enabled;
+    if (std.mem.eql(u8, option, "metal")) return metal_enabled;
+    unreachable;
+}
 
 /// Source of the generated `embedded_shaders` module. Each compiled shader's bytes are copied into a
 /// 4-byte-aligned global, because SPIR-V is read as 32-bit words. An optional format that isn't
 /// built gets an empty slice. It is built at comptime from the tables above, so the module and the
 /// compile steps can't disagree about names.
-fn embeddedSource(b: *std.Build, dxil_enabled: bool) []const u8 {
+fn embeddedSource(b: *std.Build, dxil_enabled: bool, metal_enabled: bool) []const u8 {
     var source: []const u8 = "";
     inline for (shader_targets) |t| {
         inline for (shader_entries) |s| {
             const decl = s.decl ++ t.suffix;
-            const text: []const u8 = if (t.optional and !dxil_enabled)
+            const text: []const u8 = if (!shaderTargetEnabled(t, dxil_enabled, metal_enabled))
                 "pub const " ++ decl ++ ": []align(4) const u8 = &.{};\n"
             else
                 "const " ++ decl ++ "_storage align(4) = @embedFile(\"" ++ s.file ++ "." ++ t.ext ++ "\").*;\n" ++
@@ -259,12 +272,13 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_atlas_index.step);
 
     // Compile each shader entry point for each target, and embed the results in the executable
-    // through a generated module, so the game reads no shader files at runtime. DXIL is optional:
-    // pass -Ddxil=true to build it. The device requests Vulkan 1.2 at runtime to accept SPIR-V.
+    // through a generated module, so the game reads no shader files at runtime. DXIL and MSL are
+    // optional build targets; Vulkan SPIR-V is always present.
     const dxil_enabled = b.option(bool, "dxil", "Compile DXIL shaders for D3D12") orelse false;
+    const metal_enabled = b.option(bool, "metal", "Compile MSL shaders for Metal") orelse false;
     const shader_files = b.addWriteFiles();
     inline for (shader_targets) |t| {
-        if (!t.optional or dxil_enabled) {
+        if (shaderTargetEnabled(t, dxil_enabled, metal_enabled)) {
             inline for (shader_entries) |s| {
                 const compile = b.addSystemCommand(&.{"slangc"});
                 compile.addArgs(t.args);
@@ -277,7 +291,7 @@ pub fn build(b: *std.Build) void {
             }
         }
     }
-    const embedded_source = embeddedSource(b, dxil_enabled);
+    const embedded_source = embeddedSource(b, dxil_enabled, metal_enabled);
     const embedded_module = shader_files.add("embedded_shaders.zig", embedded_source);
     exe.root_module.addAnonymousImport("embedded_shaders", .{ .root_source_file = embedded_module });
 
