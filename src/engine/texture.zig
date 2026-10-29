@@ -22,8 +22,17 @@ pub const Texture = struct {
         defer zone.End();
         const expected_len = @as(usize, width) * height * 4;
         logging.assert(pixels.len == expected_len, @src(), "pixel buffer is {d} bytes, expected {d} for a {d}x{d} texture", .{ pixels.len, expected_len, width, height });
+        return upload(device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height);
+    }
 
-        const texture = createTexture(device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
+    /// Uploads tightly packed BC1, BC3, or ASTC 4x4 blocks. The caller checks that the active GPU
+    /// supports `format` for sampled 2D textures before selecting this path.
+    pub fn initCompressed(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, blocks: []const u8) Texture {
+        return upload(device, width, height, format, blocks, 0, 0);
+    }
+
+    fn upload(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, pixels: []const u8, pixels_per_row: u32, rows_per_layer: u32) Texture {
+        const texture = createTexture(device, width, height, format, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
 
         // Stage the pixels in an upload buffer, then copy them into the texture.
         var tb_info = std.mem.zeroes(c.SDL_GPUTransferBufferCreateInfo);
@@ -48,8 +57,8 @@ pub const Texture = struct {
         const src = c.SDL_GPUTextureTransferInfo{
             .transfer_buffer = transfer,
             .offset = 0,
-            .pixels_per_row = width,
-            .rows_per_layer = height,
+            .pixels_per_row = pixels_per_row,
+            .rows_per_layer = rows_per_layer,
         };
         const region = c.SDL_GPUTextureRegion{
             .texture = texture,

@@ -153,6 +153,10 @@ pub const Context = struct {
     pub fn loadTexture(self: *const Context, relative: []const u8) Texture {
         const zone = profile.zoneNamed(@src(), "load texture");
         defer zone.End();
+        if (loadCompressedVariant(self, relative, ".astc", .astc_4x4, c.SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM)) |texture| return texture;
+        if (loadCompressedVariant(self, relative, ".bc3", .bc3, c.SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM)) |texture| return texture;
+        if (loadCompressedVariant(self, relative, ".bc1", .bc1, c.SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM)) |texture| return texture;
+        if (loadCompressedVariant(self, relative, ".rgba", .rgba8, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM)) |texture| return texture;
         var buf: [max_full_path]u8 = undefined;
         const path = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ self.base_path, relative }) catch {
             std.debug.panic("asset path '{s}' is longer than {d} bytes", .{ relative, max_full_path });
@@ -186,6 +190,25 @@ pub const Context = struct {
         return std.heap.page_allocator.dupe(u8, bytes[0..size]);
     }
 };
+
+/// Chooses a prebuilt GPU-native image variant only when SDL says the active device can sample it.
+/// Missing or malformed variants fall through to the next format and ultimately the RGBA8 decoder.
+fn loadCompressedVariant(
+    ctx: *const Context,
+    relative: []const u8,
+    suffix: []const u8,
+    compression: image.Compression,
+    gpu_format: c.SDL_GPUTextureFormat,
+) ?Texture {
+    if (compression != .rgba8 and !c.SDL_GPUTextureSupportsFormat(ctx.device, gpu_format, c.SDL_GPU_TEXTURETYPE_2D, c.SDL_GPU_TEXTUREUSAGE_SAMPLER)) return null;
+    var path_buf: [max_full_path]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&path_buf, "{s}{s}{s}", .{ ctx.base_path, relative, suffix }) catch return null;
+    var compressed = image.loadCompressed(path.ptr, compression) catch return null;
+    defer compressed.deinit();
+    elog.debug("using {s} texture variant {s} ({d}x{d})", .{ @tagName(compression), path, compressed.width, compressed.height });
+    if (compression == .rgba8) return Texture.initRgba8(ctx.device, compressed.width, compressed.height, compressed.blocks);
+    return Texture.initCompressed(ctx.device, compressed.width, compressed.height, gpu_format, compressed.blocks);
+}
 
 /// What the game needs to queue sprites for one frame.
 pub const DrawContext = struct {

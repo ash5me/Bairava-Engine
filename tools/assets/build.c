@@ -17,10 +17,12 @@
 
 #ifdef _WIN32
 #include <direct.h>
+#include <process.h>
 #define make_directory(path) _mkdir(path)
 #define PATH_SEPARATOR '\\'
 #else
 #include <unistd.h>
+#include <sys/wait.h>
 #define make_directory(path) mkdir(path, 0777)
 #define PATH_SEPARATOR '/'
 #endif
@@ -35,6 +37,205 @@ typedef struct {
     char output[FIELD_SIZE];
     char dependencies[FIELD_SIZE];
 } entry;
+
+enum { TEX_RGBA8 = 0, TEX_BC1 = 1, TEX_BC3 = 2, TEX_ASTC_4X4 = 3 };
+
+static void write_u32le(unsigned char *out, unsigned int value) {
+    out[0] = (unsigned char)value;
+    out[1] = (unsigned char)(value >> 8);
+    out[2] = (unsigned char)(value >> 16);
+    out[3] = (unsigned char)(value >> 24);
+}
+
+static int write_variant(const char *path, unsigned char format, unsigned int width, unsigned int height,
+                         const unsigned char *data, size_t data_size) {
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) return 0;
+    unsigned char header[16] = { 'B', 'R', 'T', 'X', format, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    write_u32le(header + 8, width);
+    write_u32le(header + 12, height);
+    int ok = fwrite(header, 1, sizeof header, file) == sizeof header && fwrite(data, 1, data_size, file) == data_size;
+    if (fclose(file) != 0) ok = 0;
+    if (!ok) remove(path);
+    return ok;
+}
+
+static unsigned short pack_565(unsigned char r, unsigned char g, unsigned char b) {
+    return (unsigned short)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+static void unpack_565(unsigned short value, unsigned char *color) {
+    color[0] = (unsigned char)(((value >> 11) & 31) * 255 / 31);
+    color[1] = (unsigned char)(((value >> 5) & 63) * 255 / 63);
+    color[2] = (unsigned char)((value & 31) * 255 / 31);
+}
+
+static unsigned int color_distance(const unsigned char *a, const unsigned char *b) {
+    int r = (int)a[0] - b[0], g = (int)a[1] - b[1], bl = (int)a[2] - b[2];
+    return (unsigned int)(r * r + g * g + bl * bl);
+}
+
+static void encode_bc1_block(const unsigned char *rgba, unsigned int width, unsigned int height,
+                             unsigned int bx, unsigned int by, unsigned char *out, int allow_alpha) {
+    unsigned char px[16][4];
+    unsigned char lo[3] = { 255, 255, 255 }, hi[3] = { 0, 0, 0 };
+    int transparent = 0;
+    for (unsigned int y = 0; y < 4; y++) for (unsigned int x = 0; x < 4; x++) {
+        unsigned int sx = bx * 4 + x, sy = by * 4 + y;
+        if (sx >= width) sx = width - 1;
+        if (sy >= height) sy = height - 1;
+        unsigned char *p = px[y * 4 + x];
+        memcpy(p, rgba + ((size_t)sy * width + sx) * 4, 4);
+        if (allow_alpha && p[3] < 128) { transparent = 1; continue; }
+        for (unsigned int c = 0; c < 3; c++) { if (p[c] < lo[c]) lo[c] = p[c]; if (p[c] > hi[c]) hi[c] = p[c]; }
+    }
+    unsigned short c0 = pack_565(hi[0], hi[1], hi[2]);
+    unsigned short c1 = pack_565(lo[0], lo[1], lo[2]);
+    if ((!transparent && c0 <= c1) || (transparent && c0 > c1)) { unsigned short swap = c0; c0 = c1; c1 = swap; }
+    unsigned char palette[4][4] = {{0}};
+    unpack_565(c0, palette[0]); unpack_565(c1, palette[1]);
+    if (c0 > c1) {
+        for (unsigned int c = 0; c < 3; c++) { palette[2][c] = (unsigned char)((2 * palette[0][c] + palette[1][c]) / 3); palette[3][c] = (unsigned char)((palette[0][c] + 2 * palette[1][c]) / 3); }
+    } else {
+        for (unsigned int c = 0; c < 3; c++) palette[2][c] = (unsigned char)((palette[0][c] + palette[1][c]) / 2);
+    }
+    out[0] = (unsigned char)c0; out[1] = (unsigned char)(c0 >> 8);
+    out[2] = (unsigned char)c1; out[3] = (unsigned char)(c1 >> 8);
+    unsigned int indices = 0;
+    for (unsigned int i = 0; i < 16; i++) {
+        unsigned int best = 0, best_distance = ~0u;
+        if (transparent && px[i][3] < 128) best = 3;
+        else {
+            unsigned int palette_count = c0 > c1 ? 4 : 3;
+            for (unsigned int j = 0; j < palette_count; j++) {
+                unsigned int d = color_distance(px[i], palette[j]);
+                if (d < best_distance) { best_distance = d; best = j; }
+            }
+        }
+        indices |= best << (2 * i);
+    }
+    out[4] = (unsigned char)indices; out[5] = (unsigned char)(indices >> 8);
+    out[6] = (unsigned char)(indices >> 16); out[7] = (unsigned char)(indices >> 24);
+}
+
+static void encode_bc3_alpha_block(const unsigned char *rgba, unsigned int width, unsigned int height,
+                                   unsigned int bx, unsigned int by, unsigned char *out) {
+    unsigned char alpha[16];
+    unsigned char hi = 0, lo = 255;
+    for (unsigned int y = 0; y < 4; y++) for (unsigned int x = 0; x < 4; x++) {
+        unsigned int sx = bx * 4 + x, sy = by * 4 + y;
+        if (sx >= width) sx = width - 1;
+        if (sy >= height) sy = height - 1;
+        unsigned char a = rgba[((size_t)sy * width + sx) * 4 + 3];
+        alpha[y * 4 + x] = a;
+        if (a > hi) hi = a;
+        if (a < lo) lo = a;
+    }
+    out[0] = hi; out[1] = lo;
+    unsigned char palette[8] = { hi, lo };
+    if (hi > lo) for (unsigned int i = 1; i <= 6; i++) palette[i + 1] = (unsigned char)(((7 - i) * hi + i * lo) / 7);
+    else {
+        for (unsigned int i = 1; i <= 4; i++) palette[i + 1] = (unsigned char)(((5 - i) * hi + i * lo) / 5);
+        palette[6] = 0; palette[7] = 255;
+    }
+    unsigned long long indices = 0;
+    for (unsigned int i = 0; i < 16; i++) {
+        unsigned int best = 0, best_distance = ~0u;
+        for (unsigned int j = 0; j < 8; j++) {
+            unsigned int d = alpha[i] > palette[j] ? alpha[i] - palette[j] : palette[j] - alpha[i];
+            if (d < best_distance) { best_distance = d; best = j; }
+        }
+        indices |= (unsigned long long)best << (3 * i);
+    }
+    for (unsigned int i = 0; i < 6; i++) out[2 + i] = (unsigned char)(indices >> (8 * i));
+}
+
+static int encode_bc(const unsigned char *rgba, unsigned int width, unsigned int height,
+                     const char *output_path, int bc3) {
+    unsigned int blocks_x = (width + 3) / 4, blocks_y = (height + 3) / 4;
+    size_t block_size = bc3 ? 16 : 8;
+    size_t size = (size_t)blocks_x * blocks_y * block_size;
+    unsigned char *data = (unsigned char *)malloc(size);
+    if (data == NULL) return 0;
+    for (unsigned int y = 0; y < blocks_y; y++) for (unsigned int x = 0; x < blocks_x; x++) {
+        unsigned char *block = data + ((size_t)y * blocks_x + x) * block_size;
+        if (bc3) {
+            encode_bc3_alpha_block(rgba, width, height, x, y, block);
+            encode_bc1_block(rgba, width, height, x, y, block + 8, 0);
+        } else encode_bc1_block(rgba, width, height, x, y, block, 1);
+    }
+    int ok = write_variant(output_path, bc3 ? TEX_BC3 : TEX_BC1, width, height, data, size);
+    free(data);
+    return ok;
+}
+
+static int run_astcenc(char *const args[]) {
+#ifdef _WIN32
+    return _spawnvp(_P_WAIT, args[0], (const char * const *)args) == 0;
+#else
+    pid_t child = fork();
+    if (child < 0) return 0;
+    if (child == 0) { execvp(args[0], args); _exit(127); }
+    int status = 0;
+    return waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+#endif
+}
+
+static int try_astc(const entry *item, const unsigned char *rgba, unsigned int width, unsigned int height,
+                    const char *output_path, const char *output_dir) {
+    (void)rgba;
+    char temp_path[FIELD_SIZE * 2];
+    (void)output_dir;
+    if (snprintf(temp_path, sizeof temp_path, "%s-tmp.astc", output_path) >= (int)sizeof temp_path) return 0;
+    for (char *p = temp_path; *p; p++) if (*p == '/' || *p == '\\') *p = PATH_SEPARATOR;
+    char *args[] = { (char *)"astcenc", (char *)"-cl", (char *)item->source, temp_path, (char *)"4x4", (char *)"-medium", NULL };
+    if (!run_astcenc(args)) { remove(temp_path); return 0; }
+    FILE *file = fopen(temp_path, "rb");
+    if (file == NULL) { remove(temp_path); return 0; }
+    unsigned char astc_header[16];
+    if (fread(astc_header, 1, sizeof astc_header, file) != sizeof astc_header ||
+        astc_header[0] != 0x13 || astc_header[1] != 0xAB || astc_header[2] != 0xA1 || astc_header[3] != 0x5C) {
+        fclose(file); remove(temp_path); return 0;
+    }
+    unsigned int astc_width = astc_header[7] | ((unsigned int)astc_header[8] << 8) | ((unsigned int)astc_header[9] << 16);
+    unsigned int astc_height = astc_header[10] | ((unsigned int)astc_header[11] << 8) | ((unsigned int)astc_header[12] << 16);
+    if (astc_width != width || astc_height != height) { fclose(file); remove(temp_path); return 0; }
+    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); remove(temp_path); return 0; }
+    long file_size = ftell(file);
+    if (file_size < 16 || fseek(file, 16, SEEK_SET) != 0) { fclose(file); remove(temp_path); return 0; }
+    size_t payload_size = (size_t)(file_size - 16);
+    unsigned char *payload = (unsigned char *)malloc(payload_size);
+    int ok = payload != NULL && fread(payload, 1, payload_size, file) == payload_size;
+    fclose(file); remove(temp_path);
+    if (ok) ok = write_variant(output_path, TEX_ASTC_4X4, width, height, payload, payload_size);
+    free(payload);
+    return ok;
+}
+
+static int build_texture_variants(const entry *item, const char *output_path, const char *output_dir, int *astc_available) {
+    int width = 0, height = 0, channels = 0;
+    unsigned char *rgba = stbi_load(item->source, &width, &height, &channels, 4);
+    if (rgba == NULL || width <= 0 || height <= 0) {
+        fprintf(stderr, "asset_build: cannot decode image '%s': %s\n", item->source, stbi_failure_reason());
+        if (rgba != NULL) stbi_image_free(rgba);
+        return 0;
+    }
+    char rgba_path[FIELD_SIZE * 2], bc1_path[FIELD_SIZE * 2], bc3_path[FIELD_SIZE * 2], astc_path[FIELD_SIZE * 2];
+    snprintf(rgba_path, sizeof rgba_path, "%s.rgba", output_path);
+    snprintf(bc1_path, sizeof bc1_path, "%s.bc1", output_path);
+    snprintf(bc3_path, sizeof bc3_path, "%s.bc3", output_path);
+    snprintf(astc_path, sizeof astc_path, "%s.astc", output_path);
+    size_t rgba_size = (size_t)width * (size_t)height * 4;
+    int ok = write_variant(rgba_path, TEX_RGBA8, (unsigned int)width, (unsigned int)height, rgba, rgba_size) &&
+             encode_bc(rgba, (unsigned int)width, (unsigned int)height, bc1_path, 0) &&
+             encode_bc(rgba, (unsigned int)width, (unsigned int)height, bc3_path, 1);
+    if (!ok) fprintf(stderr, "asset_build: failed to encode BC texture variants for '%s'\n", item->name);
+    *astc_available = 0;
+    if (ok) *astc_available = try_astc(item, rgba, (unsigned int)width, (unsigned int)height, astc_path, output_dir);
+    if (!*astc_available) remove(astc_path);
+    stbi_image_free(rgba);
+    return ok;
+}
 
 static int safe_relative_path(const char *path) {
     if (path[0] == '\0' || path[0] == '/' || path[0] == '\\' || strchr(path, ':') != NULL || strchr(path, '\\') != NULL) return 0;
@@ -147,7 +348,7 @@ static int dependency_exists(const entry *entries, size_t count, const char *nam
     return 0;
 }
 
-static int process_manifest(const char *manifest_path, const char *output_dir) {
+static int process_manifest(int argc, char **argv, const char *manifest_path, const char *output_dir) {
     FILE *manifest = fopen(manifest_path, "r");
     if (manifest == NULL) { fprintf(stderr, "asset_build: cannot open manifest '%s'\n", manifest_path); return 1; }
     entry *entries = (entry *)calloc(MAX_ENTRIES, sizeof *entries);
@@ -178,6 +379,29 @@ static int process_manifest(const char *manifest_path, const char *output_dir) {
     }
     fclose(manifest);
     if (failed) { free(entries); return 1; }
+    for (int arg = 3; arg < argc;) {
+        if (arg + 4 >= argc || strcmp(argv[arg], "--include-image") != 0 || count == MAX_ENTRIES) {
+            fprintf(stderr, "asset_build: expected '--include-image <name> <source> <output> <dependencies>'\n");
+            free(entries); return 2;
+        }
+        entry item = {0};
+        snprintf(item.name, sizeof item.name, "%s", argv[arg + 1]);
+        snprintf(item.type, sizeof item.type, "image");
+        snprintf(item.source, sizeof item.source, "%s", argv[arg + 2]);
+        snprintf(item.output, sizeof item.output, "%s", argv[arg + 3]);
+        snprintf(item.dependencies, sizeof item.dependencies, "%s", argv[arg + 4]);
+        if (!safe_name(item.name) || !safe_relative_path(item.output) || !valid_kind(&item)) {
+            fprintf(stderr, "asset_build: invalid generated image '%s'\n", item.name);
+            free(entries); return 1;
+        }
+        for (size_t i = 0; i < count; i++) {
+            if (strcmp(entries[i].name, item.name) == 0 || strcmp(entries[i].output, item.output) == 0) {
+                fprintf(stderr, "asset_build: duplicate generated image name or output\n"); free(entries); return 1;
+            }
+        }
+        entries[count++] = item;
+        arg += 5;
+    }
     for (size_t i = 0; i < count; i++) {
         if (strcmp(entries[i].dependencies, "-") == 0) continue;
         char deps[FIELD_SIZE];
@@ -194,7 +418,7 @@ static int process_manifest(const char *manifest_path, const char *output_dir) {
     if (snprintf(index_path, sizeof index_path, "%s%casset-index.txt", output_dir, PATH_SEPARATOR) >= (int)sizeof index_path) { free(entries); return 1; }
     FILE *index = fopen(index_path, "w");
     if (index == NULL) { fprintf(stderr, "asset_build: cannot create '%s'\n", index_path); free(entries); return 1; }
-    fprintf(index, "# asset-index-v1\n# name type path source dependencies\n");
+    fprintf(index, "# asset-index-v1\n# name type path source dependencies rgba8 bc1 bc3 astc\n");
     for (size_t i = 0; i < count; i++) {
         char relative_output[FIELD_SIZE];
         size_t output_length = strlen(entries[i].output);
@@ -208,7 +432,13 @@ static int process_manifest(const char *manifest_path, const char *output_dir) {
         char *slash = strrchr(parent, PATH_SEPARATOR);
         if (slash != NULL) { *slash = '\0'; if (!mkdirs(parent)) { failed = 1; break; } }
         if (!copy_file(entries[i].source, destination)) { failed = 1; break; }
-        fprintf(index, "%s %s %s %s %s\n", entries[i].name, entries[i].type, entries[i].output, entries[i].source, entries[i].dependencies);
+        int astc_available = 0;
+        if (strcmp(entries[i].type, "image") == 0 && !build_texture_variants(&entries[i], destination, output_dir, &astc_available)) { failed = 1; break; }
+        const char *source_for_index = safe_relative_path(entries[i].source) ? entries[i].source : "generated";
+        fprintf(index, "%s %s %s %s %s", entries[i].name, entries[i].type, entries[i].output, source_for_index, entries[i].dependencies);
+        if (strcmp(entries[i].type, "image") == 0) fprintf(index, " %s.rgba %s.bc1 %s.bc3 %s", entries[i].output, entries[i].output, entries[i].output, astc_available ? entries[i].output : "-");
+        if (strcmp(entries[i].type, "image") == 0 && astc_available) fprintf(index, ".astc");
+        fputc('\n', index);
     }
     if (fclose(index) != 0) failed = 1;
     free(entries);
@@ -222,6 +452,6 @@ int main(int argc, char **argv) {
         printf("Usage: asset_build <manifest> <output-directory>\n");
         return 0;
     }
-    if (argc != 3) { fprintf(stderr, "Usage: asset_build <manifest> <output-directory>\n"); return 2; }
-    return process_manifest(argv[1], argv[2]);
+    if (argc < 3) { fprintf(stderr, "Usage: asset_build <manifest> <output-directory> [--include-image <name> <source> <output> <dependencies>]...\n"); return 2; }
+    return process_manifest(argc, argv, argv[1], argv[2]);
 }

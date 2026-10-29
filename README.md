@@ -49,9 +49,9 @@ zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to s
 zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
 
-`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Images, WAV audio, and TrueType/OpenType fonts are format-checked; maps and generic files are checked for existence. The current processors preserve source bytes, leaving conversion and compression to future processors. The sprite atlas remains a specialized build output: sprites listed in `assets/sprites.txt` are packed into `atlas.png`, with regions in `atlas.txt`.
+`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Images, WAV audio, and TrueType/OpenType fonts are format-checked; maps and generic files are checked for existence. Image entries emit BC1 and BC3 GPU texture variants alongside the source image; when `astcenc` is installed and available on `PATH`, the builder also emits ASTC 4x4. The sprite atlas is packed from `assets/sprites.txt` and sent through the same texture processor, with its regions written to `atlas.txt`. At runtime, SDL's format support query picks ASTC, BC3, or BC1 when the active device can sample that format; otherwise the original image is decoded and uploaded as RGBA8.
 
-Run `zig build asset-build` to validate and stage the general asset set without installing the game. The build graph tracks the manifest and its source files, so edits rebuild the asset step.
+Run `zig build asset-build` to validate and stage the general asset set without installing the game. The build graph tracks the manifest, its source files, and the generated atlas input, so edits rebuild the asset step. Install Arm's `astcenc` command line tool and put it on `PATH` to generate ASTC variants; BC1, BC3, and prebuilt RGBA8 `.rgba` fallback variants do not need an extra tool.
 
 The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root and need a TrueType font, and `zig build test` doesn't run them:
 
@@ -252,7 +252,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 ├── tools/
 │   ├── assets/keyer.c         Cross-platform checkerboard-background removal tool
 │   ├── assets/import.c        Copies and registers atlas sprites
-│   ├── assets/build.c          Validates manifest assets, stages runtime files, and writes the asset index
+│   ├── assets/build.c          Validates assets, emits BC1/BC3 and optional ASTC texture variants, and writes the asset index
 │   └── atlas/pack.c           Build-time texture atlas packer; writes atlas.png and atlas.txt
 ├── tests/
 │   └── ui/

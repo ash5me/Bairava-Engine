@@ -229,42 +229,6 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
-    // Validate and stage the manifest's runtime assets on the host. The output directory is a
-    // declared build artifact, and source inputs are registered below so edits rebuild the step.
-    const asset_builder = b.addExecutable(.{
-        .name = "asset_build",
-        .root_module = b.createModule(.{
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-            .link_libc = true,
-        }),
-    });
-    asset_builder.root_module.addIncludePath(b.path("vendor"));
-    asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/build.c") });
-    asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
-    const run_asset_builder = b.addRunArtifact(asset_builder);
-    run_asset_builder.addFileArg(b.path("assets/asset_manifest.txt"));
-    const runtime_assets = run_asset_builder.addOutputDirectoryArg("runtime-assets");
-    var asset_lines = std.mem.tokenizeScalar(u8, asset_manifest, '\n');
-    while (asset_lines.next()) |line| {
-        if (std.mem.startsWith(u8, std.mem.trim(u8, line, " \t\r"), "#")) continue;
-        var fields = std.mem.tokenizeAny(u8, line, " \t\r");
-        _ = fields.next() orelse continue;
-        _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing type");
-        const source = fields.next() orelse @panic("assets/asset_manifest.txt: missing source path");
-        _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing output path");
-        _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing dependencies");
-        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected '<name> <type> <source> <output> <dependencies>' per line");
-        run_asset_builder.addFileInput(b.path(source));
-    }
-    const install_runtime_assets = b.addInstallDirectory(.{
-        .source_dir = runtime_assets,
-        .install_dir = .bin,
-        .install_subdir = "assets",
-    });
-    b.getInstallStep().dependOn(&install_runtime_assets.step);
-    b.step("asset-build", "Validate and build runtime assets from assets/asset_manifest.txt").dependOn(&run_asset_builder.step);
-
     // Texture atlas: every sprite in one image, packed at build time by tools/atlas/pack.c with
     // stb_rect_pack. The packer runs on the build machine, so it is built for the host, not the target.
     const atlas_tool = b.addExecutable(.{
@@ -290,11 +254,49 @@ pub fn build(b: *std.Build) void {
         pack.addArg(name);
         pack.addFileArg(b.path(file));
     }
-    // The game reads both files from the executable's folder, beside the assets it already installs.
-    const install_atlas_png = b.addInstallFile(atlas_png, "bin/assets/atlas.png");
+    // The game reads the packed-region index beside the runtime asset directory.
     const install_atlas_index = b.addInstallFile(atlas_index, "bin/assets/atlas.txt");
-    b.getInstallStep().dependOn(&install_atlas_png.step);
     b.getInstallStep().dependOn(&install_atlas_index.step);
+
+    // Validate, compress, and stage manifest assets plus the generated runtime atlas on the host.
+    const asset_builder = b.addExecutable(.{
+        .name = "asset_build",
+        .root_module = b.createModule(.{
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+        }),
+    });
+    asset_builder.root_module.addIncludePath(b.path("vendor"));
+    asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/build.c") });
+    asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
+    const run_asset_builder = b.addRunArtifact(asset_builder);
+    run_asset_builder.addFileArg(b.path("assets/asset_manifest.txt"));
+    const runtime_assets = run_asset_builder.addOutputDirectoryArg("runtime-assets");
+    run_asset_builder.addArg("--include-image");
+    run_asset_builder.addArg("atlas");
+    run_asset_builder.addFileArg(atlas_png);
+    run_asset_builder.addArg("atlas.png");
+    run_asset_builder.addArg("-");
+    var asset_lines = std.mem.tokenizeScalar(u8, asset_manifest, '\n');
+    while (asset_lines.next()) |line| {
+        if (std.mem.startsWith(u8, std.mem.trim(u8, line, " \t\r"), "#")) continue;
+        var fields = std.mem.tokenizeAny(u8, line, " \t\r");
+        _ = fields.next() orelse continue;
+        _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing type");
+        const source = fields.next() orelse @panic("assets/asset_manifest.txt: missing source path");
+        _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing output path");
+        _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing dependencies");
+        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected '<name> <type> <source> <output> <dependencies>' per line");
+        run_asset_builder.addFileInput(b.path(source));
+    }
+    const install_runtime_assets = b.addInstallDirectory(.{
+        .source_dir = runtime_assets,
+        .install_dir = .bin,
+        .install_subdir = "assets",
+    });
+    b.getInstallStep().dependOn(&install_runtime_assets.step);
+    b.step("asset-build", "Validate and build compressed runtime assets from the manifest").dependOn(&run_asset_builder.step);
 
     // Portable, opt-in image tool for removing a checkerboard background. Build it for the host
     // so it can be used during development even when the game is cross-compiled for another OS.
