@@ -201,7 +201,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Assets installed beside the executable and loaded through `SDL_GetBasePath`, so the game runs from any directory.
 
 **2D rendering**
-- Sprite batching: quads buffered per frame, one draw call per run of the same texture, alpha blending, tint, source rectangles, and no fixed sprite or texture-switch limit.
+- Sprite batching: quads buffered per frame as four vertices drawn through an index buffer, one draw call per run of the same texture, alpha blending, tint, source rectangles, and no fixed sprite or texture-switch limit.
 - Tile world rendering with view culling and a one-tile margin.
 - Camera follow with frame-rate-independent smoothing, edge clamping, pixel snapping, and centering when the world is smaller than the view.
 - Camera zoom from keys. Each press multiplies or divides the zoom by 1.25, and the camera eases to the new zoom in logarithmic steps. Zoom changes the view size, so the camera, culling, and mouse mapping work unchanged. Integer mode rounds the zoomed scale to a whole number.
@@ -244,7 +244,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Strings | `string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
 | Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, checked against `std.StringHashMap`. Missing: removal. |
 | Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. Missing: loading, caching, unloading. |
-| Sprites | `sprite.zig` | Functional | 60% | Batched quads and source rectangles. Storage grows with each frame. Missing: index buffer, rotation, flip, origin, alpha tint, z-order. |
+| Sprites | `sprite.zig` | Functional | 65% | Batched quads with four vertices each and a 32-bit index buffer, plus source rectangles. Storage grows with each frame. Missing: rotation, flip, origin, alpha tint, z-order. |
 | Camera | `camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
 | Animation | `animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
 | Level | `game/level.zig` | Early | 50% | Tile map drawn one layer at a time with culling, in ground, decoration, player, foreground order. Solid tiles block the player. No tile animation. |
@@ -298,7 +298,7 @@ These are the natural extension points. Each one reuses existing code.
 
 7. **Fixed: texture uploads blocked.** `Texture.initRgba8` used to wait for the GPU to go idle. It now queues the copy and returns. `Texture.isReady` reports when the copy finishes, and `SpriteBatch.draw` skips a texture until then, so a texture can be loaded at any time.
 
-8. **Fixed: sprite batches had hard limits.** `SpriteBatch` used to panic above 8192 sprites or 256 texture switches in one frame. Its vertex storage, batch list, and GPU buffers now double when they fill. The one ceiling left is SDL's 32-bit buffer size, about 25 million sprites in one frame.
+8. **Fixed: sprite batches had hard limits.** `SpriteBatch` used to panic above 8192 sprites or 256 texture switches in one frame. Its vertex storage, batch list, and GPU buffers now double when they fill. The one ceiling left is SDL's 32-bit buffer size, about 38 million sprites in one frame.
 
 9. **Fixed: the package file list omitted build inputs.** `.paths` in `build.zig.zon` now includes `shaders` and `vendor`, which the build needs. `assets` stays out, since the build doesn't read it.
 
@@ -330,7 +330,7 @@ These are the natural extension points. Each one reuses existing code.
 ### Phase 3: engine infrastructure
 
 - [ ] Texture atlas with packing at build time.
-- [ ] Index buffer for quads (4 vertices instead of 6). The vertex buffer already grows.
+- [x] Index buffer for quads (4 vertices instead of 6). The vertex and index buffers grow together.
 - [ ] Sprite flip, rotation, origin, per-sprite alpha, and z-order.
 - [ ] Entity system: an array of structs first, ECS later if the number of entity types requires it.
 - [ ] Asset manager with caching. Executable-relative paths already work.

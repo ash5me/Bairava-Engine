@@ -324,7 +324,7 @@ test "drawSprite keeps every sprite of a frame, past the old 8192 limit" {
         batch.drawSprite(&tex, quad, quad, .{ tint, tint, tint });
     }
     try std.testing.expectEqual(count, batch.sprite_count);
-    try std.testing.expectEqual(count * 6, batch.vertex_count);
+    try std.testing.expectEqual(count * 4, batch.vertex_count);
     const last_tint = @as(f32, @floatFromInt(count - 1)) / 10000.0;
     try std.testing.expectApproxEqAbs(last_tint, batch.vertices[batch.vertex_count - 1].color[0], 1e-6);
 }
@@ -348,10 +348,75 @@ test "drawSprite batches past the old 256 texture-switch limit" {
     try std.testing.expectEqual(@as(u32, 600), batch.batch_count);
     var b: u32 = 0;
     while (b < 600) : (b += 1) {
-        try std.testing.expectEqual(b * 6, batch.batches[b].first_vertex);
-        try std.testing.expectEqual(@as(u32, 6), batch.batches[b].vertex_count);
+        try std.testing.expectEqual(b * 4, batch.batches[b].first_vertex);
+        try std.testing.expectEqual(@as(u32, 4), batch.batches[b].vertex_count);
     }
     try std.testing.expect(batch.batches[599].texture == &tex_b);
+}
+
+/// Checks the six corners that the index buffer names for quad `q` against the texel rectangle the
+/// quad was drawn with. It follows the GPU's path: index buffer entry, then vertex, then UV. A quad
+/// whose indices name another quad's vertices fails here.
+fn expectQuadUvs(batch: *const sprite.SpriteBatch, q: usize, src: sprite.Rect, tex_w: f32, tex_h: f32) !void {
+    const u_left = src.x / tex_w;
+    const v_top = src.y / tex_h;
+    const u_right = (src.x + src.w) / tex_w;
+    const v_bottom = (src.y + src.h) / tex_h;
+    // Top-left, bottom-left, bottom-right, then top-left, bottom-right, top-right.
+    const expected = [6][2]f32{
+        .{ u_left, v_top }, .{ u_left, v_bottom }, .{ u_right, v_bottom },
+        .{ u_left, v_top }, .{ u_right, v_bottom }, .{ u_right, v_top },
+    };
+    for (expected, 0..) |uv, k| {
+        const corner = batch.vertices[sprite.indexValue(q, k)];
+        try std.testing.expectApproxEqAbs(uv[0], corner.uv[0], 1e-6);
+        try std.testing.expectApproxEqAbs(uv[1], corner.uv[1], 1e-6);
+    }
+}
+
+test "each quad's indices name its own four vertices, in a batch with many quads" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(48, 16);
+    const dst = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    // Three quads, each showing a different part of the texture, all in one batch.
+    batch.begin(320, 180);
+    var srcs: [3]sprite.Rect = undefined;
+    for (&srcs, 0..) |*src, q| {
+        src.* = .{ .x = @floatFromInt(q * 16), .y = 0, .w = 16, .h = 16 };
+        batch.drawSprite(&tex, src.*, dst, .{ 1, 1, 1 });
+    }
+    try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
+    for (srcs, 0..) |src, q| try expectQuadUvs(&batch, q, src, 48, 16);
+}
+
+test "quads in later batches name their own vertices too" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex_a = testTexture(48, 16);
+    const tex_b = testTexture(32, 32);
+    const dst = sprite.Rect{ .x = 0, .y = 0, .w = 8, .h = 8 };
+
+    // Alternating textures gives every quad its own batch, so each batch starts at a later vertex.
+    batch.begin(320, 180);
+    var srcs: [6]sprite.Rect = undefined;
+    var i: usize = 0;
+    while (i < 6) : (i += 1) {
+        const tex = if (i % 2 == 0) &tex_a else &tex_b;
+        srcs[i] = .{ .x = @floatFromInt(i * 8), .y = 0, .w = 8, .h = 8 };
+        batch.drawSprite(tex, srcs[i], dst, .{ 1, 1, 1 });
+    }
+    try std.testing.expectEqual(@as(u32, 6), batch.batch_count);
+    for (srcs, 0..) |src, q| {
+        const w: f32 = if (q % 2 == 0) 48 else 32;
+        const h: f32 = if (q % 2 == 0) 16 else 32;
+        try expectQuadUvs(&batch, q, src, w, h);
+    }
 }
 
 test "begin starts a new frame but keeps the storage a frame grew" {
@@ -366,7 +431,7 @@ test "begin starts a new frame but keeps the storage a frame grew" {
     var i: u32 = 0;
     while (i < 3000) : (i += 1) batch.drawSprite(&tex, quad, quad, .{ 1, 1, 1 });
     const grown = batch.vertices.len;
-    try std.testing.expect(grown >= 3000 * 6);
+    try std.testing.expect(grown >= 3000 * 4);
 
     // A new frame reuses the grown storage instead of shrinking and growing again.
     batch.begin(320, 180);

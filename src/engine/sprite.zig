@@ -25,7 +25,25 @@ pub const Rect = struct {
 /// texture-switch limit.
 const initial_sprites = 1024;
 const initial_batches = 64;
-const vertices_per_sprite = 6;
+/// A sprite is one quad: four vertices, drawn as two triangles through the index buffer.
+const vertices_per_quad = 4;
+const indices_per_quad = 6;
+/// Indices are 32-bit, so one batch can hold any number of quads. 16-bit indices would cap a batch
+/// at about 16 thousand.
+const index_size = @sizeOf(u32);
+
+/// The corners of one quad in the two triangles, as offsets into the quad's four vertices. drawSprite
+/// writes the corners top-left, bottom-left, bottom-right, top-right, so these triangles are the ones
+/// six separate vertices used to make.
+const quad_corner_order = [indices_per_quad]usize{ 0, 1, 2, 0, 2, 3 };
+
+/// The index the index buffer holds at position `k` of quad number `quad`. It is an absolute vertex
+/// number in the frame's vertex storage, so a draw needs no base vertex. Each quad needs its own
+/// numbers. A pattern shared by every quad would send a batch of many quads to the first quad's
+/// vertices.
+pub fn indexValue(quad: usize, k: usize) u32 {
+    return @intCast(quad * vertices_per_quad + quad_corner_order[k]);
+}
 
 /// The sprite shaders. build.zig compiles them and embeds the code under the `decl` names in its
 /// `shader_entries` table. The resource counts sit here, beside the pipeline that binds them.
@@ -44,8 +62,8 @@ const fragment_source = shader.Source{
     .resources = .{ .samplers = 1 },
 };
 
-/// Consecutive vertices that sample the same texture, drawn in one call. Public so tests can build
-/// a batch without a GPU.
+/// Consecutive quads that sample the same texture, drawn in one call. `first_vertex` and
+/// `vertex_count` count vertices. Public so tests can build a batch without a GPU.
 pub const Batch = struct {
     texture: *const Texture,
     first_vertex: u32,
@@ -58,6 +76,14 @@ pub const SpriteBatch = struct {
     vertex_buffer: *c.SDL_GPUBuffer,
     vb_binding: c.SDL_GPUBufferBinding,
     upload_buffer: *c.SDL_GPUTransferBuffer,
+    /// Holds one index per quad corner, sized to the GPU vertex capacity. It is written once per
+    /// creation, before the first draw that uses it (see `index_filled`).
+    index_buffer: *c.SDL_GPUBuffer = undefined,
+    ib_binding: c.SDL_GPUBufferBinding = undefined,
+    index_filled: bool = false,
+    /// Upload copy source for the index buffer. Kept until the index buffer is replaced, so the
+    /// copy that reads it is never raced by a release.
+    index_staging: ?*c.SDL_GPUTransferBuffer = null,
 
     /// CPU-side vertices for the current frame. Heap-allocated, and doubled when a frame needs more.
     vertices: []Vertex,
@@ -123,10 +149,12 @@ pub const SpriteBatch = struct {
             std.debug.panic("SDL_CreateGPUGraphicsPipeline failed: {s}", .{c.SDL_GetError()});
         };
 
-        // The GPU buffers start at the initial size and are replaced when a frame needs more.
-        const gpu_vertex_capacity = initial_sprites * vertices_per_sprite;
+        // The GPU buffers start at the initial size and are replaced when a frame needs more. The
+        // index buffer has one slot group of six indices for each quad the vertex buffer holds.
+        const gpu_vertex_capacity = initial_sprites * vertices_per_quad;
         const vertex_buffer = createVertexBuffer(device, gpu_vertex_capacity);
         const upload_buffer = createUploadBuffer(device, gpu_vertex_capacity);
+        const index_buffer = createIndexBuffer(device, gpu_vertex_capacity / vertices_per_quad);
 
         return .{
             .device = device,
@@ -134,6 +162,8 @@ pub const SpriteBatch = struct {
             .vertex_buffer = vertex_buffer,
             .vb_binding = .{ .buffer = vertex_buffer, .offset = 0 },
             .upload_buffer = upload_buffer,
+            .index_buffer = index_buffer,
+            .ib_binding = .{ .buffer = index_buffer, .offset = 0 },
             .vertices = allocVertices(gpu_vertex_capacity),
             .batches = allocBatches(initial_batches),
             .gpu_vertex_capacity = gpu_vertex_capacity,
@@ -156,7 +186,7 @@ pub const SpriteBatch = struct {
     /// Sprites draw in the order they're added.
     pub fn drawSprite(self: *SpriteBatch, texture: *const Texture, src: Rect, dst: Rect, tint: [3]f32) void {
         // Make room before writing. Storage doubles when it fills, so a frame has no sprite limit.
-        const needed_vertices = self.vertex_count + vertices_per_sprite;
+        const needed_vertices = self.vertex_count + vertices_per_quad;
         if (needed_vertices > self.vertices.len) self.growVertices(needed_vertices);
 
         // Start a new batch whenever the texture changes. Batches double too, so there is no switch limit.
@@ -169,7 +199,7 @@ pub const SpriteBatch = struct {
             };
             self.batch_count += 1;
         }
-        self.batches[self.batch_count - 1].vertex_count += vertices_per_sprite;
+        self.batches[self.batch_count - 1].vertex_count += vertices_per_quad;
 
         // Texel rectangle -> UV coordinates (0..1).
         // Names avoid u0/u1, which are Zig's unsigned integer type names.
@@ -191,15 +221,14 @@ pub const SpriteBatch = struct {
         const br = Vertex{ .pos = p_br, .uv = .{ u_right, v_bottom }, .color = tint };
         const bl = Vertex{ .pos = p_bl, .uv = .{ u_left, v_bottom }, .color = tint };
 
+        // Four corners per quad. The index buffer turns them into the two triangles.
         const start = self.vertex_count;
         self.vertices[start + 0] = tl;
         self.vertices[start + 1] = bl;
         self.vertices[start + 2] = br;
-        self.vertices[start + 3] = tl;
-        self.vertices[start + 4] = br;
-        self.vertices[start + 5] = tr;
+        self.vertices[start + 3] = tr;
 
-        self.vertex_count += vertices_per_sprite;
+        self.vertex_count += vertices_per_quad;
         self.sprite_count += 1;
     }
 
@@ -208,6 +237,7 @@ pub const SpriteBatch = struct {
     pub fn upload(self: *SpriteBatch, cmd: *c.SDL_GPUCommandBuffer) void {
         if (self.vertex_count == 0) return;
         if (self.vertex_count > self.gpu_vertex_capacity) self.growGpuBuffers(self.vertex_count);
+        if (!self.index_filled) self.fillIndexBuffer(cmd);
         const bytes = vertexBytes(self.vertex_count);
 
         // cycle = true lets SDL hand us a fresh buffer if the GPU is still reading the last one.
@@ -231,6 +261,7 @@ pub const SpriteBatch = struct {
 
         c.SDL_BindGPUGraphicsPipeline(pass, self.pipeline);
         c.SDL_BindGPUVertexBuffers(pass, 0, &self.vb_binding, 1);
+        c.SDL_BindGPUIndexBuffer(pass, &self.ib_binding, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
 
         for (self.batches[0..self.batch_count]) |batch| {
             // A texture whose upload is still running has nothing to sample yet. Skip its batch this
@@ -238,7 +269,11 @@ pub const SpriteBatch = struct {
             if (!batch.texture.isReady()) continue;
             const sampler = batch.texture.binding();
             c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
-            c.SDL_DrawGPUPrimitives(pass, batch.vertex_count, 1, batch.first_vertex, 0);
+            // The indices name absolute vertices, so the draw starts at this batch's first quad in the
+            // index buffer and uses no base vertex.
+            const first_quad = batch.first_vertex / vertices_per_quad;
+            const quads = batch.vertex_count / vertices_per_quad;
+            c.SDL_DrawGPUIndexedPrimitives(pass, quads * indices_per_quad, 1, first_quad * indices_per_quad, 0, 0);
             self.draw_calls += 1;
         }
     }
@@ -261,22 +296,69 @@ pub const SpriteBatch = struct {
         self.batches = bigger;
     }
 
-    /// Replaces the GPU vertex and upload buffers with ones that hold `needed` vertices. The old
-    /// buffers are released at once. SDL frees each one after the frames still using it finish, so
-    /// this doesn't wait for the GPU.
+    /// Replaces the GPU vertex, upload, and index buffers with ones that hold `needed` vertices. The
+    /// old buffers are released at once. SDL frees each one after the frames still using it finish,
+    /// so this doesn't wait for the GPU. The new index buffer is written by the next upload.
     fn growGpuBuffers(self: *SpriteBatch, needed: usize) void {
         const capacity = grownCapacity(self.gpu_vertex_capacity, needed);
         c.SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
         c.SDL_ReleaseGPUTransferBuffer(self.device, self.upload_buffer);
+        c.SDL_ReleaseGPUBuffer(self.device, self.index_buffer);
+        if (self.index_staging) |staging| c.SDL_ReleaseGPUTransferBuffer(self.device, staging);
+        self.index_staging = null;
         self.vertex_buffer = createVertexBuffer(self.device, capacity);
         self.upload_buffer = createUploadBuffer(self.device, capacity);
+        self.index_buffer = createIndexBuffer(self.device, capacity / vertices_per_quad);
         self.vb_binding = .{ .buffer = self.vertex_buffer, .offset = 0 };
+        self.ib_binding = .{ .buffer = self.index_buffer, .offset = 0 };
         self.gpu_vertex_capacity = capacity;
+        self.index_filled = false;
+    }
+
+    /// Writes the index of every quad corner into the whole index buffer. The indices name this
+    /// frame's vertices, so no draw needs a base vertex. The copy is recorded on `cmd`, so it runs
+    /// before this frame's draws. The contents depend only on the capacity, so this runs once per
+    /// creation.
+    fn fillIndexBuffer(self: *SpriteBatch, cmd: *c.SDL_GPUCommandBuffer) void {
+        const quads = self.gpu_vertex_capacity / vertices_per_quad;
+        const bytes = indexBytes(quads);
+
+        if (self.index_staging == null) {
+            var info = std.mem.zeroes(c.SDL_GPUTransferBufferCreateInfo);
+            info.usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+            info.size = bytes;
+            self.index_staging = c.SDL_CreateGPUTransferBuffer(self.device, &info) orelse {
+                std.debug.panic("SDL_CreateGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
+            };
+        }
+        const staging = self.index_staging.?;
+
+        const mapped = c.SDL_MapGPUTransferBuffer(self.device, staging, false) orelse {
+            std.debug.panic("SDL_MapGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
+        };
+        const dst: [*]u8 = @ptrCast(mapped);
+        for (0..quads) |quad| {
+            for (0..indices_per_quad) |k| {
+                const at = (quad * indices_per_quad + k) * index_size;
+                std.mem.writeInt(u32, dst[at .. at + index_size][0..index_size], indexValue(quad, k), .little);
+            }
+        }
+        c.SDL_UnmapGPUTransferBuffer(self.device, staging);
+
+        const copy_pass = c.SDL_BeginGPUCopyPass(cmd);
+        const src = c.SDL_GPUTransferBufferLocation{ .transfer_buffer = staging, .offset = 0 };
+        const region = c.SDL_GPUBufferRegion{ .buffer = self.index_buffer, .offset = 0, .size = bytes };
+        c.SDL_UploadToGPUBuffer(copy_pass, &src, &region, false);
+        c.SDL_EndGPUCopyPass(copy_pass);
+
+        self.index_filled = true;
     }
 
     /// Releases GPU resources. Call before the renderer is deinitialized.
     pub fn deinit(self: *SpriteBatch) void {
         c.SDL_ReleaseGPUTransferBuffer(self.device, self.upload_buffer);
+        if (self.index_staging) |staging| c.SDL_ReleaseGPUTransferBuffer(self.device, staging);
+        c.SDL_ReleaseGPUBuffer(self.device, self.index_buffer);
         c.SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
         c.SDL_ReleaseGPUGraphicsPipeline(self.device, self.pipeline);
         freeSlice(Vertex, self.vertices);
@@ -294,6 +376,16 @@ fn createVertexBuffer(device: *c.SDL_GPUDevice, vertex_count: usize) *c.SDL_GPUB
     };
 }
 
+/// Creates a GPU index buffer that holds the indices of `quad_count` quads.
+fn createIndexBuffer(device: *c.SDL_GPUDevice, quad_count: usize) *c.SDL_GPUBuffer {
+    var info = std.mem.zeroes(c.SDL_GPUBufferCreateInfo);
+    info.usage = c.SDL_GPU_BUFFERUSAGE_INDEX;
+    info.size = indexBytes(quad_count);
+    return c.SDL_CreateGPUBuffer(device, &info) orelse {
+        std.debug.panic("SDL_CreateGPUBuffer failed: {s}", .{c.SDL_GetError()});
+    };
+}
+
 /// Creates the staging buffer that the CPU writes a frame's vertices into.
 fn createUploadBuffer(device: *c.SDL_GPUDevice, vertex_count: usize) *c.SDL_GPUTransferBuffer {
     var info = std.mem.zeroes(c.SDL_GPUTransferBufferCreateInfo);
@@ -305,11 +397,20 @@ fn createUploadBuffer(device: *c.SDL_GPUDevice, vertex_count: usize) *c.SDL_GPUT
 }
 
 /// The byte size of `vertex_count` vertices. SDL takes buffer sizes as 32-bit integers, so this is
-/// the one ceiling left: about 25 million sprites in a single frame.
+/// the one ceiling left: about 38 million sprites in a single frame.
 fn vertexBytes(vertex_count: usize) u32 {
     const bytes = vertex_count * @sizeOf(Vertex);
     if (bytes > std.math.maxInt(u32)) {
         std.debug.panic("a frame of {d} vertices needs {d} bytes, more than SDL's 32-bit buffer size allows", .{ vertex_count, bytes });
+    }
+    return @intCast(bytes);
+}
+
+/// The byte size of the indices for `quad_count` quads. Each quad has six indices.
+fn indexBytes(quad_count: usize) u32 {
+    const bytes = quad_count * indices_per_quad * index_size;
+    if (bytes > std.math.maxInt(u32)) {
+        std.debug.panic("{d} quads need {d} index bytes, more than SDL's 32-bit buffer size allows", .{ quad_count, bytes });
     }
     return @intCast(bytes);
 }
