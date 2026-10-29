@@ -546,6 +546,10 @@ The engine is currently a 2D project, so prioritize textures, audio, and fonts r
 - [x] Move font processing toward build-time outputs and metadata so runtime loading can use preprocessed font assets where appropriate.
 - [x] Defer 3D model processing until the engine has a 3D rendering path and model-based content to support.
 
+### Phase 6: native and vector font processing
+
+- [ ] Extend SpriteFont processing and text rendering to support TTF/OTF inputs, including CFF outlines, configurable packed glyph atlases, dynamic glyph rasterization and caching, kerning, and SDF rendering for scalable text.
+
 ## Conventions
 
 - Units: world, camera, and sprite positions are in native pixels, and time is `f32` seconds.
