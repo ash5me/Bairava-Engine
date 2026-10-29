@@ -34,6 +34,8 @@ typedef struct ui_font {
 /* Bakes `count` codepoints from `first` out of TTF data at `pixel_height`. Returns 0 on success.
  * The atlas starts at 128 pixels and doubles until every glyph fits, up to 4096. */
 int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int first, int count, ui_font *font);
+/* Loads a generated BFNT v1 font atlas and metrics. The requested height must match the baked size. */
+int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_pixel_height, ui_font *font);
 void ui_font_destroy(ui_font *font);
 
 /* Width in pixels of the first `len` bytes of UTF-8 text. */

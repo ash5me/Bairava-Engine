@@ -258,13 +258,16 @@ fn positionIsValid(x: f32, y: f32, level: *const Level) bool {
 /// Reads and bakes the UI font onto the GPU. The font is a required asset, so a missing or unusable
 /// file panics and says why, the same way the atlas does.
 fn loadUiFont(ctx: *engine.Context) *engine.ui.Font {
-    const ttf = ctx.readFile(config.ui_font_path) catch |err| {
-        std.debug.panic("UI font '{s}' could not be read: {s}", .{ config.ui_font_path, @errorName(err) });
-    };
-    defer std.heap.page_allocator.free(ttf);
+    const prebaked_bytes = ctx.readFile(config.ui_font_preprocessed_path) catch null;
+    defer if (prebaked_bytes) |bytes| std.heap.page_allocator.free(bytes);
+    const ttf_bytes = ctx.readFile(config.ui_font_path) catch null;
+    defer if (ttf_bytes) |bytes| std.heap.page_allocator.free(bytes);
+    if (prebaked_bytes == null and ttf_bytes == null) std.debug.panic("UI font '{s}' and its preprocessed asset could not be read", .{config.ui_font_path});
+    const prebaked: []const u8 = prebaked_bytes orelse &.{};
+    const ttf: []const u8 = ttf_bytes orelse &.{};
 
     const font = std.heap.page_allocator.create(engine.ui.Font) catch @panic("out of memory");
-    font.* = engine.ui.Font.bake(ctx.device, ttf, config.ui_font_px) catch |err| {
+    font.* = engine.ui.Font.load(ctx.device, ttf, prebaked, config.ui_font_px) catch |err| {
         std.debug.panic("UI font '{s}' could not be baked: {s}", .{ config.ui_font_path, @errorName(err) });
     };
     return font;

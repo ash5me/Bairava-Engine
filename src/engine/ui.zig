@@ -1,6 +1,6 @@
 //! Text and widgets, bridged from the C code in src/engine/ui/. The C side builds quads in pixels,
-//! all sampling one font atlas. This file bakes the font onto the GPU and queues each quad as a
-//! sprite, so text and widgets draw through the same batch as everything else.
+//! all sampling one font atlas. This file loads preprocessed font assets when they match the
+//! requested size, falls back to baking TTF data, and queues each quad as a sprite.
 
 const sdl = @import("sdl.zig");
 const sprite = @import("sprite.zig");
@@ -21,8 +21,18 @@ pub const Font = struct {
     baked: c.ui_font,
     texture: Texture,
 
-    /// Bakes the TTF bytes at `pixel_height` pixels, then uploads the atlas. The bytes are only read
-    /// during this call, so the caller may free them afterward.
+    /// Loads a build-preprocessed font when present and baked at the requested size; otherwise it
+    /// bakes the supplied TTF data. Both inputs are only read during this call.
+    pub fn load(device: *sdl.c.SDL_GPUDevice, ttf: []const u8, prebaked: []const u8, pixel_height: f32) !Font {
+        if (prebaked.len > 0) {
+            var baked: c.ui_font = undefined;
+            if (c.ui_font_load_prebaked(prebaked.ptr, prebaked.len, pixel_height, &baked) == 0) return fromBaked(device, baked);
+        }
+        return bake(device, ttf, pixel_height);
+    }
+
+    /// Bakes TTF bytes at `pixel_height` pixels, then uploads the atlas. Use `load` when a matching
+    /// build-time font asset may be available.
     pub fn bake(device: *sdl.c.SDL_GPUDevice, ttf: []const u8, pixel_height: f32) !Font {
         const zone = profile.zoneNamed(@src(), "bake font");
         defer zone.End();
@@ -30,6 +40,10 @@ pub const Font = struct {
         if (c.ui_font_bake(ttf.ptr, ttf.len, pixel_height, first_codepoint, codepoint_count, &baked) != 0) {
             return error.BakeFailed;
         }
+        return fromBaked(device, baked);
+    }
+
+    fn fromBaked(device: *sdl.c.SDL_GPUDevice, baked: c.ui_font) Font {
         const w: u32 = @intCast(baked.atlas_w);
         const h: u32 = @intCast(baked.atlas_h);
         const pixels = baked.rgba[0 .. @as(usize, w) * @as(usize, h) * 4];

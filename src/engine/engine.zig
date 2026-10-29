@@ -377,12 +377,21 @@ pub fn run(comptime Game: type, config: Config) void {
     defer game.deinit();
     var last_mode = ctx.scale_mode;
 
-    // The debug overlay has its own font, read through the same asset rules as everything else.
-    const overlay_ttf = ctx.readFile(config.debug_font_path) catch |err| {
-        std.debug.panic("debug overlay font '{s}' could not be read: {s}", .{ config.debug_font_path, @errorName(err) });
+    // Prefer the build-preprocessed glyph atlas, while keeping TTF baking for alternate sizes.
+    var overlay_font_path_buf: [max_full_path]u8 = undefined;
+    const overlay_font_path = std.fmt.bufPrint(&overlay_font_path_buf, "{s}.bfnt", .{config.debug_font_path}) catch {
+        std.debug.panic("debug overlay font path '{s}' is too long", .{config.debug_font_path});
     };
-    defer std.heap.page_allocator.free(overlay_ttf);
-    var overlay = debug_overlay.Overlay.init(gpu.device, overlay_ttf, config.debug_font_px) catch |err| {
+    const overlay_prebaked_bytes = ctx.readFile(overlay_font_path) catch null;
+    defer if (overlay_prebaked_bytes) |bytes| std.heap.page_allocator.free(bytes);
+    const overlay_ttf_bytes = ctx.readFile(config.debug_font_path) catch null;
+    defer if (overlay_ttf_bytes) |bytes| std.heap.page_allocator.free(bytes);
+    if (overlay_prebaked_bytes == null and overlay_ttf_bytes == null) {
+        std.debug.panic("debug overlay font '{s}' and its preprocessed asset could not be read", .{config.debug_font_path});
+    }
+    const overlay_prebaked: []const u8 = overlay_prebaked_bytes orelse &.{};
+    const overlay_ttf: []const u8 = overlay_ttf_bytes orelse &.{};
+    var overlay = debug_overlay.Overlay.init(gpu.device, overlay_ttf, overlay_prebaked, config.debug_font_px) catch |err| {
         std.debug.panic("debug overlay font '{s}' could not be baked: {s}", .{ config.debug_font_path, @errorName(err) });
     };
     defer overlay.deinit();

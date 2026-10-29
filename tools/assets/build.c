@@ -8,6 +8,7 @@
  */
 
 #include "../../vendor/stb_image.h"
+#include "../../src/engine/ui/text.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -36,6 +37,9 @@ typedef struct {
     char source[FIELD_SIZE];
     char output[FIELD_SIZE];
     char dependencies[FIELD_SIZE];
+    float font_pixel_height;
+    int font_first;
+    int font_count;
 } entry;
 
 enum { TEX_RGBA8 = 0, TEX_BC1 = 1, TEX_BC3 = 2, TEX_ASTC_4X4 = 3 };
@@ -45,6 +49,11 @@ static void write_u32le(unsigned char *out, unsigned int value) {
     out[1] = (unsigned char)(value >> 8);
     out[2] = (unsigned char)(value >> 16);
     out[3] = (unsigned char)(value >> 24);
+}
+
+static void write_u16le(unsigned char *out, unsigned short value) {
+    out[0] = (unsigned char)value;
+    out[1] = (unsigned char)(value >> 8);
 }
 
 static int write_variant(const char *path, unsigned char format, unsigned int width, unsigned int height,
@@ -319,6 +328,72 @@ static int valid_kind(const entry *item) {
     return 1;
 }
 
+static int build_prebaked_font(const entry *item, const char *output_path) {
+    FILE *source = fopen(item->source, "rb");
+    if (source == NULL || fseek(source, 0, SEEK_END) != 0) {
+        if (source != NULL) fclose(source);
+        return 0;
+    }
+    long ttf_size = ftell(source);
+    if (ttf_size <= 0 || fseek(source, 0, SEEK_SET) != 0) { fclose(source); return 0; }
+    unsigned char *ttf = (unsigned char *)malloc((size_t)ttf_size);
+    if (ttf == NULL) { fclose(source); return 0; }
+    int read_ok = fread(ttf, 1, (size_t)ttf_size, source) == (size_t)ttf_size;
+    fclose(source);
+    if (!read_ok) { free(ttf); return 0; }
+
+    ui_font font;
+    if (ui_font_bake(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, &font) != 0) {
+        fprintf(stderr, "asset_build: could not bake font '%s' at %.2f px\n", item->name, item->font_pixel_height);
+        free(ttf);
+        return 0;
+    }
+    free(ttf);
+    unsigned int atlas_pixels = (unsigned int)font.atlas_w * (unsigned int)font.atlas_h;
+    char prebaked_path[FIELD_SIZE * 2];
+    if (snprintf(prebaked_path, sizeof prebaked_path, "%s.bfnt", output_path) >= (int)sizeof prebaked_path) {
+        ui_font_destroy(&font); return 0;
+    }
+    FILE *output = fopen(prebaked_path, "wb");
+    if (output == NULL) { ui_font_destroy(&font); return 0; }
+
+    unsigned char header[48] = {0};
+    memcpy(header, "BFNT", 4);
+    write_u16le(header + 4, 1);
+    write_u16le(header + 6, sizeof header);
+    unsigned int pixel_height_bits = 0;
+    memcpy(&pixel_height_bits, &font.pixel_height, sizeof pixel_height_bits);
+    write_u32le(header + 8, pixel_height_bits);
+    write_u32le(header + 12, (unsigned int)font.first);
+    write_u32le(header + 16, (unsigned int)font.count);
+    write_u32le(header + 20, (unsigned int)font.ascent);
+    write_u32le(header + 24, (unsigned int)font.line_height);
+    write_u32le(header + 28, (unsigned int)font.atlas_w);
+    write_u32le(header + 32, (unsigned int)font.atlas_h);
+    write_u32le(header + 36, atlas_pixels);
+    write_u16le(header + 40, (unsigned short)font.white.x);
+    write_u16le(header + 42, (unsigned short)font.white.y);
+    write_u16le(header + 44, (unsigned short)font.white.w);
+    write_u16le(header + 46, (unsigned short)font.white.h);
+
+    int ok = fwrite(header, 1, sizeof header, output) == sizeof header;
+    for (int i = 0; ok && i < font.count; i++) {
+        unsigned char glyph[20];
+        const ui_glyph *g = &font.glyphs[i];
+        write_u16le(glyph + 0, g->x0); write_u16le(glyph + 2, g->y0);
+        write_u16le(glyph + 4, g->x1); write_u16le(glyph + 6, g->y1);
+        unsigned int xoff_bits = 0, yoff_bits = 0, advance_bits = 0;
+        memcpy(&xoff_bits, &g->xoff, 4); memcpy(&yoff_bits, &g->yoff, 4); memcpy(&advance_bits, &g->xadvance, 4);
+        write_u32le(glyph + 8, xoff_bits); write_u32le(glyph + 12, yoff_bits); write_u32le(glyph + 16, advance_bits);
+        ok = fwrite(glyph, 1, sizeof glyph, output) == sizeof glyph;
+    }
+    for (unsigned int i = 0; ok && i < atlas_pixels; i++) ok = fwrite(&font.rgba[(size_t)i * 4 + 3], 1, 1, output) == 1;
+    if (fclose(output) != 0) ok = 0;
+    if (!ok) { fprintf(stderr, "asset_build: failed to write preprocessed font '%s'\n", prebaked_path); remove(prebaked_path); }
+    ui_font_destroy(&font);
+    return ok;
+}
+
 static int copy_file(const char *source, const char *destination) {
     FILE *input = fopen(source, "rb");
     if (input == NULL) {
@@ -502,9 +577,29 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         line_number++;
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
         entry item = {0};
-        char extra[2];
-        if (sscanf(line, "%1023s %31s %1023s %1023s %1023s %1s", item.name, item.type, item.source, item.output, item.dependencies, extra) != 5) {
-            fprintf(stderr, "asset_build: %s:%zu: expected five fields\n", manifest_path, line_number); failed = 1; break;
+        char font_height_text[32] = {0}, font_first_text[32] = {0}, font_count_text[32] = {0}, extra[2];
+        int fields = sscanf(line, "%1023s %31s %1023s %1023s %1023s %31s %31s %31s %1s",
+                            item.name, item.type, item.source, item.output, item.dependencies,
+                            font_height_text, font_first_text, font_count_text, extra);
+        if (fields < 5 || (strcmp(item.type, "font") == 0 ? fields != 8 : fields != 5)) {
+            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight for fonts\n", manifest_path, line_number); failed = 1; break;
+        }
+        if (strcmp(item.type, "font") == 0) {
+            char *end = NULL;
+            item.font_pixel_height = strtof(font_height_text, &end);
+            if (end == font_height_text || *end != '\0' || !(item.font_pixel_height > 0.0f && item.font_pixel_height <= 4096.0f)) {
+                fprintf(stderr, "asset_build: %s:%zu: invalid font pixel height\n", manifest_path, line_number); failed = 1; break;
+            }
+            long first = strtol(font_first_text, &end, 10);
+            if (end == font_first_text || *end != '\0' || first < 0 || first > 0x10ffff) {
+                fprintf(stderr, "asset_build: %s:%zu: invalid first font codepoint\n", manifest_path, line_number); failed = 1; break;
+            }
+            item.font_first = (int)first;
+            long glyph_count = strtol(font_count_text, &end, 10);
+            if (end == font_count_text || *end != '\0' || glyph_count <= 0 || glyph_count > 65536 || first + glyph_count > 0x110000) {
+                fprintf(stderr, "asset_build: %s:%zu: invalid font glyph count\n", manifest_path, line_number); failed = 1; break;
+            }
+            item.font_count = (int)glyph_count;
         }
         if (!safe_name(item.name) || !safe_relative_path(item.source) || !safe_relative_path(item.output) ||
             count == MAX_ENTRIES || !file_exists(item.source) || !valid_kind(&item)) {
@@ -580,11 +675,16 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         if (strcmp(entries[i].type, "audio") == 0) {
             if (snprintf(ima_path, sizeof ima_path, "%s.ima", destination) >= (int)sizeof ima_path || !encode_ima_wav(entries[i].source, ima_path)) { failed = 1; break; }
         }
+        char prebaked_font_path[FIELD_SIZE * 2] = {0};
+        if (strcmp(entries[i].type, "font") == 0) {
+            if (snprintf(prebaked_font_path, sizeof prebaked_font_path, "%s.bfnt", destination) >= (int)sizeof prebaked_font_path || !build_prebaked_font(&entries[i], destination)) { failed = 1; break; }
+        }
         const char *source_for_index = safe_relative_path(entries[i].source) ? entries[i].source : "generated";
         fprintf(index, "%s %s %s %s %s", entries[i].name, entries[i].type, entries[i].output, source_for_index, entries[i].dependencies);
         if (strcmp(entries[i].type, "image") == 0) fprintf(index, " %s.rgba %s.bc1 %s.bc3 %s", entries[i].output, entries[i].output, entries[i].output, astc_available ? entries[i].output : "-");
         if (strcmp(entries[i].type, "image") == 0 && astc_available) fprintf(index, ".astc");
         if (strcmp(entries[i].type, "audio") == 0) fprintf(index, " %s.ima", entries[i].output);
+        if (strcmp(entries[i].type, "font") == 0) fprintf(index, " %s.bfnt px=%.2f first=%d count=%d", entries[i].output, entries[i].font_pixel_height, entries[i].font_first, entries[i].font_count);
         fputc('\n', index);
     }
     if (fclose(index) != 0) failed = 1;

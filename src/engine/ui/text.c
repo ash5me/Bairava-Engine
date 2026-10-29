@@ -8,6 +8,7 @@
 #include "text.h"
 #include "stb_truetype.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -77,7 +78,9 @@ int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int f
     int asc, desc, gap, side, rows, i;
     float scale;
 
+    if (font == NULL) return -1;
     memset(font, 0, sizeof *font);
+    if (ttf == NULL) return -1;
     if (len < 12 || count <= 0 || pixel_height <= 0 || !stbtt_InitFont(&info, ttf, 0)) return -1;
     stbtt_GetFontVMetrics(&info, &asc, &desc, &gap);
     scale = stbtt_ScaleForPixelHeight(&info, pixel_height);
@@ -145,6 +148,90 @@ fail:
     free(rgba);
     free(font->glyphs);
     memset(font, 0, sizeof *font);
+    return -1;
+}
+
+static unsigned short read_u16le(const unsigned char *p) {
+    return (unsigned short)(p[0] | ((unsigned short)p[1] << 8));
+}
+
+static uint32_t read_u32le(const unsigned char *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static float read_f32le(const unsigned char *p) {
+    uint32_t bits = read_u32le(p);
+    float value;
+    memcpy(&value, &bits, sizeof value);
+    return value;
+}
+
+int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_pixel_height, ui_font *font) {
+    int first, count, atlas_w, atlas_h;
+    float pixel_height;
+    size_t pixels, glyph_offset, pixel_offset, expected_len;
+    unsigned char *rgba = NULL;
+    ui_glyph *glyphs = NULL;
+    if (font == NULL) return -1;
+    memset(font, 0, sizeof *font);
+    if (data == NULL) return -1;
+    if (len < 48 || memcmp(data, "BFNT", 4) != 0 || read_u16le(data + 4) != 1 || read_u16le(data + 6) != 48) return -1;
+    pixel_height = read_f32le(data + 8);
+    first = (int)(int32_t)read_u32le(data + 12);
+    count = (int)(int32_t)read_u32le(data + 16);
+    atlas_w = (int)read_u32le(data + 28);
+    atlas_h = (int)read_u32le(data + 32);
+    if (!(pixel_height > 0 && pixel_height == expected_pixel_height) || first < 0 || count <= 0 ||
+        (uint64_t)(unsigned int)first + (unsigned int)count > 0x110000u ||
+        atlas_w <= 0 || atlas_h <= 0 || atlas_w > ATLAS_MAX || atlas_h > ATLAS_MAX) return -1;
+    pixels = (size_t)atlas_w * (size_t)atlas_h;
+    if (read_u32le(data + 36) != pixels) return -1;
+    glyph_offset = 48;
+    if ((size_t)count > (SIZE_MAX - glyph_offset) / 20) return -1;
+    pixel_offset = glyph_offset + (size_t)count * 20;
+    if (pixels > SIZE_MAX - pixel_offset) return -1;
+    expected_len = pixel_offset + pixels;
+    if (len != expected_len) return -1;
+
+    glyphs = (ui_glyph *)calloc((size_t)count, sizeof *glyphs);
+    rgba = (unsigned char *)malloc(pixels * 4);
+    if (glyphs == NULL || rgba == NULL) goto fail;
+    for (int i = 0; i < count; i++) {
+        const unsigned char *src = data + glyph_offset + (size_t)i * 20;
+        ui_glyph *g = &glyphs[i];
+        g->x0 = read_u16le(src + 0); g->y0 = read_u16le(src + 2);
+        g->x1 = read_u16le(src + 4); g->y1 = read_u16le(src + 6);
+        g->xoff = read_f32le(src + 8); g->yoff = read_f32le(src + 12); g->xadvance = read_f32le(src + 16);
+        if (g->x0 > g->x1 || g->y0 > g->y1 || g->x1 > atlas_w || g->y1 > atlas_h ||
+            !(g->xoff == g->xoff && g->yoff == g->yoff && g->xadvance == g->xadvance) ||
+            g->xoff < -atlas_w || g->xoff > atlas_w || g->yoff < -atlas_h || g->yoff > atlas_h ||
+            g->xadvance < 0 || g->xadvance > atlas_w * 2) goto fail;
+    }
+    for (size_t i = 0; i < pixels; i++) {
+        rgba[i * 4 + 0] = 255;
+        rgba[i * 4 + 1] = 255;
+        rgba[i * 4 + 2] = 255;
+        rgba[i * 4 + 3] = data[pixel_offset + i];
+    }
+    font->first = first;
+    font->count = count;
+    font->pixel_height = pixel_height;
+    font->ascent = (int)(int32_t)read_u32le(data + 20);
+    font->line_height = (int)(int32_t)read_u32le(data + 24);
+    font->atlas_w = atlas_w;
+    font->atlas_h = atlas_h;
+    font->rgba = rgba;
+    font->glyphs = glyphs;
+    font->white = (ui_rect){ read_u16le(data + 40), read_u16le(data + 42), read_u16le(data + 44), read_u16le(data + 46) };
+    if (font->white.x < 0 || font->white.y < 0 || font->white.w <= 0 || font->white.h <= 0 ||
+        font->white.x + font->white.w > atlas_w || font->white.y + font->white.h > atlas_h || font->line_height <= 0) goto fail_font;
+    return 0;
+
+fail_font:
+    memset(font, 0, sizeof *font);
+fail:
+    free(rgba);
+    free(glyphs);
     return -1;
 }
 

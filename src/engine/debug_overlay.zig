@@ -1,6 +1,6 @@
 //! On-screen debug overlay: a frame-time graph and the frame's numbers, drawn into the native view
 //! above the game. The engine toggles it with F3. It replaces the stats that used to go in the
-//! window title. Its text uses a font of its own, baked from the path in `Config`.
+//! window title. Its text uses a font of its own, loaded from a preprocessed sidecar when available.
 
 const std = @import("std");
 
@@ -56,9 +56,9 @@ pub const Overlay = struct {
     history: frame_history.FrameHistory = .{},
     visible: bool = true,
 
-    /// Bakes the overlay font from TTF bytes at `pixel_height` pixels.
-    pub fn init(device: *sdl.c.SDL_GPUDevice, ttf: []const u8, pixel_height: f32) !Overlay {
-        var font = try ui.Font.bake(device, ttf, pixel_height);
+    /// Loads matching preprocessed font data when available, and otherwise bakes the TTF bytes.
+    pub fn init(device: *sdl.c.SDL_GPUDevice, ttf: []const u8, prebaked: []const u8, pixel_height: f32) !Overlay {
+        var font = try ui.Font.load(device, ttf, prebaked, pixel_height);
         const list = std.heap.page_allocator.create(ui.c.ui_quad_list) catch |err| {
             font.deinit();
             return err;

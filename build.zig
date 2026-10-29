@@ -268,8 +268,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
     asset_builder.root_module.addIncludePath(b.path("vendor"));
+    asset_builder.root_module.addIncludePath(b.path("src/engine/ui"));
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/build.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
+    asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
+    asset_builder.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/text.c") });
     const run_asset_builder = b.addRunArtifact(asset_builder);
     run_asset_builder.addFileArg(b.path("assets/asset_manifest.txt"));
     const runtime_assets = run_asset_builder.addOutputDirectoryArg("runtime-assets");
@@ -283,11 +286,16 @@ pub fn build(b: *std.Build) void {
         if (std.mem.startsWith(u8, std.mem.trim(u8, line, " \t\r"), "#")) continue;
         var fields = std.mem.tokenizeAny(u8, line, " \t\r");
         _ = fields.next() orelse continue;
-        _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing type");
+        const kind = fields.next() orelse @panic("assets/asset_manifest.txt: missing type");
         const source = fields.next() orelse @panic("assets/asset_manifest.txt: missing source path");
         _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing output path");
         _ = fields.next() orelse @panic("assets/asset_manifest.txt: missing dependencies");
-        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected '<name> <type> <source> <output> <dependencies>' per line");
+        if (std.mem.eql(u8, kind, "font")) {
+            _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs pixel height");
+            _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs first codepoint");
+            _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs glyph count");
+        }
+        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or font pixel height, first codepoint, and glyph count");
         run_asset_builder.addFileInput(b.path(source));
     }
     const install_runtime_assets = b.addInstallDirectory(.{

@@ -1,5 +1,5 @@
 /*
- * test_text.c: checks the baked atlas and the glyph quads that text produces.
+ * test_text.c: checks baked and preprocessed font data, plus the glyph quads text produces.
  *
  * Build and run from the project root, after fetching stb_truetype.h into vendor/:
  *   gcc -std=c99 -Wall -Wextra -fsanitize=address,undefined -Ivendor -Isrc/engine/ui \
@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int failures;
 
@@ -133,6 +134,98 @@ static unsigned char *read_file(const char *path, size_t *len) {
     return data;
 }
 
+static void put_u16le(unsigned char *p, unsigned short value) {
+    p[0] = (unsigned char)value;
+    p[1] = (unsigned char)(value >> 8);
+}
+
+static void put_u32le(unsigned char *p, unsigned int value) {
+    p[0] = (unsigned char)value;
+    p[1] = (unsigned char)(value >> 8);
+    p[2] = (unsigned char)(value >> 16);
+    p[3] = (unsigned char)(value >> 24);
+}
+
+static void expect_prebaked_rejected(const unsigned char *data, size_t len, float height) {
+    ui_font rejected;
+    memset(&rejected, 0xA5, sizeof rejected);
+    CHECK(ui_font_load_prebaked(data, len, height, &rejected) != 0);
+    CHECK(rejected.rgba == NULL && rejected.glyphs == NULL);
+    CHECK(rejected.count == 0 && rejected.atlas_w == 0);
+}
+
+static void check_prebaked_roundtrip(void) {
+    size_t pixels = (size_t)font.atlas_w * font.atlas_h;
+    size_t len = 48 + (size_t)font.count * 20 + pixels;
+    size_t pixel_offset = 48 + (size_t)font.count * 20;
+    unsigned char *data = calloc(len, 1);
+    ui_font loaded;
+    unsigned int bits;
+    CHECK(data != NULL);
+    if (data == NULL) return;
+
+    memcpy(data, "BFNT", 4);
+    put_u16le(data + 4, 1);
+    put_u16le(data + 6, 48);
+    memcpy(&bits, &font.pixel_height, sizeof bits); put_u32le(data + 8, bits);
+    put_u32le(data + 12, (unsigned int)font.first);
+    put_u32le(data + 16, (unsigned int)font.count);
+    put_u32le(data + 20, (unsigned int)font.ascent);
+    put_u32le(data + 24, (unsigned int)font.line_height);
+    put_u32le(data + 28, (unsigned int)font.atlas_w);
+    put_u32le(data + 32, (unsigned int)font.atlas_h);
+    put_u32le(data + 36, (unsigned int)pixels);
+    put_u16le(data + 40, (unsigned short)font.white.x);
+    put_u16le(data + 42, (unsigned short)font.white.y);
+    put_u16le(data + 44, (unsigned short)font.white.w);
+    put_u16le(data + 46, (unsigned short)font.white.h);
+    for (int i = 0; i < font.count; i++) {
+        unsigned char *dst = data + 48 + (size_t)i * 20;
+        const ui_glyph *g = &font.glyphs[i];
+        put_u16le(dst, g->x0);
+        put_u16le(dst + 2, g->y0); put_u16le(dst + 4, g->x1); put_u16le(dst + 6, g->y1);
+        memcpy(&bits, &g->xoff, sizeof bits); put_u32le(dst + 8, bits);
+        memcpy(&bits, &g->yoff, sizeof bits); put_u32le(dst + 12, bits);
+        memcpy(&bits, &g->xadvance, sizeof bits); put_u32le(dst + 16, bits);
+    }
+    for (size_t i = 0; i < pixels; i++) data[pixel_offset + i] = font.rgba[i * 4 + 3];
+
+    CHECK(ui_font_load_prebaked(data, len, font.pixel_height, &loaded) == 0);
+    if (loaded.rgba != NULL) {
+        CHECK(loaded.first == font.first && loaded.count == font.count);
+        CHECK(loaded.pixel_height == font.pixel_height && loaded.line_height == font.line_height);
+        CHECK(loaded.atlas_w == font.atlas_w && loaded.atlas_h == font.atlas_h);
+        CHECK(memcmp(loaded.rgba, font.rgba, pixels * 4) == 0);
+        CHECK(near(loaded.glyphs['a' - loaded.first].xadvance, glyph('a')->xadvance));
+        ui_font_destroy(&loaded);
+    }
+    expect_prebaked_rejected(data, len, font.pixel_height + 1); /* configured size mismatch */
+    expect_prebaked_rejected(data, len - 1, font.pixel_height); /* truncated atlas payload */
+    expect_prebaked_rejected(NULL, len, font.pixel_height);
+    CHECK(ui_font_load_prebaked(data, len, font.pixel_height, NULL) != 0);
+
+    data[0] = 'X';
+    expect_prebaked_rejected(data, len, font.pixel_height); /* bad magic */
+    data[0] = 'B';
+    data[4] = 2;
+    expect_prebaked_rejected(data, len, font.pixel_height); /* unsupported version */
+    data[4] = 1;
+    data[36] ^= 1;
+    expect_prebaked_rejected(data, len, font.pixel_height); /* inconsistent atlas pixel count */
+    data[36] ^= 1;
+
+    put_u16le(data + 48, 2); /* first glyph has x0 > x1 */
+    expect_prebaked_rejected(data, len, font.pixel_height);
+    put_u16le(data + 48, font.glyphs[0].x0);
+    data[48 + 8] = 0; data[48 + 9] = 0; data[48 + 10] = 128; data[48 + 11] = 127; /* infinite x offset */
+    expect_prebaked_rejected(data, len, font.pixel_height);
+    memcpy(&bits, &font.glyphs[0].xoff, sizeof bits); put_u32le(data + 48 + 8, bits);
+
+    put_u16le(data + 44, 0); /* empty solid-white sample rectangle */
+    expect_prebaked_rejected(data, len, font.pixel_height);
+    free(data);
+}
+
 int main(int argc, char **argv) {
     unsigned char *ttf;
     size_t len = 0;
@@ -155,6 +248,7 @@ int main(int argc, char **argv) {
     check_atlas();
     check_width();
     check_draw();
+    check_prebaked_roundtrip();
 
     free(ttf);
     ui_font_destroy(&font);
