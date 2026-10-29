@@ -9,7 +9,6 @@ zig-pkg
 /deps/
 /vendor/build/
 *.tmp
-/vendor/cglm/
 
 # CMake / native builds used by SDL3 or Slang (if built from source)
 build/

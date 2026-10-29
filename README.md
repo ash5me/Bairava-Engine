@@ -30,6 +30,7 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 - **For Metal:** build with `-Dmetal=true`; `slangc` must support its Metal target.
 - **A GPU backend supported by SDL3.** The default build provides SPIR-V and requests Vulkan 1.2. `-Ddxil=true` adds DXIL for Direct3D 12, and `-Dmetal=true` adds MSL for Metal.
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
+- **cglm 0.9.7** is vendored under `vendor/cglm/`, including the C sources and headers used by the build.
 - **`vendor/stb_rect_pack.h`, `vendor/stb_image_write.h`, and `vendor/stb_truetype.h`**. The build uses the first two to pack the texture atlas, and the game uses `stb_truetype.h` to bake fonts. All three are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h` and `stb_truetype.h`.
 - **Optional:** the cross-platform checkerboard keyer can be built through Zig; see [Asset keyer](#asset-keyer).
 - **Optional:** the Tracy profiler, version 0.14.1, to view profiling zones with `-Dtracy=true`. Get it from [wolfpld/tracy](https://github.com/wolfpld/tracy/releases/tag/v0.14.1). The game's Tracy client is built from source by `build.zig`, through ztracy, so only the viewer is separate. See Debugging.
