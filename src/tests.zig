@@ -19,6 +19,8 @@ test {
     _ = @import("engine/hash_map.zig");
     _ = @import("engine/assets.zig");
     _ = @import("engine/atlas.zig");
+    _ = @import("engine/vector.zig");
+    _ = @import("engine/entity.zig");
     _ = @import("engine/math.zig");
     _ = @import("engine/view.zig");
 }

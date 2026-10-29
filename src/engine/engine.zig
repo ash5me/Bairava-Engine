@@ -34,6 +34,10 @@ pub const hash_map = @import("hash_map.zig");
 pub const assets = @import("assets.zig");
 /// Texture atlas index: the rectangle of each sprite inside the atlas image.
 pub const atlas = @import("atlas.zig");
+/// Custom struct vectors in an array-of-structs or structure-of-arrays layout.
+pub const vector = @import("vector.zig");
+/// The entity world: component rows with generational handles, stored in a vector.
+pub const entity = @import("entity.zig");
 /// Tile maps: the map file format, layers, solid tiles, and box movement against them.
 pub const tilemap = @import("tilemap.zig");
 /// Sprite-sheet animation: clips that name a row of frames, and an animator that plays them.

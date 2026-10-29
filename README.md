@@ -99,6 +99,8 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── hash_map.zig       StringMap: open-addressing hash map keyed by Name
 │   │   ├── assets.zig         Asset Table: names to ids and validated paths
 │   │   ├── atlas.zig          Texture atlas index: the rectangle of each sprite in the atlas image
+│   │   ├── vector.zig         Custom struct vectors in AoS or SoA layout, with strided column views
+│   │   ├── entity.zig         Entity world: component rows, generational handles, swap-remove despawn
 │   │   └── tilemap.zig        Tile map format and parser, layers, solid tiles, box movement against tiles
 │   ├── game/                  Gameplay code. Uses the engine only through engine/engine.zig.
 │   │   ├── game.zig           Game state, asset loading, update and draw
@@ -264,7 +266,8 @@ These estimates are rough. They measure how close each area is to something usab
 | Build | `build.zig` | Functional | 60% | Builds SDL3, stb_image, cglm, embedded shaders (SPIR-V, and DXIL with `-Ddxil=true`), the texture atlas, the run step, and the test step. Installs `assets/` beside the executable. Missing: a Metal (MSL) shader target. |
 | Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
 | Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, camera, animation, input, and renderer. Missing: tests that open a window or create a GPU device. |
-| Entities | none | Not started | 0% | The player is a struct in `game/player.zig`. There is no entity list yet. |
+| Vector | `vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
+| Entities | `entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
 | Collision | none | Not started | 0% | |
 | Audio | none | Not started | 0% | |
 | UI and text | none | Not started | 0% | |
@@ -290,7 +293,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add a sprite.** Add a `.{ .name, .file }` row to `atlas_sprites` in `build.zig`. The next `zig build` packs it into the atlas. The name must follow the rules in `engine/string.zig`. In the game, look the sprite up once with `Game.atlas_index.find(name)` and keep the returned region. Draw it by offsetting the source rectangle by the region's position in the atlas, as `Level.drawLayer` and `Player.draw` do.
 
-**Add entities.** Store entities in an array of structs with a position, a velocity, and a sprite or animation. Update and draw them in the loop, subtracting the camera from world positions the same way `Player.draw` does. Once there are several entity types, consider the ECS approach from the roadmap.
+**Add entities.** Define the components as one struct with a field per component value, for example `const Body = struct { x: f32, vx: f32, id: u64 };`. Create a world with `var world = engine.entity.World(Body, .soa).init(allocator)`, choosing `.aos` or `.soa` as the layout (see `engine/vector.zig`). Spawn with `world.spawn(row)`, which returns a `Handle`. Keep the handle, not a row index, because despawning moves rows. A system loops over `0..world.count()` and reads a field with `world.rows.column("vx")`, which works the same under either layout. Under SoA, `world.rows.items("x")` gives a plain slice when a system needs one. Draw entities as `Player.draw` does, subtracting the camera from world positions.
 
 ## Known issues
 
@@ -342,7 +345,7 @@ These are the natural extension points. Each one reuses existing code.
 - [x] Texture atlas with packing at build time.
 - [x] Index buffer for quads (4 vertices instead of 6). The vertex and index buffers grow together.
 - [x] Sprite flip, rotation, origin, per-sprite alpha, and z-order, passed as `drawSprite` options.
-- [ ] Entity system: an array of structs first, ECS later if the number of entity types requires it.
+- [x] Entity system: AoS and SoA vectors under a handle-based world. The player is not migrated yet.
 - [ ] Asset manager with caching. Executable-relative paths already work.
 - [x] Asynchronous texture uploads.
 - [x] Shader embedding at build time.
@@ -369,7 +372,7 @@ These are the natural extension points. Each one reuses existing code.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
 - Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
-- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `atlas.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, and `animation.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
+- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `atlas.zig`, `vector.zig`, `entity.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, and `animation.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
