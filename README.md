@@ -525,8 +525,21 @@ These are the natural extension points. Each one reuses existing code.
 - [x] Compile shaders to MSL (Metal) and enable that device format, opt-in with `-Dmetal=true`.
 - [x] Linux and macOS native build coverage and continuous integration in `.github/workflows/ci.yml` (the workflow also covers Windows).
 - [x] Cross-platform checkerboard keyer replacing `key_checker.ps1` (`tools/assets/keyer.c`, `zig build asset-keyer`).
-- [ ] A level editor or import workflow.
-- [ ] Save and load.
+- [x] Sprite import workflow (`zig build asset-import`): validate, copy, and register an image for the atlas. It preserves the source format and does not transcode or compress assets.
+- [ ] Level editor and Tiled map import.
+- [x] Save and load with versioned Parson JSON; F5 saves and F9 loads.
+
+### Phase 5: build-time content pipeline
+
+MonoGame's MGCB is a useful comparison for the missing layer: it processes source content into runtime-ready assets. Bairava already compiles shaders, packs sprites into an atlas, and has a sprite importer, but these are separate tools. The importer copies and registers an image; it does not create platform-optimized texture or audio files. At runtime, images are decoded to RGBA8 and audio is loaded from WAV and converted to the active device format.
+
+The engine is currently a 2D project, so prioritize textures, audio, and fonts rather than 3D model conversion. Keep source assets editable, and make generated outputs reproducible from a content manifest and selected build target.
+
+- [ ] Add a general, manifest-driven asset build step that validates source assets, tracks dependencies, and emits runtime-ready outputs with a generated asset index.
+- [ ] Transcode and compress textures for supported GPU formats, including BC1/BC3 and ASTC where available. Keep an RGBA8 fallback and select an output the active SDL GPU device can load.
+- [ ] Convert or encode source audio into smaller runtime assets and load those formats through the audio system; retain WAV input for simple or uncompressed assets.
+- [ ] Move font processing toward build-time outputs and metadata so runtime loading can use preprocessed font assets where appropriate.
+- [ ] Defer 3D model processing until the engine has a 3D rendering path and model-based content to support.
 
 ## Conventions
 
