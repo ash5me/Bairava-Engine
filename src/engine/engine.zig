@@ -45,6 +45,9 @@ pub const tilemap = @import("tilemap.zig");
 pub const animation = @import("animation.zig");
 /// Sound output through SDL3 audio streams: the playback device, sounds, and voices.
 pub const audio = @import("audio.zig");
+
+/// Text and widgets: fonts baked with stb_truetype, and the IMGUI widgets in src/engine/ui/.
+pub const ui = @import("ui.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = logging;
 

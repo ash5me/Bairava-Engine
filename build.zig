@@ -198,6 +198,13 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addIncludePath(b.path("vendor"));
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
 
+    // Text and UI: stb_truetype bakes fonts from vendor/, and the C widget code in src/engine/ui/
+    // builds the quads that src/engine/ui.zig draws. None of it touches SDL or the GPU.
+    exe.root_module.addIncludePath(b.path("src/engine/ui"));
+    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/text.c") });
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
+
     // cglm: vector and matrix math. See addCglm above.
     addCglm(b, exe.root_module);
 

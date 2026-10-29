@@ -32,10 +32,18 @@ pub const Input = struct {
     pending_pressed: [key_count]bool = [_]bool{false} ** key_count,
     pending_released: [key_count]bool = [_]bool{false} ** key_count,
     pending_left_click: bool = false,
+    /// Left button edges gathered since the last `latch`.
+    pending_mouse_pressed: bool = false,
+    pending_mouse_released: bool = false,
     /// Events handed to the game by the latest `latch`. These are what the query methods report.
     pressed: [key_count]bool = [_]bool{false} ** key_count,
     released: [key_count]bool = [_]bool{false} ** key_count,
     left_clicked: bool = false,
+    /// The left button is held down, as of the latest event. Unlike the one-shot fields, this is live.
+    mouse_down: bool = false,
+    /// Left button edges handed to the game by the latest `latch`.
+    mouse_pressed: bool = false,
+    mouse_released: bool = false,
     mouse_x: f32 = 0,
     mouse_y: f32 = 0,
 
@@ -50,9 +58,13 @@ pub const Input = struct {
         self.pressed = self.pending_pressed;
         self.released = self.pending_released;
         self.left_clicked = self.pending_left_click;
+        self.mouse_pressed = self.pending_mouse_pressed;
+        self.mouse_released = self.pending_mouse_released;
         @memset(&self.pending_pressed, false);
         @memset(&self.pending_released, false);
         self.pending_left_click = false;
+        self.pending_mouse_pressed = false;
+        self.pending_mouse_released = false;
     }
 
     /// True while the key is held down, as of the latest event pump.
@@ -110,7 +122,17 @@ pub const Input = struct {
                 self.mouse_y = event.motion.y;
             },
             c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
-                if (event.button.button == c.SDL_BUTTON_LEFT) self.pending_left_click = true;
+                if (event.button.button == c.SDL_BUTTON_LEFT) {
+                    self.pending_left_click = true;
+                    self.pending_mouse_pressed = true;
+                    self.mouse_down = true;
+                }
+            },
+            c.SDL_EVENT_MOUSE_BUTTON_UP => {
+                if (event.button.button == c.SDL_BUTTON_LEFT) {
+                    self.pending_mouse_released = true;
+                    self.mouse_down = false;
+                }
             },
             else => {},
         }
@@ -353,4 +375,46 @@ test "other buttons and button releases do not count as a left click" {
     input.handleEvent(&left_up);
     input.latch();
     try std.testing.expect(!input.left_clicked);
+}
+
+test "a left press sets mouse_down at once, and reaches the update step after latch" {
+    const keys: KeyState = [_]bool{false} ** scancode_count;
+    var input = Input{ .keys = &keys };
+    const down = buttonEvent(c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_BUTTON_LEFT);
+    input.handleEvent(&down);
+    try std.testing.expect(input.mouse_down);
+    try std.testing.expect(!input.mouse_pressed);
+
+    input.latch();
+    try std.testing.expect(input.mouse_pressed);
+
+    // The next update step has no new events, so the press is gone, but the button is still held.
+    input.latch();
+    try std.testing.expect(!input.mouse_pressed);
+    try std.testing.expect(input.mouse_down);
+}
+
+test "a left release clears mouse_down and reaches the update step once" {
+    const keys: KeyState = [_]bool{false} ** scancode_count;
+    var input = Input{ .keys = &keys };
+    const down = buttonEvent(c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_BUTTON_LEFT);
+    const up = buttonEvent(c.SDL_EVENT_MOUSE_BUTTON_UP, c.SDL_BUTTON_LEFT);
+    input.handleEvent(&down);
+    input.latch();
+    input.handleEvent(&up);
+    try std.testing.expect(!input.mouse_down);
+    input.latch();
+    try std.testing.expect(input.mouse_released);
+    input.latch();
+    try std.testing.expect(!input.mouse_released);
+}
+
+test "other mouse buttons leave the left-button state alone" {
+    const keys: KeyState = [_]bool{false} ** scancode_count;
+    var input = Input{ .keys = &keys };
+    const right = buttonEvent(c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_BUTTON_RIGHT);
+    input.handleEvent(&right);
+    input.latch();
+    try std.testing.expect(!input.mouse_down);
+    try std.testing.expect(!input.mouse_pressed);
 }

@@ -29,7 +29,7 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 - **slangc**, the Slang shader compiler, on your `PATH`. Building the optional DXIL shaders (`-Ddxil=true`) also needs a `slangc` that can emit DXIL.
 - **A GPU driver with Vulkan support.** SPIR-V shaders are always built, so by default SDL selects a Vulkan backend, and the renderer requests Vulkan 1.2. Building with `-Ddxil=true` also embeds DXIL shaders and lets the device accept them, which is the route to Direct3D 12 (see Known issues).
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
-- **`vendor/stb_rect_pack.h` and `vendor/stb_image_write.h`**, used by the build to pack the texture atlas. Both are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h`.
+- **`vendor/stb_rect_pack.h`, `vendor/stb_image_write.h`, and `vendor/stb_truetype.h`**. The build uses the first two to pack the texture atlas, and the game uses `stb_truetype.h` to bake fonts. All three are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h` and `stb_truetype.h`.
 - **Optional:** Windows PowerShell with .NET's `System.Drawing`, for the asset script.
 
 ## Building and running
@@ -181,6 +181,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8 | Public domain or MIT |
 | stb_image_write | Vendored in `vendor/` | Writing `atlas.png` in the build's atlas packer | Public domain or MIT |
 | stb_rect_pack | Vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
+| stb_truetype | Vendored in `vendor/` | Baking TTF fonts into a glyph atlas (`src/engine/ui/text.c`) | Public domain or MIT |
 | cglm | 0.9.7, vendored in `vendor/cglm/`: headers, the 46 C sources its CMake lists, and its license | Vector and matrix math, the pixel projection, and transforms | MIT |
 | Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
