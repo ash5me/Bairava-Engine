@@ -9,6 +9,7 @@ The project is a prototype, not a production-ready engine. The core rendering an
 - Fixed-rate game updates with frame-interpolated drawing.
 - Nearest-neighbor pixel-art scaling, fit and integer scale modes, camera follow, zoom, and view/world coordinate conversion.
 - Batched sprites and a texture atlas generated during the build.
+- A cross-platform checkerboard-background keyer for source images (`zig build asset-keyer`).
 - A text tile-map format with ground, decoration, and foreground layers; tile collision and a spawn point.
 - Directional player animation and movement with sliding against solid tiles.
 - Keyboard and mouse input, configurable key bindings, and window settings.
@@ -104,6 +105,7 @@ src/game/                  Demo game, player, level, controls, and configuration
 src/tests.zig              Zig unit-test root
 tests/ui/                  Standalone C UI test harnesses
 tools/atlas/               Build-time texture-atlas packer
+tools/assets/              Cross-platform checkerboard keyer
 vendor/                    Third-party C headers/sources used by the build
 ```
 

@@ -31,7 +31,7 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 - **A GPU backend supported by SDL3.** The default build provides SPIR-V and requests Vulkan 1.2. `-Ddxil=true` adds DXIL for Direct3D 12, and `-Dmetal=true` adds MSL for Metal.
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
 - **`vendor/stb_rect_pack.h`, `vendor/stb_image_write.h`, and `vendor/stb_truetype.h`**. The build uses the first two to pack the texture atlas, and the game uses `stb_truetype.h` to bake fonts. All three are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h` and `stb_truetype.h`.
-- **Optional:** Windows PowerShell with .NET's `System.Drawing`, for the asset script.
+- **Optional:** the cross-platform checkerboard keyer can be built through Zig; see [Asset keyer](#asset-keyer).
 - **Optional:** the Tracy profiler, version 0.14.1, to view profiling zones with `-Dtracy=true`. Get it from [wolfpld/tracy](https://github.com/wolfpld/tracy/releases/tag/v0.14.1). The game's Tracy client is built from source by `build.zig`, through ztracy, so only the viewer is separate. See Debugging.
 
 ## Building and running
@@ -64,6 +64,16 @@ On Windows, name the outputs `test_imgui.exe` and `test_text.exe`, and run them 
 ## Continuous integration
 
 `.github/workflows/ci.yml` builds and runs the unit tests on GitHub-hosted Linux, macOS, and Windows runners. It installs the Zig version declared by `build.zig.zon` and Slang 2026.20. The macOS job also builds with `-Dmetal=true` to compile the Metal shaders.
+
+## Asset keyer
+
+`tools/assets/keyer.c` replaces the old Windows-only `scripts/key_checker.ps1`. Build and run it on Windows, Linux, or macOS with Zig:
+
+```sh
+zig build asset-keyer -- assets/warrior.png assets/warrior_keyed.png
+```
+
+The tool finds the two most common near-gray colors in its brightness range, then makes matching pixels transparent only when they connect to the image border. This keeps similarly colored pixels enclosed by the artwork. It reads image formats supported by stb_image and writes PNG. Pass an output path explicitly to preserve the source image. Use `zig build asset-keyer -- --help` for tolerance and brightness options.
 
 ## Debugging
 
@@ -195,8 +205,8 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 ├── shaders/
 │   └── default.slang          Sprite vertex and fragment shaders. Compiled once per target, and `-DDXIL_TARGET` selects the D3D12 sampler layout
 ├── tools/
-│   └── atlas/
-│       └── pack.c             Build-time texture atlas packer (stb_rect_pack). Writes atlas.png and atlas.txt
+│   ├── assets/keyer.c         Cross-platform checkerboard-background removal tool
+│   └── atlas/pack.c           Build-time texture atlas packer; writes atlas.png and atlas.txt
 ├── tests/
 │   └── ui/
 │       ├── test_imgui.c       Scripted-input checks for the widgets (C, see Building and running)
@@ -207,8 +217,6 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   ├── warrior_16x32.png      Sprite sheet, 5 columns × 4 rows of 16×32 cells, packed into the atlas at build time
 │   ├── font.ttf               UI font, TrueType. Not in the repo, so copy one in (Arial works). Loaded at startup, see config.zig
 │   └── maps/level1.txt        Level 1 tile map: layers of tile IDs, solid tiles, spawn cell
-├── scripts/
-│   └── key_checker.ps1        Windows tool that keys out a checkerboard background
 ├── vendor/                    log.c and log.h, rxi's logging library, for the log file; stb_image.h and stb_image_impl.c; stb_image_write.h and stb_rect_pack.h for the atlas packer; stb_truetype.h and stb_truetype_impl.c for fonts; cglm (headers, C sources, license) in vendor/cglm/
 └── .gitignore
 ```
@@ -274,7 +282,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
 | Direct3D 12 | System driver, selected by SDL_GPU | Optional GPU backend that runs the DXIL shaders | Driver, not bundled |
-| PowerShell and System.Drawing | Windows | `scripts/key_checker.ps1` | Windows built-in |
+| stb_image / stb_image_write | Vendored in `vendor/` | Cross-platform checkerboard keyer (`tools/assets/keyer.c`) and texture atlas packer | Public domain or MIT |
 
 ## Progress
 
@@ -336,7 +344,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 
 **Tooling**
 - `-Dgpu-debug`, `-Ddxil`, and `-Dtracy` build options.
-- `scripts/key_checker.ps1` is a legacy checkerboard-removal tool for the older character art. The current warrior runtime sheet is `assets/warrior_16x32.png`; `assets/warrior.png` is retained as the untouched source artwork.
+- `tools/assets/keyer.c` replaces the old PowerShell checkerboard-removal script. The current warrior runtime sheet is `assets/warrior_16x32.png`; the keyer requires separate input and output paths, so it leaves the source artwork in place.
 
 ### Module status
 
@@ -366,8 +374,8 @@ These estimates are rough. They measure how close each area is to something usab
 | Tile map | `engine/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |
 | Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. The left button's held, pressed, and released state is tracked for the UI. Clicks don't store a position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `src/tests.zig`. |
 | View mapping | `view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
-| Build | `build.zig`, `.github/workflows/ci.yml` | Functional | 70% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, optional DXIL and MSL), the texture atlas, the run step, and the test step. CI builds and tests on Linux, macOS, and Windows. |
-| Assets | `scripts/key_checker.ps1` | One-off tool | 15% | Windows only, one hardcoded file pair. Not an asset pipeline. |
+| Build | `build.zig`, `.github/workflows/ci.yml` | Functional | 70% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, optional DXIL and MSL), the texture atlas, the asset keyer, run step, and test step. CI builds and tests on Linux, macOS, and Windows. |
+| Assets | `tools/assets/keyer.c` | Utility | 30% | Cross-platform checkerboard keyer with configurable color thresholds, connected-border flood fill, and PNG output. It replaces the old one-off PowerShell script; it is not a general asset pipeline. |
 | Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, math, view, tile map, camera, animation, input, shader format selection, and renderer. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). Missing: tests that open a window or create a GPU device. |
 | Vector | `vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
 | Entities | `entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
@@ -470,7 +478,7 @@ These are the natural extension points. Each one reuses existing code.
 - [x] Compile shaders to DXIL (Direct3D 12) alongside SPIR-V, opt-in with `-Ddxil=true`, and enable that device format.
 - [x] Compile shaders to MSL (Metal) and enable that device format, opt-in with `-Dmetal=true`.
 - [x] Linux and macOS native build coverage and continuous integration in `.github/workflows/ci.yml` (the workflow also covers Windows).
-- [ ] A cross-platform asset tool to replace `key_checker.ps1`.
+- [x] Cross-platform checkerboard keyer replacing `key_checker.ps1` (`tools/assets/keyer.c`, `zig build asset-keyer`).
 - [ ] A level editor or import workflow.
 - [ ] Save and load.
 

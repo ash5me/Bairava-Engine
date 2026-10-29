@@ -271,6 +271,23 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_atlas_png.step);
     b.getInstallStep().dependOn(&install_atlas_index.step);
 
+    // Portable, opt-in image tool for removing a checkerboard background. Build it for the host
+    // so it can be used during development even when the game is cross-compiled for another OS.
+    const asset_keyer = b.addExecutable(.{
+        .name = "asset_keyer",
+        .root_module = b.createModule(.{
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+        }),
+    });
+    asset_keyer.root_module.addIncludePath(b.path("vendor"));
+    asset_keyer.root_module.addCSourceFile(.{ .file = b.path("tools/assets/keyer.c") });
+    asset_keyer.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
+    const run_asset_keyer = b.addRunArtifact(asset_keyer);
+    if (b.args) |args| run_asset_keyer.addArgs(args);
+    b.step("asset-keyer", "Remove a checkerboard background from an image").dependOn(&run_asset_keyer.step);
+
     // Compile each shader entry point for each target, and embed the results in the executable
     // through a generated module, so the game reads no shader files at runtime. DXIL and MSL are
     // optional build targets; Vulkan SPIR-V is always present.

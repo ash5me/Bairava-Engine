@@ -81,6 +81,9 @@ jobs:
       - name: Build
         run: zig build
 
+      - name: Build and launch the asset keyer CLI
+        run: zig build asset-keyer -- --help
+
       - name: Build Metal shaders on macOS
         if: runner.os == 'macOS'
         run: zig build -Dmetal=true
