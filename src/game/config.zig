@@ -46,3 +46,6 @@ pub const level_path = "assets/maps/level1.txt";
 /// pixels. The UI is drawn at native resolution, so 10 keeps it legible at the 320x180 view.
 pub const ui_font_path = "assets/font.ttf";
 pub const ui_font_px: f32 = 10;
+
+/// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.
+pub const log_file_name: ?[:0]const u8 = "Semkootru.log";

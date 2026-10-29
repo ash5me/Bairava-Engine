@@ -4,6 +4,7 @@
 
 const sdl = @import("sdl.zig");
 const sprite = @import("sprite.zig");
+const profile = @import("profile.zig");
 const Texture = @import("texture.zig").Texture;
 
 pub const c = @cImport({
@@ -23,6 +24,8 @@ pub const Font = struct {
     /// Bakes the TTF bytes at `pixel_height` pixels, then uploads the atlas. The bytes are only read
     /// during this call, so the caller may free them afterward.
     pub fn bake(device: *sdl.c.SDL_GPUDevice, ttf: []const u8, pixel_height: f32) !Font {
+        const zone = profile.zoneNamed(@src(), "bake font");
+        defer zone.End();
         var baked: c.ui_font = undefined;
         if (c.ui_font_bake(ttf.ptr, ttf.len, pixel_height, first_codepoint, codepoint_count, &baked) != 0) {
             return error.BakeFailed;

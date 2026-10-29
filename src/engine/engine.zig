@@ -51,6 +51,8 @@ pub const audio = @import("audio.zig");
 pub const ui = @import("ui.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = logging;
+/// Profiling zones for the Tracy profiler. They record only when the build uses -Dtracy=true.
+pub const profile = @import("profile.zig");
 
 /// How the native view is fitted to the window. See `view.chooseFit`.
 pub const ScaleMode = view.ScaleMode;
@@ -82,6 +84,9 @@ pub const Config = struct {
     /// height in native pixels.
     debug_font_path: []const u8,
     debug_font_px: f32,
+    /// Name of the log file, written beside the executable. Each run replaces the file from the
+    /// last run. Null logs to the terminal only.
+    log_file: ?[:0]const u8 = null,
 };
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
@@ -134,6 +139,8 @@ pub const Context = struct {
     /// Loads an image and uploads it as a texture. `relative` is relative to the executable's
     /// folder, where the build installs the assets. Panics if the file is missing or can't be decoded.
     pub fn loadTexture(self: *const Context, relative: []const u8) Texture {
+        const zone = profile.zoneNamed(@src(), "load texture");
+        defer zone.End();
         var buf: [max_full_path]u8 = undefined;
         const path = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ self.base_path, relative }) catch {
             std.debug.panic("asset path '{s}' is longer than {d} bytes", .{ relative, max_full_path });
@@ -198,6 +205,27 @@ const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 pub fn run(comptime Game: type, config: Config) void {
+    // The executable's folder comes first, so the log file can sit beside the executable. SDL3 owns
+    // the returned string until SDL_Quit, so it stays valid for the run.
+    const base_c = c.SDL_GetBasePath();
+    if (base_c == null) std.debug.panic("SDL_GetBasePath failed: {s}", .{c.SDL_GetError()});
+    const base_path = std.mem.span(base_c);
+
+    // The log file opens before anything else logs, so startup messages and startup failures are kept.
+    if (config.log_file) |name| {
+        var path_buf: [max_full_path]u8 = undefined;
+        const path = std.fmt.bufPrintZ(&path_buf, "{s}{s}", .{ base_path, name }) catch {
+            std.debug.panic("log file path is longer than {d} bytes", .{max_full_path});
+        };
+        if (logging.openFile(path)) {
+            elog.info("log file {s}", .{path});
+        } else {
+            elog.warn("could not open log file {s}, so logs go to the terminal only", .{path});
+        }
+    }
+    defer logging.closeFile();
+    elog.info("profiling zones {s}", .{if (profile.enabled) "on (Tracy)" else "off"});
+
     logging.assert(config.update_hz > 0, @src(), "update rate must be positive, got {d}", .{config.update_hz});
     logging.assert(config.zoom_min > 0 and config.zoom_min <= 1.0 and config.zoom_max >= 1.0, @src(), "zoom bounds {d} to {d} must be positive and include 1", .{ config.zoom_min, config.zoom_max });
     const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
@@ -249,11 +277,6 @@ pub fn run(comptime Game: type, config: Config) void {
     // The game sets the world size every frame, so the camera starts without one.
     var cam = Camera{ .view_w = native_wf, .view_h = native_hf, .world_w = 0, .world_h = 0 };
 
-    // Find the executable's folder once. SDL3 owns the returned string, so it stays valid for the run.
-    const base_c = c.SDL_GetBasePath();
-    if (base_c == null) std.debug.panic("SDL_GetBasePath failed: {s}", .{c.SDL_GetError()});
-    const base_path = std.mem.span(base_c);
-
     // Before the first frame is drawn, assume the view fills the window at its native size.
     var ctx = Context{
         .device = gpu.device,
@@ -286,6 +309,11 @@ pub fn run(comptime Game: type, config: Config) void {
     var last_draw_calls: u32 = 0;
 
     while (ctx.running) {
+        // Each Tracy frame runs from one mark to the next, so idle frames show in the profile too.
+        profile.frameMark();
+        const frame_zone = profile.zoneNamed(@src(), "frame");
+        defer frame_zone.End();
+
         // Frame timing: seconds since the last frame, capped at max_dt.
         const now_ns = c.SDL_GetTicksNS();
         // The overlay graphs the raw time, so a long stall shows in full. The update loop uses the capped time.
@@ -297,19 +325,23 @@ pub fn run(comptime Game: type, config: Config) void {
         // Events: quit requests, F11 fullscreen, F3 overlay, and key and mouse state. Presses and clicks wait
         // in Input until an update step takes them.
         var event: c.SDL_Event = undefined;
-        while (c.SDL_PollEvent(&event)) {
-            if (event.type == c.SDL_EVENT_QUIT) {
-                elog.info("quit requested by the window", .{});
-                ctx.running = false;
+        {
+            const zone = profile.zoneNamed(@src(), "events");
+            defer zone.End();
+            while (c.SDL_PollEvent(&event)) {
+                if (event.type == c.SDL_EVENT_QUIT) {
+                    elog.info("quit requested by the window", .{});
+                    ctx.running = false;
+                }
+                if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F11 and !event.key.repeat) {
+                    const fullscreen = (c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_FULLSCREEN) != 0;
+                    _ = c.SDL_SetWindowFullscreen(window, !fullscreen);
+                }
+                if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F3 and !event.key.repeat) {
+                    overlay.toggle();
+                }
+                input_state.handleEvent(&event);
             }
-            if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F11 and !event.key.repeat) {
-                const fullscreen = (c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_FULLSCREEN) != 0;
-                _ = c.SDL_SetWindowFullscreen(window, !fullscreen);
-            }
-            if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F3 and !event.key.repeat) {
-                overlay.toggle();
-            }
-            input_state.handleEvent(&event);
         }
 
         // Fixed-timestep updates. Run whole steps while the accumulated time covers one, so game
@@ -319,7 +351,11 @@ pub fn run(comptime Game: type, config: Config) void {
         while (accumulator >= fixed_dt and ctx.running) {
             input_state.latch();
             ctx.dt = fixed_dt;
-            game.update(&ctx);
+            {
+                const zone = profile.zoneNamed(@src(), "update");
+                defer zone.End();
+                game.update(&ctx);
+            }
             accumulator -= fixed_dt;
             steps += 1;
         }
@@ -328,7 +364,11 @@ pub fn run(comptime Game: type, config: Config) void {
         }
         // Free finished voices and keep looping voices fed. Once per frame is enough, because a
         // looping voice queues a full copy of its sound ahead of time.
-        audio_out.update();
+        {
+            const zone = profile.zoneNamed(@src(), "audio");
+            defer zone.End();
+            audio_out.update();
+        }
         if (ctx.scale_mode != last_mode) {
             elog.info("scale mode: {s}", .{@tagName(ctx.scale_mode)});
             last_mode = ctx.scale_mode;
@@ -366,6 +406,8 @@ pub fn run(comptime Game: type, config: Config) void {
         logging.assert(view_w >= 1 and view_h >= 1, @src(), "view {d}x{d} is empty", .{ view_w, view_h });
 
         if (target.width != view_w or target.height != view_h) {
+            const zone = profile.zoneNamed(@src(), "rebuild target");
+            defer zone.End();
             // Wait first, because the old target may still be in use by the GPU.
             _ = c.SDL_WaitForGPUIdle(gpu.device);
             target.deinit();
@@ -393,7 +435,11 @@ pub fn run(comptime Game: type, config: Config) void {
             .alpha = alpha,
             .dt = frame_dt,
         };
-        game.draw(&draw_ctx);
+        {
+            const zone = profile.zoneNamed(@src(), "game draw");
+            defer zone.End();
+            game.draw(&draw_ctx);
+        }
         // The overlay goes above the game in the same native view. Its draw-call count is from the
         // last frame, since this frame's batches are not drawn until below.
         overlay.draw(&world_batch, view_wf, .{
@@ -412,34 +458,38 @@ pub fn run(comptime Game: type, config: Config) void {
 
         // Pass 2: stretch the target onto the window. Fit mode covers the whole window. Integer
         // mode covers a centered whole-number multiple of the view, and the edges stay black.
-        var dst_rect = Rect{ .x = 0, .y = 0, .w = win_wf, .h = win_hf };
-        if (fit.pixel_perfect) {
-            const content_w = view_wf * fit.scale;
-            const content_h = view_hf * fit.scale;
-            dst_rect = Rect{
-                .x = @floor((win_wf - content_w) / 2.0),
-                .y = @floor((win_hf - content_h) / 2.0),
-                .w = content_w,
-                .h = content_h,
+        {
+            const zone = profile.zoneNamed(@src(), "present");
+            defer zone.End();
+            var dst_rect = Rect{ .x = 0, .y = 0, .w = win_wf, .h = win_hf };
+            if (fit.pixel_perfect) {
+                const content_w = view_wf * fit.scale;
+                const content_h = view_hf * fit.scale;
+                dst_rect = Rect{
+                    .x = @floor((win_wf - content_w) / 2.0),
+                    .y = @floor((win_hf - content_h) / 2.0),
+                    .w = content_w,
+                    .h = content_h,
+                };
+            }
+            // Record where the view landed, so the next update maps mouse positions with the same rectangle.
+            ctx.layout = .{
+                .pixel_density = c.SDL_GetWindowPixelDensity(window),
+                .dst_x = dst_rect.x,
+                .dst_y = dst_rect.y,
+                .dst_w = dst_rect.w,
+                .dst_h = dst_rect.h,
+                .view_w = view_wf,
+                .view_h = view_hf,
             };
+            const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
+            screen_batch.begin(win_wf, win_hf);
+            screen_batch.drawSprite(&target, view_rect, dst_rect, .{});
+            screen_batch.upload(frame.cmd);
+            const screen_pass = Renderer.beginPass(frame.cmd, frame.swapchain, black);
+            screen_batch.draw(screen_pass);
+            Renderer.endPass(screen_pass);
         }
-        // Record where the view landed, so the next update maps mouse positions with the same rectangle.
-        ctx.layout = .{
-            .pixel_density = c.SDL_GetWindowPixelDensity(window),
-            .dst_x = dst_rect.x,
-            .dst_y = dst_rect.y,
-            .dst_w = dst_rect.w,
-            .dst_h = dst_rect.h,
-            .view_w = view_wf,
-            .view_h = view_hf,
-        };
-        const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
-        screen_batch.begin(win_wf, win_hf);
-        screen_batch.drawSprite(&target, view_rect, dst_rect, .{});
-        screen_batch.upload(frame.cmd);
-        const screen_pass = Renderer.beginPass(frame.cmd, frame.swapchain, black);
-        screen_batch.draw(screen_pass);
-        Renderer.endPass(screen_pass);
 
         Renderer.endFrame(frame);
 

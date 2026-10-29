@@ -5,6 +5,7 @@ const math = @import("math.zig");
 const shader = @import("shader.zig");
 const embedded = @import("embedded_shaders");
 const Texture = @import("texture.zig").Texture;
+const profile = @import("profile.zig");
 
 /// Vertex layout for sprite quads. Positions are in normalized device coordinates. Color is RGBA:
 /// the tint in RGB, and the sprite's alpha in A.
@@ -236,6 +237,8 @@ pub const SpriteBatch = struct {
     /// Puts this frame's sprites in draw order, and writes their vertices and texture runs. `upload`
     /// calls this, and so do tests, which have no GPU. It rebuilds the same result if it runs again.
     pub fn prepare(self: *SpriteBatch) void {
+        const zone = profile.zoneNamed(@src(), "sprite prepare");
+        defer zone.End();
         const queued = self.quads[0..self.sprite_count];
         if (!inZOrder(queued)) heapSort(queued);
 
@@ -266,6 +269,8 @@ pub const SpriteBatch = struct {
     /// Copies this frame's vertices to the GPU. Call before beginPass, since the copy
     /// has to happen outside a render pass.
     pub fn upload(self: *SpriteBatch, cmd: *c.SDL_GPUCommandBuffer) void {
+        const zone = profile.zoneNamed(@src(), "sprite upload");
+        defer zone.End();
         self.prepare();
         if (self.vertex_count == 0) return;
         if (self.vertex_count > self.gpu_vertex_capacity) self.growGpuBuffers(self.vertex_count);
@@ -289,6 +294,8 @@ pub const SpriteBatch = struct {
 
     /// Records one draw call per batch. Call inside a render pass, after upload().
     pub fn draw(self: *SpriteBatch, pass: ?*c.SDL_GPURenderPass) void {
+        const zone = profile.zoneNamed(@src(), "sprite draw");
+        defer zone.End();
         if (self.batch_count == 0) return;
 
         c.SDL_BindGPUGraphicsPipeline(pass, self.pipeline);

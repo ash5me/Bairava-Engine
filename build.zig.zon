@@ -36,6 +36,10 @@
             .url = "git+https://codeberg.org/brodo/SDL.git#95a338c07505cf35580a8c786e1fca0367a1b9d1",
             .hash = "sdl-0.4.0+3.4.2-SDL--iEpAgD_8zjY9OaeW6F21dX_Fi1zvuZvs5xAWfLt",
         },
+        .ztracy = .{
+            .url = "git+https://github.com/zig-gamedev/ztracy#2d06ebe148f6d8e68a060123c5d64064b032db43",
+            .hash = "ztracy-0.14.0-dev-zHJSq-r5GwBAkYF_zObYWu72FoSnDpkx5QCQh6GYMXNH",
+        },
     },
     .paths = .{
         "build.zig",

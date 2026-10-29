@@ -55,6 +55,8 @@ pub const Level = struct {
         cam: *const engine.Camera,
         layer: engine.tilemap.Layer,
     ) void {
+        const zone = engine.profile.zoneNamed(@src(), "draw layer");
+        defer zone.End();
         const across = tilesAcross(tileset);
         // One extra tile on each side, so edge tiles never pop in while scrolling.
         const first_col = clampIndex(@floor(cam.x / tile_px) - 1, self.map.cols);

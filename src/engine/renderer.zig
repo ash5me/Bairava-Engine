@@ -3,6 +3,7 @@ const std = @import("std");
 const embedded = @import("embedded_shaders");
 
 const c = @import("sdl.zig").c;
+const profile = @import("profile.zig");
 
 /// A frame in progress: the command buffer and the swapchain texture it draws to.
 pub const Frame = struct {
@@ -62,6 +63,8 @@ pub const Renderer = struct {
     /// Acquires a command buffer and the swapchain texture.
     /// Returns null when the frame should be skipped, such as while the window is minimized.
     pub fn beginFrame(self: *Renderer) ?Frame {
+        const zone = profile.zoneNamed(@src(), "acquire frame");
+        defer zone.End();
         const cmd = c.SDL_AcquireGPUCommandBuffer(self.device) orelse return null;
 
         var swapchain: ?*c.SDL_GPUTexture = null;
@@ -89,6 +92,8 @@ pub const Renderer = struct {
 
     /// Submits the frame's commands to the GPU.
     pub fn endFrame(frame: Frame) void {
+        const zone = profile.zoneNamed(@src(), "submit frame");
+        defer zone.End();
         _ = c.SDL_SubmitGPUCommandBuffer(frame.cmd);
     }
 

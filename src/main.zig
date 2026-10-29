@@ -1,8 +1,19 @@
 //! Entry point. Hands the game to the engine. Gameplay changes belong in src/game/.
 
+const std = @import("std");
+
 const engine = @import("engine/engine.zig");
 const config = @import("game/config.zig");
 const Game = @import("game/game.zig").Game;
+
+/// Panics are recorded in the log file before Zig prints them, so a crash leaves its reason behind.
+/// Zig's default handler then prints the message and a stack trace to the terminal and aborts.
+pub const panic = std.debug.FullPanic(panicWithLog);
+
+fn panicWithLog(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    engine.log.recordPanic(msg);
+    std.debug.defaultPanic(msg, first_trace_addr);
+}
 
 pub fn main() void {
     engine.run(Game, .{
@@ -19,5 +30,6 @@ pub fn main() void {
         .zoom_rate = config.zoom_rate,
         .debug_font_path = config.ui_font_path,
         .debug_font_px = config.ui_font_px,
+        .log_file = config.log_file_name,
     });
 }

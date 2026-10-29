@@ -182,6 +182,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Tracy profiling zones, through ztracy. Off by default, so a normal build has no profiler code.
+    // `zig build run -Dtracy=true` builds Tracy into the game, so the Tracy profiler can connect to it.
+    const tracy_enabled = b.option(bool, "tracy", "Record profiling zones for the Tracy profiler") orelse false;
+    const ztracy = b.dependency("ztracy", .{ .enable_ztracy = tracy_enabled });
+
     const exe = b.addExecutable(.{
         .name = "Semkootru",
         .root_module = b.createModule(.{
@@ -193,6 +198,10 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.linkLibrary(sdl.artifact("SDL3"));
     exe.root_module.addOptions("build_options", options);
+    exe.root_module.addImport("ztracy", ztracy.module("root"));
+    // Only a Tracy build needs the Tracy client library. Without it, the zone calls compile to nothing.
+    if (tracy_enabled) exe.root_module.linkLibrary(ztracy.artifact("tracy"));
+    if (tracy_enabled and target.result.os.tag == .windows) exe.root_module.linkSystemLibrary("secur32", .{});
 
     // stb_image: the header is declared to Zig through @cImport, and this file compiles its implementation.
     exe.root_module.addIncludePath(b.path("vendor"));
@@ -204,6 +213,11 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/text.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
+
+    // Log file output: log.c (vendor/) delivers each message to log_file.c, which writes it to the file.
+    exe.root_module.addIncludePath(b.path("src/engine"));
+    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/log_file.c") });
 
     // cglm: vector and matrix math. See addCglm above.
     addCglm(b, exe.root_module);
@@ -283,6 +297,13 @@ pub fn build(b: *std.Build) void {
     // create no GPU device, but the test binary links SDL and needs slangc to build the shaders.
     test_module.linkLibrary(sdl.artifact("SDL3"));
     test_module.addAnonymousImport("embedded_shaders", .{ .root_source_file = embedded_module });
+    // texture.zig reaches the logger, so the test binary builds the log C code too. Zones compile to
+    // nothing without -Dtracy, so the tests need only ztracy's Zig module, not the Tracy library.
+    test_module.addIncludePath(b.path("vendor"));
+    test_module.addIncludePath(b.path("src/engine"));
+    test_module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
+    test_module.addCSourceFile(.{ .file = b.path("src/engine/log_file.c") });
+    test_module.addImport("ztracy", ztracy.module("root"));
     const tests = b.addTest(.{ .root_module = test_module });
     const run_tests = b.addRunArtifact(tests);
     b.step("test", "Run unit tests (no GPU or window; links SDL, needs slangc)").dependOn(&run_tests.step);

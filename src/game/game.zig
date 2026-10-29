@@ -35,6 +35,8 @@ pub const Game = struct {
     volume: f32,
 
     pub fn init(ctx: *engine.Context) Game {
+        const zone = engine.profile.zoneNamed(@src(), "game init");
+        defer zone.End();
         const index = loadAtlasIndex(ctx);
         const atlas = ctx.loadTexture(config.atlas_image_path);
         checkAtlasSize(&index, &atlas);

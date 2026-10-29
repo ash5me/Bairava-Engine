@@ -31,6 +31,7 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
 - **`vendor/stb_rect_pack.h`, `vendor/stb_image_write.h`, and `vendor/stb_truetype.h`**. The build uses the first two to pack the texture atlas, and the game uses `stb_truetype.h` to bake fonts. All three are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h` and `stb_truetype.h`.
 - **Optional:** Windows PowerShell with .NET's `System.Drawing`, for the asset script.
+- **Optional:** the Tracy profiler, version 0.14.1, to view profiling zones with `-Dtracy=true`. Get it from [wolfpld/tracy](https://github.com/wolfpld/tracy/releases/tag/v0.14.1). The game's Tracy client is built from source by `build.zig`, through ztracy, so only the viewer is separate. See Debugging.
 
 ## Building and running
 
@@ -40,6 +41,7 @@ Run commands from the project root. The build installs `assets/` beside the exec
 zig build                          # compile the executable and shaders into zig-out/
 zig build run                      # build and launch the game
 zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
+zig build run -Dtracy=true         # launch with Tracy profiling zones, for a Tracy profiler that is already running
 zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
 zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
@@ -59,7 +61,7 @@ On Windows, name the outputs `test_imgui.exe` and `test_text.exe`, and run them 
 
 ## Debugging
 
-Logs print to stderr, so `zig build run` shows them in the terminal. Each line has a timestamp, a level, and a scope:
+Logs print to stderr, so `zig build run` shows them in the terminal, and they are also written to `Semkootru.log` beside the executable (see Log file below). Each terminal line has a timestamp, a level, and a scope:
 
 ```
 [    1523ms] INFO  engine: window 960x540, native view 320x180, 60 update steps per second
@@ -68,6 +70,39 @@ Logs print to stderr, so `zig build run` shows them in the terminal. Each line h
 Levels, from least to most severe, are `debug`, `info`, `warn`, and `err`. Debug builds show every level. Other builds show `info` and up. To change the threshold, assign to `engine.log.min_level`, a `pub var`, for example at the top of `main` in `main.zig`.
 
 Assertions check invariants. A failed one prints the file and line, then panics with a stack trace. They run in Debug and ReleaseSafe builds and are compiled out in ReleaseFast and ReleaseSmall. Use `engine.log.assert(ok, @src(), "message {d}", .{value})` for a condition that should hold, and `engine.log.fail(@src(), "message", .{})` for code that should never run.
+
+Every panic is also recorded in the log file before Zig prints it, so a failed assertion or a startup failure, such as a missing font, leaves its reason behind:
+
+```
+2026-10-29 07:57:18 ERROR panic: UI font 'assets/font.ttf' could not be read: FileNotFound
+```
+
+### Log file
+
+`Semkootru.log` is written to the executable's folder, so after `zig build` it is `zig-out/bin/Semkootru.log`. Each line has a wall-clock time, a level, and a scope, and it holds the same messages as the terminal:
+
+```
+2026-10-29 07:57:18 INFO  game: atlas 512x512 with 2 sprites
+```
+
+The file is written by log.c (`vendor/log.c`), through `src/engine/log_file.c`. Each run replaces the file from the last run, so it holds one run only. Every line is flushed as it's written, so the file is complete even when the game crashes. Both outputs use the same level threshold. Change `log_file_name` in `game/config.zig` to rename the file, or set it to `null` to log to the terminal only. If the file can't be opened, the game warns in the terminal and keeps running.
+
+### Profiling with Tracy
+
+Profiling zones mark scopes in the frame. The engine marks each frame, and zones cover the event and update steps, the drawing passes, the sprite uploads, the GPU submit, and asset loading. Game code can add zones too. Zones compile to nothing unless the build uses `-Dtracy=true`, so a normal build has no profiler code. To profile:
+
+1. Start the Tracy profiler, version 0.14.1, which matches the client that ztracy bundles.
+2. Run `zig build run -Dtracy=true`. The log says `profiling zones on (Tracy)`.
+3. Connect the profiler to `127.0.0.1`. Each frame appears as a frame mark, and the zones appear on the timeline.
+
+To add a zone in game code, use `engine.profile`. A named zone reads best when one function has several zones:
+
+```zig
+const zone = engine.profile.zoneNamed(@src(), "draw enemies");
+defer zone.End();
+```
+
+`engine.profile.zone(@src())` names the zone after its function. Put zones around passes and layers rather than inside per-sprite loops, because each zone has a cost.
 
 ## Controls
 
@@ -89,7 +124,7 @@ Keys are bound to named actions in `game/controls.zig`.
 
 ```
 .
-├── build.zig                  Build graph: SDL3, stb_image, cglm, shader compilation and embedding (SPIR-V, plus DXIL with `-Ddxil=true`), the texture atlas, run and test steps
+├── build.zig                  Build graph: SDL3, stb_image, cglm, ztracy (with `-Dtracy=true`), log.c and its glue, shader compilation and embedding (SPIR-V, plus DXIL with `-Ddxil=true`), the texture atlas, run and test steps
 ├── build.zig.zon              Package manifest and pinned dependencies
 ├── src/
 │   ├── main.zig               Entry point: hands the game to the engine
@@ -107,7 +142,10 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── audio.zig          Sound output: one playback device, WAV sounds converted to its format, voices as SDL audio streams
 │   │   ├── audio_voices.zig   Voice handles, gain, and the finish and loop rules (no SDL)
 │   │   ├── view.zig           Fits the view to the window for each zoom and scale mode, and maps mouse positions from window to view and world
-│   │   ├── log.zig            Logging and assertions for debugging
+│   │   ├── log.zig            Logging to the terminal and the log file, the panic record, and assertions
+│   │   ├── log_file.h         Log file output through log.c: open, close, and write one line
+│   │   ├── log_file.c         The sink log.c calls, which writes each line with a wall-clock time
+│   │   ├── profile.zig        Tracy profiling zones and frame marks through ztracy. The only ztracy import
 │   │   ├── debug_overlay.zig  On-screen frame-time graph and frame stats, toggled with F3
 │   │   ├── frame_history.zig  Frame-time history and statistics. Pure math, covered by zig build test
 │   │   ├── math.zig           cglm wrappers: projection, transforms, normalization. The only cglm import.
@@ -151,7 +189,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   └── maps/level1.txt        Level 1 tile map: layers of tile IDs, solid tiles, spawn cell
 ├── scripts/
 │   └── key_checker.ps1        Windows tool that keys out a checkerboard background
-├── vendor/                    stb_image.h and stb_image_impl.c; stb_image_write.h and stb_rect_pack.h for the atlas packer; stb_truetype.h and stb_truetype_impl.c for fonts; cglm (headers, C sources, license) in vendor/cglm/
+├── vendor/                    log.c and log.h, rxi's logging library, for the log file; stb_image.h and stb_image_impl.c; stb_image_write.h and stb_rect_pack.h for the atlas packer; stb_truetype.h and stb_truetype_impl.c for fonts; cglm (headers, C sources, license) in vendor/cglm/
 └── .gitignore
 ```
 
@@ -210,6 +248,9 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | stb_rect_pack | Vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
 | stb_truetype | Vendored in `vendor/` | Baking TTF fonts into a glyph atlas (`src/engine/ui/text.c`) | Public domain or MIT |
 | cglm | 0.9.7, vendored in `vendor/cglm/`: headers, the 46 C sources its CMake lists, and its license | Vector and matrix math, the pixel projection, and transforms | MIT |
+| log.c | rxi's log.c, 2020 (`log_Event` API), vendored in `vendor/log.c` and `vendor/log.h` | Delivers each message to the log file through `src/engine/log_file.c` | MIT |
+| ztracy | Zig bindings, pinned to commit `2d06ebe` in `build.zig.zon` | Tracy zones and frame marks, compiled in with `-Dtracy=true` through `src/engine/profile.zig` | MIT |
+| Tracy client | 0.14.1, bundled in ztracy's `libs/tracy/` and built from source with `-Dtracy=true` | The profiler's runtime: records zones and sends them to the Tracy viewer | 3-clause BSD |
 | Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
 | Direct3D 12 | System driver, selected by SDL_GPU | Optional GPU backend that runs the DXIL shaders | Driver, not bundled |
@@ -225,6 +266,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Fixed-timestep update loop (60 steps per second by default) with an accumulator. Frame time is capped at 0.1 s, and `draw` gets an interpolation factor.
 - Live stats in an on-screen debug overlay with a frame-time graph, toggled with F3. The window title is no longer used for stats.
 - A minimized window idles instead of spinning the CPU.
+- Profiling zones through Tracy (`-Dtracy=true`), which compile to nothing otherwise, and a log file beside the executable, written through log.c. Panics are recorded in the log file.
 
 **GPU and shaders**
 - GPU device creation with a Vulkan 1.2 request, SPIR-V shaders (plus DXIL when built with `-Ddxil=true`), and an optional validation layer (`-Dgpu-debug`).
@@ -273,7 +315,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Walk clips with frame 0 shown while idle; the back-facing row cycles through four frames. Changing clip restarts it at its first frame.
 
 **Tooling**
-- `-Dgpu-debug` and `-Ddxil` build options.
+- `-Dgpu-debug`, `-Ddxil`, and `-Dtracy` build options.
 - `scripts/key_checker.ps1` is a legacy checkerboard-removal tool for the older character art. The current warrior runtime sheet is `assets/warrior_16x32.png`; `assets/warrior.png` is retained as the untouched source artwork.
 
 ### Module status
@@ -284,7 +326,8 @@ These estimates are rough. They measure how close each area is to something usab
 |---|---|---|---|---|
 | Platform | `sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
 | Engine | `engine/engine.zig` | Prototype | 65% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, camera zoom, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
-| Logging and assertions | `engine/log.zig` | Functional | 70% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Missing: log file output, profiling zones. |
+| Logging and assertions | `engine/log.zig`, `log_file.c`, `vendor/log.c` | Functional | 85% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Terminal and log file output through log.c, with panics recorded in the file. Missing: rotation, and keeping logs from earlier runs. |
+| Profiling | `profile.zig`, `engine/engine.zig` | Functional | 60% | Tracy zones for the frame, events, updates, passes, uploads, submit, and asset loads, plus frame marks. Compiled in only with `-Dtracy=true`. A captured session checked the zone names and counts. Missing: GPU timing zones, allocation tracking, and plots. |
 | Gameplay | `game/` | Prototype | 20% | Player with directional walk clips, one level loaded from `assets/maps/level1.txt` and drawn in layers, and movement and quit actions bound in `game/controls.zig`. No entities or rules. |
 | Renderer | `renderer.zig` | Solid base | 70% | Device, swapchain, and passes work. Asks the device for DXIL only when the build embeds it. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, Metal support, pass helpers. |
 | Shaders | `shader.zig` | Basic | 55% | Picks the first shader format the device accepts (SPIR-V, then DXIL) and creates GPU shaders from code embedded at build time. DXIL is optional (`-Ddxil=true`). Per-shader entry points and resource counts are declared in `sprite.zig`. Missing: MSL, reflection. Uniform buffer count is supported but unused. |
@@ -398,7 +441,7 @@ These are the natural extension points. Each one reuses existing code.
 - [ ] Audio through SDL3 audio streams. The module is in place (`audio.zig`), but it isn't compiled yet, and the game doesn't play any sounds yet.
 - [ ] Text rendering and basic UI widgets.
 - [ ] On-screen debug overlay with a frame-time graph, replacing the title stats.
-- [ ] Profiling zones (for example Tracy), and log file output.
+- [x] Profiling zones (for example Tracy), and log file output.
 - [ ] Settings file for resolution, fullscreen, vsync, and key bindings.
 - [x] Unit tests wired into `zig build test`.
 
@@ -417,7 +460,7 @@ These are the natural extension points. Each one reuses existing code.
 - Game `update` runs at the fixed rate `update_hz` in `game/config.zig`, and `ctx.dt` is that step. `draw` runs once per frame and gets `alpha`, which blends between the last two updates.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
-- Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
+- Only `sdl.zig` imports SDL's C headers, only `math.zig` imports cglm's, and only `profile.zig` imports ztracy.
 - The C code for text and widgets lives in `src/engine/ui/` and never touches SDL or the GPU. Only `text.c` and `vendor/stb_truetype_impl.c` include `stb_truetype.h`. `ui.zig` is the one bridge from that code to the sprite batch.
 - `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `asset_cache.zig`, `atlas.zig`, `vector.zig`, `entity.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, `animation.zig`, and `audio_voices.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
