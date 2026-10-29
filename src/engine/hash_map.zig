@@ -7,8 +7,8 @@
 //!   whole key. Two different names never share a slot, even when their hashes collide.
 //! - Keys are stored inline in the slots, so inserting a key never allocates by itself. Only
 //!   growing the table allocates.
-//! - There is no removal. The asset table never removes entries, and skipping removal keeps
-//!   probing simple and correct. Add it only if a caller needs it.
+//! - Removal uses backward-shift deletion: the entries after the gap move back into it. The
+//!   table keeps no tombstones, so lookups are as short after a removal as before it.
 //!
 //! Nothing in this file imports SDL or the logger.
 
@@ -106,6 +106,39 @@ pub fn StringMap(comptime V: type) type {
             try self.ensureRoom();
             self.place(hash, name, value);
             self.len += 1;
+        }
+
+        /// Removes `key` and returns its value, or null if the key isn't in the map. The map is
+        /// unchanged in that case.
+        pub fn remove(self: *Self, key: []const u8) ?V {
+            const index = self.findIndex(key) orelse return null;
+            const value = self.slots[index].value;
+            self.slots[index].occupied = false;
+            self.len -= 1;
+            self.shiftBack(index);
+            return value;
+        }
+
+        /// Fills the gap at `start` so that every remaining key is still reachable from its home
+        /// slot. A later slot in the same probe run moves into the gap when the gap lies on that
+        /// entry's probe path, meaning between its home slot and its current slot. Otherwise the
+        /// entry would be unreachable after the move, so it stays put. The scan ends at the first
+        /// empty slot, which always exists because the table is never full.
+        fn shiftBack(self: *Self, start: usize) void {
+            const mask = self.slots.len - 1;
+            var gap = start;
+            var probe = (start + 1) & mask;
+            while (self.slots[probe].occupied) {
+                const home = @as(usize, @truncate(self.slots[probe].hash)) & mask;
+                const gap_distance = (gap -% home) & mask;
+                const probe_distance = (probe -% home) & mask;
+                if (gap_distance < probe_distance) {
+                    self.slots[gap] = self.slots[probe];
+                    self.slots[probe].occupied = false;
+                    gap = probe;
+                }
+                probe = (probe + 1) & mask;
+            }
         }
 
         fn findIndex(self: *const Self, key: []const u8) ?usize {
@@ -314,6 +347,113 @@ test "matches std.StringHashMap over a random mix of inserts and lookups" {
         } else {
             // Lookup: values must match exactly.
             try std.testing.expectEqual(oracle.get(key), ours.get(key));
+        }
+    }
+
+    try std.testing.expectEqual(oracle.count(), ours.count());
+    var it = oracle.iterator();
+    while (it.next()) |entry| {
+        try std.testing.expectEqual(@as(?u32, entry.value_ptr.*), ours.get(entry.key_ptr.*));
+    }
+}
+
+test "remove returns the value, and later lookups miss" {
+    var map = try StringMap(u32).init(std.testing.allocator, 0);
+    defer map.deinit();
+
+    try map.insert("tile", 1);
+    try map.insert("warrior", 2);
+    try map.insert("ui/button", 3);
+
+    try std.testing.expectEqual(@as(?u32, 2), map.remove("warrior"));
+    try std.testing.expectEqual(@as(?u32, null), map.get("warrior"));
+    try std.testing.expectEqual(@as(?u32, null), map.remove("warrior"));
+    try std.testing.expectEqual(@as(?u32, 1), map.get("tile"));
+    try std.testing.expectEqual(@as(?u32, 3), map.get("ui/button"));
+    try std.testing.expectEqual(@as(usize, 2), map.count());
+
+    // A removed key can be inserted again.
+    try map.insert("warrior", 9);
+    try std.testing.expectEqual(@as(?u32, 9), map.get("warrior"));
+}
+
+test "removals keep the keys that share a probe run reachable, including across the wrap" {
+    // Four keys with home slot 6 in an 8-slot table. They fill slots 6, 7, 0, and 1, so the run
+    // wraps past the end of the table, and removals must shift entries across that wrap.
+    var keys: [4][16]u8 = undefined;
+    var key_slices: [4][]const u8 = undefined;
+    var found: usize = 0;
+    var candidate: u32 = 0;
+    while (found < 4) : (candidate += 1) {
+        const text = std.fmt.bufPrint(&keys[found], "k{d}", .{candidate}) catch unreachable;
+        if (@as(usize, @truncate(hashName(text))) & 7 == 6) {
+            key_slices[found] = text;
+            found += 1;
+        }
+    }
+
+    var map = try StringMap(u32).init(std.testing.allocator, 0);
+    defer map.deinit();
+    for (key_slices, 0..) |key, i| try map.insert(key, @intCast(i));
+    try std.testing.expectEqual(@as(usize, 8), map.slots.len);
+
+    // Remove the first key of the run, then the third, which has wrapped to slot 0.
+    try std.testing.expectEqual(@as(?u32, 0), map.remove(key_slices[0]));
+    try std.testing.expectEqual(@as(?u32, 2), map.remove(key_slices[2]));
+    try std.testing.expectEqual(@as(?u32, 1), map.get(key_slices[1]));
+    try std.testing.expectEqual(@as(?u32, 3), map.get(key_slices[3]));
+    try std.testing.expectEqual(@as(usize, 2), map.count());
+}
+
+test "random inserts, lookups, and removals agree with std.StringHashMap" {
+    const allocator = std.testing.allocator;
+    const alphabet = "ab01_-.";
+
+    var prng = std.Random.DefaultPrng.init(0xdead_beef);
+    const random = prng.random();
+
+    var ours = try StringMap(u32).init(allocator, 0);
+    defer ours.deinit();
+    var oracle = std.StringHashMap(u32).init(allocator);
+    defer oracle.deinit();
+
+    // Storage for every generated key. Both maps refer to these bytes, so they must outlive the loop.
+    var store: [2000][12]u8 = undefined;
+    var lens: [2000]usize = undefined;
+    var generated: usize = 0;
+
+    for (0..12000) |step| {
+        const do_new = generated == 0 or random.uintLessThan(u32, 4) == 0;
+        if (do_new and generated < store.len) {
+            const len = 1 + random.uintLessThan(usize, 10);
+            store[generated][0] = 'a' + @as(u8, @intCast(random.uintLessThan(u8, 2)));
+            for (1..len) |i| store[generated][i] = alphabet[random.uintLessThan(usize, alphabet.len)];
+            lens[generated] = len;
+            generated += 1;
+        }
+
+        const pick = random.uintLessThan(usize, generated);
+        const key = store[pick][0..lens[pick]];
+
+        switch (random.uintLessThan(u32, 3)) {
+            0 => {
+                // Insert: both maps must agree on whether the key was new.
+                if (oracle.contains(key)) {
+                    try std.testing.expectError(error.Duplicate, ours.insert(key, @intCast(step)));
+                } else {
+                    try ours.insert(key, @intCast(step));
+                    try oracle.put(key, @intCast(step));
+                }
+            },
+            1 => {
+                // Remove: both maps must return the same value, or nothing.
+                const expected = oracle.get(key);
+                if (expected != null) _ = oracle.remove(key);
+                try std.testing.expectEqual(expected, ours.remove(key));
+            },
+            else => {
+                try std.testing.expectEqual(oracle.get(key), ours.get(key));
+            },
         }
     }
 

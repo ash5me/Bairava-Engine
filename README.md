@@ -98,6 +98,7 @@ Keys are bound to named actions in `game/controls.zig`.
 │   │   ├── string.zig         Validated fixed-capacity Name and Path types
 │   │   ├── hash_map.zig       StringMap: open-addressing hash map keyed by Name
 │   │   ├── assets.zig         Asset Table: names to ids and validated paths
+│   │   ├── asset_cache.zig    Asset cache: loads each asset once, reference counts, unloads unused entries
 │   │   ├── atlas.zig          Texture atlas index: the rectangle of each sprite in the atlas image
 │   │   ├── vector.zig         Custom struct vectors in AoS or SoA layout, with strided column views
 │   │   ├── entity.zig         Entity world: component rows, generational handles, swap-remove despawn
@@ -254,8 +255,9 @@ These estimates are rough. They measure how close each area is to something usab
 | Images | `image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
 | Math | `math.zig` | Functional | 60% | cglm wrappers: identity, mul, invert, transpose, translate, scale, rotate, ortho, perspective, look-at, point and vector transforms, 3D vector helpers, and quaternions (slerp, look rotation, billboard). 18 tests. Only the 2D parts are used so far. |
 | Strings | `string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
-| Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, checked against `std.StringHashMap`. Missing: removal. |
-| Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. The game no longer uses it, since its sprites come from the atlas. Missing: loading, caching, unloading. |
+| Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, removal by backward-shift deletion (no tombstones), checked against `std.StringHashMap`. |
+| Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. The game no longer uses it, since its sprites come from the atlas. Loading and caching are in `asset_cache.zig`, which looks assets up by these names. |
+| Asset cache | `asset_cache.zig` | Early | 50% | Generic cache keyed by asset name: reference counts, load on first `acquire`, and `unloadUnused`. Names and paths come from `assets.zig`, and the index is the engine's `StringMap`. Not yet compiled or run, and not yet used by the engine or game. Missing: GPU textures through the cache, unloading on a schedule, hot reload. |
 | Sprites | `sprite.zig` | Functional | 75% | Batched quads with four vertices each and a 32-bit index buffer. Per-sprite tint, alpha, flip, rotation around an origin, and z-order, sorted once per frame. Storage grows with each frame. Missing: instancing. |
 | Camera | `camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
 | Animation | `animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
@@ -346,7 +348,7 @@ These are the natural extension points. Each one reuses existing code.
 - [x] Index buffer for quads (4 vertices instead of 6). The vertex and index buffers grow together.
 - [x] Sprite flip, rotation, origin, per-sprite alpha, and z-order, passed as `drawSprite` options.
 - [x] Entity system: AoS and SoA vectors under a handle-based world. The player is not migrated yet.
-- [ ] Asset manager with caching. Executable-relative paths already work.
+- [ ] Asset manager with caching. Executable-relative paths already work. The cache module exists in `asset_cache.zig`, but the game doesn't load its textures through it yet.
 - [x] Asynchronous texture uploads.
 - [x] Shader embedding at build time.
 - [ ] Audio through SDL3 audio streams.
@@ -372,7 +374,7 @@ These are the natural extension points. Each one reuses existing code.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
 - Only `sdl.zig` imports SDL's C headers, and only `math.zig` imports cglm's.
-- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `atlas.zig`, `vector.zig`, `entity.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, and `animation.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
+- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `asset_cache.zig`, `atlas.zig`, `vector.zig`, `entity.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, and `animation.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
