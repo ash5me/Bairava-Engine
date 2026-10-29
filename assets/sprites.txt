@@ -1,0 +1,2 @@
+tile assets/tile.png
+warrior assets/warrior_16x32.png

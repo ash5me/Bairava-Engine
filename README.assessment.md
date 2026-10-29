@@ -10,13 +10,14 @@ The project is a prototype, not a production-ready engine. The core rendering an
 - Nearest-neighbor pixel-art scaling, fit and integer scale modes, camera follow, zoom, and view/world coordinate conversion.
 - Batched sprites and a texture atlas generated during the build.
 - A cross-platform checkerboard-background keyer for source images (`zig build asset-keyer`).
+- A cross-platform sprite importer that copies images into the project, registers them in the atlas manifest, and validates image readability (`zig build asset-import`).
 - A text tile-map format with ground, decoration, and foreground layers; tile collision and a spawn point.
 - Directional player animation and movement with sliding against solid tiles.
 - Keyboard and mouse input, configurable key bindings, and window settings.
 - A small immediate-mode UI demo, a frame-time debug overlay, structured logs, and optional Tracy profiling.
 - Engine modules for audio playback, asset caching, and entity storage. These are not yet integrated into the demo's gameplay.
 
-There is no level editor or importer, scene/state system, save/load system, or game-specific audio. The player is still implemented directly as a game struct rather than using the entity world.
+There is no level editor, scene/state system, save/load system, or game-specific audio. The importer handles sprite images only; it does not import audio or fonts. The player is still implemented directly as a game struct rather than using the entity world.
 
 ## Requirements
 
@@ -105,7 +106,7 @@ src/game/                  Demo game, player, level, controls, and configuration
 src/tests.zig              Zig unit-test root
 tests/ui/                  Standalone C UI test harnesses
 tools/atlas/               Build-time texture-atlas packer
-tools/assets/              Cross-platform checkerboard keyer
+tools/assets/              Cross-platform checkerboard keyer and sprite importer
 vendor/                    Third-party C headers/sources used by the build
 ```
 

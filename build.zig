@@ -165,20 +165,9 @@ fn embeddedSource(b: *std.Build, dxil_enabled: bool, metal_enabled: bool) []cons
     return source;
 }
 
-/// One sprite packed into the texture atlas. `name` is the handle game code looks it up by, through
-/// engine/atlas.zig, and follows the rules in engine/string.zig. `file` is relative to the project root.
-const AtlasSprite = struct {
-    name: []const u8,
-    file: []const u8,
-};
-
-/// Every sprite the game draws. `zig build` packs them into zig-out/bin/assets/atlas.png, and writes
-/// where each one sits to atlas.txt beside it. To add a sprite, add a row here, then look it up by its
-/// name in the game. Names must be unique.
-const atlas_sprites = [_]AtlasSprite{
-    .{ .name = "tile", .file = "assets/tile.png" },
-    .{ .name = "warrior", .file = "assets/warrior_16x32.png" },
-};
+/// Sprite names and source paths are maintained by `zig build asset-import`; the build embeds this
+/// manifest so imported images automatically enter the next atlas build.
+const atlas_manifest = @embedFile("assets/sprites.txt");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -261,9 +250,14 @@ pub fn build(b: *std.Build) void {
     const pack = b.addRunArtifact(atlas_tool);
     const atlas_png = pack.addOutputFileArg("atlas.png");
     const atlas_index = pack.addOutputFileArg("atlas.txt");
-    for (atlas_sprites) |sprite| {
-        pack.addArg(sprite.name);
-        pack.addFileArg(b.path(sprite.file));
+    var sprite_lines = std.mem.tokenizeScalar(u8, atlas_manifest, '\n');
+    while (sprite_lines.next()) |line| {
+        var fields = std.mem.tokenizeAny(u8, line, " \t\r");
+        const name = fields.next() orelse continue;
+        const file = fields.next() orelse @panic("assets/sprites.txt: missing image path");
+        if (fields.next() != null) @panic("assets/sprites.txt: expected '<name> <image-path>' per line");
+        pack.addArg(name);
+        pack.addFileArg(b.path(file));
     }
     // The game reads both files from the executable's folder, beside the assets it already installs.
     const install_atlas_png = b.addInstallFile(atlas_png, "bin/assets/atlas.png");
@@ -287,6 +281,21 @@ pub fn build(b: *std.Build) void {
     const run_asset_keyer = b.addRunArtifact(asset_keyer);
     if (b.args) |args| run_asset_keyer.addArgs(args);
     b.step("asset-keyer", "Remove a checkerboard background from an image").dependOn(&run_asset_keyer.step);
+
+    // Import an image into assets/imported and register it in the atlas source manifest.
+    const asset_importer = b.addExecutable(.{
+        .name = "asset_import",
+        .root_module = b.createModule(.{
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+        }),
+    });
+    asset_importer.root_module.addCSourceFile(.{ .file = b.path("tools/assets/import.c") });
+    asset_importer.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
+    const run_asset_importer = b.addRunArtifact(asset_importer);
+    if (b.args) |args| run_asset_importer.addArgs(args);
+    b.step("asset-import", "Copy and register an image for the sprite atlas").dependOn(&run_asset_importer.step);
 
     // Compile each shader entry point for each target, and embed the results in the executable
     // through a generated module, so the game reads no shader files at runtime. DXIL and MSL are

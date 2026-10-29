@@ -48,7 +48,7 @@ zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to s
 zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
 ```
 
-`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. `zig build` also packs the sprites listed in `atlas_sprites` in `build.zig` into `zig-out/bin/assets/atlas.png`, and writes where each sprite sits to `atlas.txt` beside it.
+`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. `zig build` also packs the sprites listed in `assets/sprites.txt` into `zig-out/bin/assets/atlas.png`, and writes where each sprite sits to `atlas.txt` beside it.
 
 The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root and need a TrueType font, and `zig build test` doesn't run them:
 
@@ -74,6 +74,24 @@ zig build asset-keyer -- assets/warrior.png assets/warrior_keyed.png
 ```
 
 The tool finds the two most common near-gray colors in its brightness range, then makes matching pixels transparent only when they connect to the image border. This keeps similarly colored pixels enclosed by the artwork. It reads image formats supported by stb_image and writes PNG. Pass an output path explicitly to preserve the source image. Use `zig build asset-keyer -- --help` for tolerance and brightness options.
+
+## Importing a sprite
+
+Use the cross-platform importer to copy an image into the project and register it for the atlas:
+
+```sh
+zig build asset-import -- path/to/sprite.png my_sprite
+zig build
+```
+
+The importer validates the image, preserves its file format, copies it to `assets/imported/`, and adds its name and path to `assets/sprites.txt`. The next build packs it into the runtime atlas automatically. Sprite names must start with a lowercase letter or digit and contain only lowercase letters, digits, `_`, or `-`; names must be unique. Keep the source artwork outside the project if you want an untouched copy. To remove an imported sprite, remove its row from `assets/sprites.txt` and delete its copied file. Run `zig build asset-import -- --help` for usage.
+
+To remove a checkerboard before importing, run the keyer first and import its PNG output:
+
+```sh
+zig build asset-keyer -- path/to/sprite.png path/to/sprite_keyed.png
+zig build asset-import -- path/to/sprite_keyed.png my_sprite
+```
 
 ## Debugging
 
@@ -206,12 +224,14 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   └── default.slang          Sprite vertex and fragment shaders. Compiled once per target, and `-DDXIL_TARGET` selects the D3D12 sampler layout
 ├── tools/
 │   ├── assets/keyer.c         Cross-platform checkerboard-background removal tool
+│   ├── assets/import.c        Copies and registers atlas sprites
 │   └── atlas/pack.c           Build-time texture atlas packer; writes atlas.png and atlas.txt
 ├── tests/
 │   └── ui/
 │       ├── test_imgui.c       Scripted-input checks for the widgets (C, see Building and running)
 │       └── test_text.c        Checks for the baked atlas and the glyph quads text produces (C)
 ├── assets/
+│   ├── sprites.txt            Sprite names and image paths used by the atlas build
 │   ├── tile.png               Tile texture used by the map, packed into the atlas at build time
 │   ├── warrior.png            Original warrior artwork (kept unchanged)
 │   ├── warrior_16x32.png      Sprite sheet, 5 columns × 4 rows of 16×32 cells, packed into the atlas at build time
@@ -282,7 +302,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
 | Direct3D 12 | System driver, selected by SDL_GPU | Optional GPU backend that runs the DXIL shaders | Driver, not bundled |
-| stb_image / stb_image_write | Vendored in `vendor/` | Cross-platform checkerboard keyer (`tools/assets/keyer.c`) and texture atlas packer | Public domain or MIT |
+| stb_image / stb_image_write | Vendored in `vendor/` | Image validation and import (`tools/assets/import.c`), checkerboard keyer (`tools/assets/keyer.c`), and texture atlas packer | Public domain or MIT |
 
 ## Progress
 
@@ -309,7 +329,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Render-target textures in the swapchain format.
 - Nearest-neighbor sampler with clamp-to-edge addressing.
 - Assets installed beside the executable and loaded through `SDL_GetBasePath`, so the game runs from any directory.
-- Build-time texture atlas: `tools/atlas/pack.c` packs the sprites listed in `atlas_sprites` (`build.zig`) into one square PNG with stb_rect_pack. The square is the smallest power of two that fits, and each sprite has one transparent texel of padding on every side. `engine/atlas.zig` reads the index written beside the image, and the game draws every sprite from that one texture.
+- Build-time texture atlas: `tools/atlas/pack.c` packs the sprites listed in `assets/sprites.txt` into one square PNG with stb_rect_pack. The square is the smallest power of two that fits, and each sprite has one transparent texel of padding on every side. `engine/atlas.zig` reads the index written beside the image, and the game draws every sprite from that one texture.
 
 **2D rendering**
 - Sprite batching: quads buffered per frame as four vertices drawn through an index buffer, one draw call per run of the same texture, alpha blending, tint, source rectangles, and no fixed sprite or texture-switch limit.
@@ -404,7 +424,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
 
-**Add a sprite.** Add a `.{ .name, .file }` row to `atlas_sprites` in `build.zig`. The next `zig build` packs it into the atlas. The name must follow the rules in `engine/string.zig`. In the game, look the sprite up once with `Game.atlas_index.find(name)` and keep the returned region. Draw it by offsetting the source rectangle by the region's position in the atlas, as `Level.drawLayer` and `Player.draw` do.
+**Add a sprite.** Run `zig build asset-import -- path/to/image.png sprite_name`. This copies the image to `assets/imported/` and registers it in `assets/sprites.txt`; the next `zig build` packs it into the atlas. In the game, look the sprite up once with `Game.atlas_index.find(name)` and keep the returned region. Draw it by offsetting the source rectangle by the region's position in the atlas, as `Level.drawLayer` and `Player.draw` do.
 
 **Add entities.** Define the components as one struct with a field per component value, for example `const Body = struct { x: f32, vx: f32, id: u64 };`. Create a world with `var world = engine.entity.World(Body, .soa).init(allocator)`, choosing `.aos` or `.soa` as the layout (see `engine/vector.zig`). Spawn with `world.spawn(row)`, which returns a `Handle`. Keep the handle, not a row index, because despawning moves rows. A system loops over `0..world.count()` and reads a field with `world.rows.column("vx")`, which works the same under either layout. Under SoA, `world.rows.items("x")` gives a plain slice when a system needs one. Draw entities as `Player.draw` does, subtracting the camera from world positions.
 
