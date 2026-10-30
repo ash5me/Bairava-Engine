@@ -36,6 +36,7 @@ compile_commands.json
 *.exp
 *.dll
 *.exe.manifest
+/ui-tests/zig-build-log.txt
 
 # Shader compiler caches
 *.cache
