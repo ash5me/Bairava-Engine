@@ -17,7 +17,7 @@ const speed: f32 = 80.0;
 /// Time each walk frame is shown, in seconds.
 const walk_frame_seconds: f32 = 0.12;
 
-/// Which way the player faces. Each facing is one row of the sheet, in this order.
+/// Which way the player faces.
 pub const Facing = enum(u32) {
     down,
     right,
@@ -25,16 +25,27 @@ pub const Facing = enum(u32) {
     left,
 };
 
-/// The clip for a facing. Walking plays the facing's row, which has five frames, or four for the
-/// back-facing row. Standing still holds the row's first frame.
+/// The sheet row for each facing. The warrior sheet has four rows, in this order: front, back,
+/// left, right. Each row has five frames.
+fn sheetRow(facing: Facing) u32 {
+    return switch (facing) {
+        .down => 0,
+        .up => 1,
+        .left => 2,
+        .right => 3,
+    };
+}
+
+/// The clip for a facing. Walking plays the facing's row through its five frames. Standing still
+/// holds the row's first frame.
 fn clipFor(facing: Facing, moving: bool) engine.animation.Clip {
-    const row: u32 = @intFromEnum(facing);
+    const row = sheetRow(facing);
     if (!moving) {
         return .{ .row = row, .frame_count = 1, .frame_time = walk_frame_seconds, .looping = true };
     }
     return .{
         .row = row,
-        .frame_count = if (facing == .up) 4 else 5,
+        .frame_count = 5,
         .frame_time = walk_frame_seconds,
         .looping = true,
     };
