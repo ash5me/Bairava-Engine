@@ -228,6 +228,19 @@ pub const TileMap = struct {
         return largest;
     }
 
+    /// True when `box` covers any cell that holds a solid tile. A cell outside the map counts as
+    /// solid, so a box past the edge overlaps. The player's collision check uses this.
+    pub fn boxOverlapsSolid(self: *const TileMap, box: Box) bool {
+        const left = floorIndex(box.x);
+        const right = ceilIndex(box.x + box.w) - 1;
+        const bottom = ceilIndex(box.y + box.h) - 1;
+        var row = floorIndex(box.y);
+        while (row <= bottom) : (row += 1) {
+            if (self.anySolidInRow(row, left, right)) return true;
+        }
+        return false;
+    }
+
     /// Moves `box` by (dx, dy), one axis at a time, and returns its new top-left corner. The X move
     /// is resolved first. The Y move starts from the X position the box ended at. A solid cell stops
     /// the box on the axis it blocks, so the box slides along a wall. A box that already overlaps a

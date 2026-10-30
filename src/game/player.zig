@@ -69,6 +69,15 @@ pub const Player = struct {
     /// Plays the walk and idle clips.
     anim: engine.animation.Animator,
 
+    /// Sprite size in native pixels, so game code can check a position against the level.
+    pub const sprite_w: f32 = width;
+    pub const sprite_h: f32 = height;
+
+    /// The feet: the collision box of a player whose top-left corner is at (x, y).
+    pub fn feetAt(x: f32, y: f32) engine.tilemap.Box {
+        return .{ .x = x, .y = y + collide_top, .w = width, .h = collide_h };
+    }
+
     /// A player whose feet fill the given tile. The game starts the player on the map's spawn cell.
     pub fn standingOn(col: u32, row: u32) Player {
         const x = @as(f32, @floatFromInt(col)) * engine.tilemap.tile_px;
@@ -142,11 +151,7 @@ pub const Player = struct {
         dy = direction[1];
 
         // Move the feet against the map, one axis at a time. Then place the sprite above them.
-        const feet = map.moveBox(
-            .{ .x = self.x, .y = self.y + collide_top, .w = width, .h = collide_h },
-            dx * speed * dt,
-            dy * speed * dt,
-        );
+        const feet = map.moveBox(Player.feetAt(self.x, self.y), dx * speed * dt, dy * speed * dt);
         self.x = feet.x;
         self.y = feet.y - collide_top;
 

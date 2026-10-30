@@ -42,7 +42,8 @@ comptime {
 }
 /// The texture atlas: one image that holds every sprite, and an index of where each sprite sits in
 /// it. `zig build` makes both from the sprite list in build.zig, and installs them beside the
-/// executable. Paths are relative to the executable's folder.
+/// executable. Paths are relative to the executable's folder. A sprite the game asks for by name
+/// must be in atlas_sprites in build.zig, or the game panics at startup.
 pub const atlas_image_path = "assets/atlas.png";
 pub const atlas_index_path = "assets/atlas.txt";
 
@@ -53,10 +54,9 @@ pub const level_path = "assets/maps/level1.txt";
 pub const save_file_name = "save.json";
 
 /// The font for the demo panel, relative to the executable's folder, and its height in native
-/// pixels. The UI is drawn at native resolution, so 10 keeps it legible at the 320x180 view.
+/// pixels. The UI is drawn at native resolution, so 10 keeps it legible at the 320x180 view. The
+/// build's preprocessed `<path>.bfnt` beside it is used when it matches this size.
 pub const ui_font_path = "assets/font.ttf";
-/// Build-preprocessed glyph atlas and metrics for the configured UI font size.
-pub const ui_font_preprocessed_path = "assets/font.ttf.bfnt";
 pub const ui_font_px: f32 = 10;
 
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.

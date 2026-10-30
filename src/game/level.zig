@@ -1,5 +1,5 @@
-//! The level: the tile map and how it is drawn. This is game content, so it lives outside the
-//! engine. The engine supplies the tile map format, the sprite batch, and the camera.
+//! The level: the tile map the game loads, and its size. Drawing the tiles is the engine's job
+//! (engine/tilemap_draw.zig), and game.zig decides which layer is drawn when.
 
 const std = @import("std");
 const engine = @import("../engine/engine.zig");
@@ -35,62 +35,4 @@ pub const Level = struct {
     pub fn heightPx(self: *const Level) f32 {
         return @as(f32, @floatFromInt(self.map.rows)) * tile_px;
     }
-
-    /// How many tiles the tileset region holds. The tiles form a grid, read left to right, then down.
-    pub fn tileCount(tileset: engine.atlas.Region) u32 {
-        return tilesAcross(tileset) * (tileset.h / engine.tilemap.tile_size);
-    }
-
-    fn tilesAcross(tileset: engine.atlas.Region) u32 {
-        return tileset.w / engine.tilemap.tile_size;
-    }
-
-    /// Queues the tiles of one layer that overlap the camera's view. `tileset` is the region of the
-    /// atlas that holds the tiles. Each cell draws the tile its ID names. Empty cells draw nothing.
-    pub fn drawLayer(
-        self: *const Level,
-        batch: *engine.SpriteBatch,
-        atlas: *const engine.Texture,
-        tileset: engine.atlas.Region,
-        cam: *const engine.Camera,
-        layer: engine.tilemap.Layer,
-    ) void {
-        const zone = engine.profile.zoneNamed(@src(), "draw layer");
-        defer zone.End();
-        const across = tilesAcross(tileset);
-        // One extra tile on each side, so edge tiles never pop in while scrolling.
-        const first_col = clampIndex(@floor(cam.x / tile_px) - 1, self.map.cols);
-        const last_col = clampIndex(@ceil((cam.x + cam.view_w) / tile_px) + 1, self.map.cols);
-        const first_row = clampIndex(@floor(cam.y / tile_px) - 1, self.map.rows);
-        const last_row = clampIndex(@ceil((cam.y + cam.view_h) / tile_px) + 1, self.map.rows);
-
-        var row = first_row;
-        while (row < last_row) : (row += 1) {
-            var col = first_col;
-            while (col < last_col) : (col += 1) {
-                const id: u32 = self.map.idAt(layer, @intCast(col), @intCast(row)) orelse continue;
-                // The region's corner offsets the tile's grid cell inside the atlas.
-                const src = engine.Rect{
-                    .x = @as(f32, @floatFromInt(tileset.x + (id % across) * engine.tilemap.tile_size)),
-                    .y = @as(f32, @floatFromInt(tileset.y + (id / across) * engine.tilemap.tile_size)),
-                    .w = tile_px,
-                    .h = tile_px,
-                };
-                // The same rounding as the player's sprite, so tiles and sprites stay on one pixel grid.
-                const dst = engine.Rect{
-                    .x = cam.screenX(@as(f32, @floatFromInt(col)) * tile_px),
-                    .y = cam.screenY(@as(f32, @floatFromInt(row)) * tile_px),
-                    .w = tile_px,
-                    .h = tile_px,
-                };
-                batch.drawSprite(atlas, src, dst, .{});
-            }
-        }
-    }
 };
-
-/// Clamps a float tile index to [0, count] and converts it to an integer.
-fn clampIndex(index: f32, count: u32) u32 {
-    const limit: f32 = @floatFromInt(count);
-    return @intFromFloat(std.math.clamp(index, 0.0, limit));
-}

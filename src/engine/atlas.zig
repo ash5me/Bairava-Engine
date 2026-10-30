@@ -20,6 +20,16 @@ pub const Region = struct {
     y: u32,
     w: u32,
     h: u32,
+
+    /// Whole cells of `cell` texels that fit across the region.
+    pub fn cellsAcross(self: Region, cell: u32) u32 {
+        return self.w / cell;
+    }
+
+    /// Whole cells the region holds, read left to right, then down. A tileset is one of these.
+    pub fn cellCount(self: Region, cell: u32) u32 {
+        return self.cellsAcross(cell) * (self.h / cell);
+    }
 };
 
 /// The parsed index. `find` returns a sprite's region by name.
@@ -198,4 +208,11 @@ test "a sprite that reaches past the atlas edge is rejected" {
 test "a duplicate sprite name is rejected" {
     const testing = std.testing;
     try testing.expectError(error.Duplicate, Atlas.parse(testing.allocator, "size 64 64\ntile 0 0 16 16\ntile 16 0 16 16\n"));
+}
+
+test "cellsAcross and cellCount count whole cells only" {
+    const region = Region{ .x = 1, .y = 1, .w = 40, .h = 36 };
+    try std.testing.expectEqual(@as(u32, 2), region.cellsAcross(16));
+    // 40 / 16 leaves 8 texels unused across, and 36 / 16 leaves 4 down: a 2 by 2 grid.
+    try std.testing.expectEqual(@as(u32, 4), region.cellCount(16));
 }

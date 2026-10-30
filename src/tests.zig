@@ -824,6 +824,27 @@ test "a box already inside a wall can move out of it" {
     try std.testing.expectApproxEqAbs(@as(f32, 60), map.moveBox(box, 10, 0).x, 1e-4);
 }
 
+test "a box covering a solid cell overlaps it, and one flush against it does not" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    // The wall at column 3, row 2 spans x 48 to 64 and y 32 to 48.
+    try std.testing.expect(map.boxOverlapsSolid(.{ .x = 48, .y = 32, .w = 16, .h = 16 }));
+    try std.testing.expect(map.boxOverlapsSolid(.{ .x = 47, .y = 31, .w = 16, .h = 16 }));
+    // Flush against the wall's left edge, and against its bottom edge: no overlap.
+    try std.testing.expect(!map.boxOverlapsSolid(.{ .x = 32, .y = 32, .w = 16, .h = 16 }));
+    try std.testing.expect(!map.boxOverlapsSolid(.{ .x = 48, .y = 48, .w = 16, .h = 16 }));
+}
+
+test "a box past the edge of the map overlaps, since cells outside the map are solid" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    try std.testing.expect(map.boxOverlapsSolid(.{ .x = -4, .y = 16, .w = 16, .h = 16 }));
+    // The spawn cell (1, 1) is open floor.
+    try std.testing.expect(!map.boxOverlapsSolid(.{ .x = 16, .y = 16, .w = 16, .h = 16 }));
+}
+
 test "a box flush against a wall cannot step into it" {
     const allocator = std.testing.allocator;
     const map = try tilemap.TileMap.parse(allocator, room_text);

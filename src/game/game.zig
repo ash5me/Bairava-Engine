@@ -1,5 +1,7 @@
 //! Gameplay: the level, the player, the demo panel, and how actions drive them. The engine calls
-//! into this file through `init`, `update`, `draw`, and `deinit`, and never looks inside it.
+//! into this file through `init`, `update`, `draw`, and `deinit`, and never looks inside it. Game
+//! code imports only engine/engine.zig, so everything the game needs from the platform goes through
+//! the engine's `Context`.
 
 const std = @import("std");
 
@@ -9,7 +11,6 @@ const controls = @import("controls.zig");
 const Level = @import("level.zig").Level;
 const Player = @import("player.zig").Player;
 const save_store = @import("save.zig");
-const sdl = @import("../engine/sdl.zig").c;
 
 const log = engine.log.scoped("game");
 
@@ -21,17 +22,12 @@ pub const Game = struct {
     player: Player,
     /// One texture that holds every sprite. Packing them at build time means the whole world and
     /// the player sample the same texture, so they can share a draw call.
-    atlas: engine.Texture,
-    /// Where each sprite sits in the atlas, read from the index beside it.
-    atlas_index: engine.atlas.Atlas,
+    atlas: engine.LoadedAtlas,
     /// The atlas regions of the sprites this game draws.
     tile: engine.atlas.Region,
     warrior: engine.atlas.Region,
-    /// The UI font, baked from `config.ui_font_path`. It is on the heap so that `ui` can keep a
-    /// pointer to it, and the pointer stays valid after `init` returns `Game` by value.
-    ui_font: *engine.ui.Font,
-    /// Immediate-mode UI state. It is on the heap because its draw list is large.
-    ui: *engine.ui.c.ui_context,
+    /// Immediate-mode UI for the demo panel. It owns its font and its widget state.
+    ui: engine.ui.Ui,
     /// Demo panel state: how often the button was clicked, and the slider value.
     clicks: u32,
     volume: f32,
@@ -41,13 +37,11 @@ pub const Game = struct {
     pub fn init(ctx: *engine.Context) Game {
         const zone = engine.profile.zoneNamed(@src(), "game init");
         defer zone.End();
-        const index = loadAtlasIndex(ctx);
-        const atlas = ctx.loadTexture(config.atlas_image_path);
-        checkAtlasSize(&index, &atlas);
-        log.info("atlas {d}x{d} with {d} sprites", .{ atlas.width, atlas.height, index.len });
+        const atlas = ctx.loadAtlas(config.atlas_image_path, config.atlas_index_path);
+        log.info("atlas {d}x{d} with {d} sprites", .{ atlas.texture.width, atlas.texture.height, atlas.index.len });
 
-        const tile = regionNamed(&index, "tile");
-        const warrior = regionNamed(&index, "warrior");
+        const tile = atlas.region("tile");
+        const warrior = atlas.region("warrior");
         const level = Level.load(ctx, config.level_path);
         checkTileset(&level, tile);
 
@@ -55,18 +49,15 @@ pub const Game = struct {
         const player = Player.standingOn(spawn.col, spawn.row);
         log.info("map {d}x{d} tiles, player starts on tile ({d}, {d})", .{ level.map.cols, level.map.rows, spawn.col, spawn.row });
 
-        const ui_font = loadUiFont(ctx);
-        const ui = createUi(ui_font);
+        const ui = engine.ui.Ui.init(ctx.loadFont(config.ui_font_path, config.ui_font_px));
         const bindings = controls.Bindings.load(ctx.settings_text);
 
         var game: Game = .{
             .level = level,
             .player = player,
             .atlas = atlas,
-            .atlas_index = index,
             .tile = tile,
             .warrior = warrior,
-            .ui_font = ui_font,
             .ui = ui,
             .clicks = 0,
             .volume = 0.5,
@@ -79,10 +70,7 @@ pub const Game = struct {
     pub fn deinit(self: *Game) void {
         self.level.deinit();
         self.atlas.deinit();
-        self.atlas_index.deinit();
-        self.ui_font.deinit();
-        std.heap.page_allocator.destroy(self.ui_font);
-        std.heap.page_allocator.destroy(self.ui);
+        self.ui.deinit();
     }
 
     /// Runs at the fixed update rate. `ctx.dt` is the length of the step.
@@ -134,15 +122,8 @@ pub const Game = struct {
         };
         defer std.heap.page_allocator.free(json);
 
-        var path_buffer: [512]u8 = undefined;
-        const path = std.fmt.bufPrintZ(&path_buffer, "{s}{s}", .{ ctx.base_path, config.save_file_name }) catch {
-            log.err("save path is too long", .{});
-            return;
-        };
-        if (!sdl.SDL_SaveFile(path.ptr, json.ptr, json.len)) {
-            log.err("could not write save '{s}': {s}", .{ config.save_file_name, sdl.SDL_GetError() });
-            return;
-        }
+        // writeFile logs the reason when the write fails, so there is nothing more to say here.
+        ctx.writeFile(config.save_file_name, json) catch return;
         log.info("saved game to {s}", .{config.save_file_name});
     }
 
@@ -192,127 +173,50 @@ pub const Game = struct {
         dc.cam.followSmooth(center.x, center.y, dc.dt, config.camera_rate);
 
         // Draw order: ground, decoration, the player, and then foreground, which can cover the player.
-        self.level.drawLayer(dc.batch, &self.atlas, self.tile, dc.cam, .ground);
-        self.level.drawLayer(dc.batch, &self.atlas, self.tile, dc.cam, .decoration);
-        self.player.draw(dc.batch, &self.atlas, self.warrior, dc.cam, dc.alpha);
-        self.level.drawLayer(dc.batch, &self.atlas, self.tile, dc.cam, .foreground);
+        const tiles = &self.atlas.texture;
+        const map = &self.level.map;
+        engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .ground);
+        engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .decoration);
+        self.player.draw(dc.batch, tiles, self.warrior, dc.cam, dc.alpha);
+        engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .foreground);
 
         // The panel goes last. Its quads were built in the update step, so this only queues them.
-        engine.ui.queueQuads(dc.batch, self.ui_font, &self.ui.list, ui_z);
+        self.ui.queue(dc.batch, ui_z);
     }
 
     /// Builds the demo panel for this frame. It runs in the update step, so each press and release
-    /// reaches the widgets exactly once. Mouse positions come in window points, so they are mapped
-    /// to view pixels first, which is the space the panel is drawn in.
+    /// reaches the widgets exactly once.
     fn updateUi(self: *Game, ctx: *engine.Context) void {
-        const input = ctx.input;
-        const pointer = engine.view.windowToView(ctx.layout, .{ .x = input.mouse_x, .y = input.mouse_y });
-        const frame_input = engine.ui.c.ui_input{
-            .mouse_x = pointer.x,
-            .mouse_y = pointer.y,
-            .mouse_down = @intFromBool(input.mouse_down),
-            .mouse_pressed = @intFromBool(input.mouse_pressed),
-            .mouse_released = @intFromBool(input.mouse_released),
-        };
-
-        const ui = self.ui;
+        const ui = &self.ui;
         // The panel sits in the top-left corner of the view, 120 view pixels wide.
-        engine.ui.c.ui_begin(ui, &frame_input, 4, 4, 120);
-        engine.ui.c.ui_label(ui, "Semkootru");
-        engine.ui.c.ui_label(ui, "F5 save  F9 load");
-        if (engine.ui.c.ui_button(ui, "Click me##go") != 0) self.clicks += 1;
+        ui.begin(ctx.input, ctx.layout, 4, 4, 120);
+        ui.label("Semkootru");
+        ui.label("F5 save  F9 load");
+        if (ui.button("Click me##go")) self.clicks += 1;
 
         var clicks_buf: [32]u8 = undefined;
-        const clicks_text = std.fmt.bufPrintZ(&clicks_buf, "Clicks: {d}", .{self.clicks}) catch
-            std.debug.panic("click label does not fit its buffer", .{});
-        engine.ui.c.ui_label(ui, clicks_text.ptr);
-
-        _ = engine.ui.c.ui_slider(ui, "Volume", &self.volume, 0, 1);
+        ui.label(std.fmt.bufPrint(&clicks_buf, "Clicks: {d}", .{self.clicks}) catch
+            std.debug.panic("click label does not fit its buffer", .{}));
+        _ = ui.slider("Volume", &self.volume, 0, 1);
         var level_buf: [32]u8 = undefined;
-        const level_text = std.fmt.bufPrintZ(&level_buf, "Level: {d:.2}", .{self.volume}) catch
-            std.debug.panic("level label does not fit its buffer", .{});
-        engine.ui.c.ui_label(ui, level_text.ptr);
-        engine.ui.c.ui_end(ui);
+        ui.label(std.fmt.bufPrint(&level_buf, "Level: {d:.2}", .{self.volume}) catch
+            std.debug.panic("level label does not fit its buffer", .{}));
+        ui.end();
     }
 };
 
+/// True when a player whose top-left corner is at (x, y) fits in the level without touching a solid
+/// tile. The bounds check uses the whole sprite, and the collision check uses the feet.
 fn positionIsValid(x: f32, y: f32, level: *const Level) bool {
     if (!std.math.isFinite(x) or !std.math.isFinite(y) or x < 0 or y < 0 or
-        x + 16.0 > level.widthPx() or y + 32.0 > level.heightPx()) return false;
-
-    const tile_px = engine.tilemap.tile_px;
-    const left: i32 = @intFromFloat(@floor(x / tile_px));
-    const right: i32 = @intFromFloat(@ceil((x + 16.0) / tile_px) - 1);
-    const top: i32 = @intFromFloat(@floor((y + 16.0) / tile_px));
-    const bottom: i32 = @intFromFloat(@ceil((y + 32.0) / tile_px) - 1);
-    var row = top;
-    while (row <= bottom) : (row += 1) {
-        var col = left;
-        while (col <= right) : (col += 1) {
-            if (level.map.isSolid(col, row)) return false;
-        }
-    }
-    return true;
-}
-
-/// Reads and bakes the UI font onto the GPU. The font is a required asset, so a missing or unusable
-/// file panics and says why, the same way the atlas does.
-fn loadUiFont(ctx: *engine.Context) *engine.ui.Font {
-    const prebaked_bytes = ctx.readFile(config.ui_font_preprocessed_path) catch null;
-    defer if (prebaked_bytes) |bytes| std.heap.page_allocator.free(bytes);
-    const ttf_bytes = ctx.readFile(config.ui_font_path) catch null;
-    defer if (ttf_bytes) |bytes| std.heap.page_allocator.free(bytes);
-    if (prebaked_bytes == null and ttf_bytes == null) std.debug.panic("UI font '{s}' and its preprocessed asset could not be read", .{config.ui_font_path});
-    const prebaked: []const u8 = prebaked_bytes orelse &.{};
-    const ttf: []const u8 = ttf_bytes orelse &.{};
-
-    const font = std.heap.page_allocator.create(engine.ui.Font) catch @panic("out of memory");
-    font.* = engine.ui.Font.load(ctx.device, ttf, prebaked, config.ui_font_px) catch |err| {
-        std.debug.panic("UI font '{s}' could not be baked: {s}", .{ config.ui_font_path, @errorName(err) });
-    };
-    return font;
-}
-
-/// Allocates the UI context and points it at the font. Both are on the heap, so the font pointer
-/// stays valid after `Game` is moved.
-fn createUi(font: *engine.ui.Font) *engine.ui.c.ui_context {
-    const ui = std.heap.page_allocator.create(engine.ui.c.ui_context) catch @panic("out of memory");
-    engine.ui.c.ui_init(ui, &font.baked);
-    return ui;
-}
-
-/// Reads and parses the atlas index. The index is written by the build, so a missing or malformed
-/// one means the build is broken, and this panics and says why.
-fn loadAtlasIndex(ctx: *const engine.Context) engine.atlas.Atlas {
-    const text = ctx.readFile(config.atlas_index_path) catch |err| {
-        std.debug.panic("atlas index '{s}' could not be read: {s}", .{ config.atlas_index_path, @errorName(err) });
-    };
-    defer std.heap.page_allocator.free(text);
-    return engine.atlas.Atlas.parse(std.heap.page_allocator, text) catch |err| {
-        std.debug.panic("atlas index '{s}' is invalid: {s}", .{ config.atlas_index_path, @errorName(err) });
-    };
-}
-
-/// The index must describe the image it was packed with. A stale or mismatched pair would draw the
-/// wrong pixels, so this checks the sizes match before anything is drawn.
-fn checkAtlasSize(index: *const engine.atlas.Atlas, atlas: *const engine.Texture) void {
-    if (index.width != atlas.width or index.height != atlas.height) {
-        std.debug.panic("atlas index is for {d}x{d}, but the atlas image is {d}x{d}; rebuild", .{
-            index.width, index.height, atlas.width, atlas.height,
-        });
-    }
-}
-
-/// The region of the sprite called `name`. A name that isn't in the atlas is a bug in the sprite
-/// list in build.zig, so it panics.
-fn regionNamed(index: *const engine.atlas.Atlas, name: []const u8) engine.atlas.Region {
-    return index.find(name) orelse std.debug.panic("sprite '{s}' is not in the atlas; add it to atlas_sprites in build.zig", .{name});
+        x + Player.sprite_w > level.widthPx() or y + Player.sprite_h > level.heightPx()) return false;
+    return !level.map.boxOverlapsSolid(Player.feetAt(x, y));
 }
 
 /// Every tile ID in the map must name a tile in the tile sprite. Otherwise the map would draw blank
 /// or wrong tiles. Panics with the offending ID so the map or the sprite can be fixed.
 fn checkTileset(level: *const Level, tileset: engine.atlas.Region) void {
-    const count = Level.tileCount(tileset);
+    const count = tileset.cellCount(engine.tilemap.tile_size);
     const largest = level.map.largestId();
     if (largest >= count) {
         std.debug.panic("the map uses tile ID {d}, but the tile sprite holds only {d} tiles", .{ largest, count });

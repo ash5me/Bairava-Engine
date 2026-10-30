@@ -23,6 +23,8 @@ pub const Key = @import("input.zig").Key;
 pub const Rect = @import("sprite.zig").Rect;
 pub const SpriteBatch = @import("sprite.zig").SpriteBatch;
 pub const Texture = @import("texture.zig").Texture;
+/// A texture atlas on the GPU, with where each sprite sits in it. See `Context.loadAtlas`.
+pub const LoadedAtlas = @import("loaded_atlas.zig").LoadedAtlas;
 /// Fits the native view to the window, and maps window, view, and world coordinates.
 /// `Context.mouseWorld` uses the mapping.
 pub const view = @import("view.zig");
@@ -42,6 +44,8 @@ pub const vector = @import("vector.zig");
 pub const entity = @import("entity.zig");
 /// Tile maps: the map file format, layers, solid tiles, and box movement against them.
 pub const tilemap = @import("tilemap.zig");
+/// Queues tile map layers as sprites, one per visible tile. The map itself stays SDL-free.
+pub const tilemap_draw = @import("tilemap_draw.zig");
 /// Sprite-sheet animation: clips that name a row of frames, and an animator that plays them.
 pub const animation = @import("animation.zig");
 /// Sound output through SDL3 audio streams: the playback device, sounds, and voices.
@@ -188,6 +192,62 @@ pub const Context = struct {
         defer c.SDL_free(data);
         const bytes: [*]const u8 = @ptrCast(data);
         return std.heap.page_allocator.dupe(u8, bytes[0..size]);
+    }
+
+    /// Writes a whole file, replacing any old one. `relative` is relative to the executable's folder,
+    /// like `readFile`. On failure it logs SDL's reason and returns an error.
+    pub fn writeFile(self: *const Context, relative: []const u8, bytes: []const u8) !void {
+        var buf: [max_full_path]u8 = undefined;
+        const path = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ self.base_path, relative }) catch {
+            elog.err("path for '{s}' is longer than {d} bytes", .{ relative, max_full_path });
+            return error.PathTooLong;
+        };
+        if (!c.SDL_SaveFile(path.ptr, bytes.ptr, bytes.len)) {
+            elog.err("could not write '{s}': {s}", .{ relative, c.SDL_GetError() });
+            return error.WriteFailed;
+        }
+    }
+
+    /// Loads a UI font from the TTF at `relative`. It uses the build-preprocessed `<relative>.bfnt`
+    /// when that exists and matches `pixel_height`. Panics when neither file can be read, because a
+    /// missing font means a broken build.
+    pub fn loadFont(self: *const Context, relative: []const u8, pixel_height: f32) ui.Font {
+        var prebaked_buf: [max_full_path]u8 = undefined;
+        const prebaked_path = std.fmt.bufPrint(&prebaked_buf, "{s}.bfnt", .{relative}) catch {
+            std.debug.panic("font path '{s}' is longer than {d} bytes", .{ relative, max_full_path });
+        };
+        const prebaked = self.readFile(prebaked_path) catch null;
+        defer if (prebaked) |bytes| std.heap.page_allocator.free(bytes);
+        const ttf_file = self.readFile(relative) catch null;
+        defer if (ttf_file) |bytes| std.heap.page_allocator.free(bytes);
+        if (prebaked == null and ttf_file == null) {
+            std.debug.panic("font '{s}' and its preprocessed asset could not be read", .{relative});
+        }
+        const ttf: []const u8 = ttf_file orelse &.{};
+        const pre: []const u8 = prebaked orelse &.{};
+        return ui.Font.load(self.device, ttf, pre, pixel_height) catch |err| {
+            std.debug.panic("font '{s}' could not be baked: {s}", .{ relative, @errorName(err) });
+        };
+    }
+
+    /// Loads a texture atlas: the image at `image_path` and its index at `index_path`, both relative
+    /// to the executable's folder. Panics when the index can't be read or parsed, or when its size
+    /// doesn't match the image, because the build writes both and a mismatch would draw the wrong pixels.
+    pub fn loadAtlas(self: *const Context, image_path: []const u8, index_path: []const u8) LoadedAtlas {
+        const text = self.readFile(index_path) catch |err| {
+            std.debug.panic("atlas index '{s}' could not be read: {s}", .{ index_path, @errorName(err) });
+        };
+        defer std.heap.page_allocator.free(text);
+        const index = atlas.Atlas.parse(std.heap.page_allocator, text) catch |err| {
+            std.debug.panic("atlas index '{s}' is invalid: {s}", .{ index_path, @errorName(err) });
+        };
+        const texture = self.loadTexture(image_path);
+        if (index.width != texture.width or index.height != texture.height) {
+            std.debug.panic("atlas index is for {d}x{d}, but the atlas image is {d}x{d}; rebuild", .{
+                index.width, index.height, texture.width, texture.height,
+            });
+        }
+        return .{ .texture = texture, .index = index };
     }
 };
 
@@ -377,23 +437,8 @@ pub fn run(comptime Game: type, config: Config) void {
     defer game.deinit();
     var last_mode = ctx.scale_mode;
 
-    // Prefer the build-preprocessed glyph atlas, while keeping TTF baking for alternate sizes.
-    var overlay_font_path_buf: [max_full_path]u8 = undefined;
-    const overlay_font_path = std.fmt.bufPrint(&overlay_font_path_buf, "{s}.bfnt", .{config.debug_font_path}) catch {
-        std.debug.panic("debug overlay font path '{s}' is too long", .{config.debug_font_path});
-    };
-    const overlay_prebaked_bytes = ctx.readFile(overlay_font_path) catch null;
-    defer if (overlay_prebaked_bytes) |bytes| std.heap.page_allocator.free(bytes);
-    const overlay_ttf_bytes = ctx.readFile(config.debug_font_path) catch null;
-    defer if (overlay_ttf_bytes) |bytes| std.heap.page_allocator.free(bytes);
-    if (overlay_prebaked_bytes == null and overlay_ttf_bytes == null) {
-        std.debug.panic("debug overlay font '{s}' and its preprocessed asset could not be read", .{config.debug_font_path});
-    }
-    const overlay_prebaked: []const u8 = overlay_prebaked_bytes orelse &.{};
-    const overlay_ttf: []const u8 = overlay_ttf_bytes orelse &.{};
-    var overlay = debug_overlay.Overlay.init(gpu.device, overlay_ttf, overlay_prebaked, config.debug_font_px) catch |err| {
-        std.debug.panic("debug overlay font '{s}' could not be baked: {s}", .{ config.debug_font_path, @errorName(err) });
-    };
+    // The overlay bakes its own copy of the debug font, loaded from the same files as the game's fonts.
+    var overlay = debug_overlay.Overlay.init(ctx.loadFont(config.debug_font_path, config.debug_font_px));
     defer overlay.deinit();
 
     var last_ns = c.SDL_GetTicksNS();
