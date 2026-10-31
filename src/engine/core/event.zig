@@ -1,6 +1,6 @@
-//! Drains the SDL event queue once per frame. Quit, F11 (fullscreen), and F3 (overlay) are handled
-//! here. Every event also reaches the input state, which keeps presses and clicks until the next
-//! update step takes them.
+//! Drains the platform event queue once per frame. Quit, F11 (fullscreen), and F3 (overlay) are
+//! handled here. Every event also reaches the input state, which keeps presses and clicks until the
+//! next update step takes them.
 
 const c = @import("../platform/sdl/sdl.zig").c;
 const platform = @import("../platform/platform.zig");
@@ -16,22 +16,32 @@ pub const Result = struct {
     toggle_overlay: bool = false,
 };
 
-/// Handles every queued event. Keyboard and mouse state is updated as each event arrives.
+/// Handles every queued platform event. Keyboard and mouse state is updated as each event arrives.
+/// The window is still an SDL window here. The window step changes it to `platform.Window`.
 pub fn pump(window: *c.SDL_Window, input: *Input) Result {
     var result = Result{};
-    var event: c.SDL_Event = undefined;
-    while (c.SDL_PollEvent(&event)) {
-        if (event.type == c.SDL_EVENT_QUIT) {
-            elog.info("quit requested by the window", .{});
-            result.quit = true;
+    while (platform.events.poll()) |event| {
+        switch (event) {
+            .quit => {
+                elog.info("quit requested by the window", .{});
+                result.quit = true;
+            },
+            .key_down => |down| {
+                if (!down.repeat) {
+                    switch (down.scancode) {
+                        .f11 => {
+                            platform.window.toggleFullscreen(window);
+                        },
+                        .f3 => {
+                            result.toggle_overlay = true;
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
         }
-        if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F11 and !event.key.repeat) {
-            platform.window.toggleFullscreen(window);
-        }
-        if (event.type == c.SDL_EVENT_KEY_DOWN and event.key.key == c.SDLK_F3 and !event.key.repeat) {
-            result.toggle_overlay = true;
-        }
-        platform.input.handleEvent(input, &event);
+        input.apply(event);
     }
     return result;
 }
