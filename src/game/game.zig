@@ -31,6 +31,10 @@ pub const Game = struct {
     /// Demo panel state: how often the button was clicked, and the slider value.
     clicks: u32,
     volume: f32,
+    audio: *engine.audio.Audio,
+    ambient_sound: ?engine.audio.Sound,
+    ambient_voice: ?engine.audio.Handle,
+    ambient_attempted: bool,
     /// Key bindings from the settings file, with the defaults for anything it leaves out.
     bindings: controls.Bindings,
 
@@ -51,6 +55,10 @@ pub const Game = struct {
 
         const ui = engine.ui.Ui.init(ctx.loadFont(config.ui_font_path, config.ui_font_px));
         const bindings = controls.Bindings.load(ctx.settings_text);
+        const ambient_sound: ?engine.audio.Sound = ctx.loadSound(config.ambient_sound_path) catch |err| blk: {
+            if (err != error.NoDevice) log.warn("ambient sound could not be loaded: {s}", .{@errorName(err)});
+            break :blk null;
+        };
 
         var game: Game = .{
             .level = level,
@@ -61,6 +69,10 @@ pub const Game = struct {
             .ui = ui,
             .clicks = 0,
             .volume = 0.5,
+            .audio = ctx.audio,
+            .ambient_sound = ambient_sound,
+            .ambient_voice = null,
+            .ambient_attempted = false,
             .bindings = bindings,
         };
         game.loadSave(ctx);
@@ -68,6 +80,8 @@ pub const Game = struct {
     }
 
     pub fn deinit(self: *Game) void {
+        if (self.ambient_voice) |voice| self.audio.stop(voice);
+        if (self.ambient_sound) |*sound| sound.deinit();
         self.level.deinit();
         self.atlas.deinit();
         self.ui.deinit();
@@ -75,6 +89,7 @@ pub const Game = struct {
 
     /// Runs at the fixed update rate. `ctx.dt` is the length of the step.
     pub fn update(self: *Game, ctx: *engine.Context) void {
+        self.startAmbient();
         const input = ctx.input;
         if (self.bindings.pressed(input, .quit)) {
             log.info("quit action pressed", .{});
@@ -102,6 +117,17 @@ pub const Game = struct {
 
         self.player.update(dx, dy, ctx.dt, &self.level.map);
         self.updateUi(ctx);
+    }
+
+    fn startAmbient(self: *Game) void {
+        if (self.ambient_attempted) return;
+        self.ambient_attempted = true;
+        if (self.ambient_sound) |*sound| {
+            self.ambient_voice = self.audio.play(sound, .{ .loop = true }) catch |err| {
+                log.warn("ambient sound could not start: {s}", .{@errorName(err)});
+                return;
+            };
+        }
     }
 
     fn saveGame(self: *const Game, ctx: *const engine.Context) void {
@@ -201,6 +227,7 @@ pub const Game = struct {
         var level_buf: [32]u8 = undefined;
         ui.label(std.fmt.bufPrint(&level_buf, "Level: {d:.2}", .{self.volume}) catch
             std.debug.panic("level label does not fit its buffer", .{}));
+        self.audio.setMasterGain(self.volume);
         ui.end();
     }
 };
