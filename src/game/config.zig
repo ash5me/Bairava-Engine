@@ -50,6 +50,9 @@ pub const atlas_index_path = "assets/atlas.txt";
 /// The tile map the game loads at startup, relative to the executable's folder.
 pub const level_path = "assets/maps/level1.txt";
 
+/// Looping ambience, relative to the executable's folder.
+pub const ambient_sound_path = "assets/wind1.wav";
+
 /// The gameplay save beside the executable. It is human-editable JSON with a schema version.
 pub const save_file_name = "save.json";
 

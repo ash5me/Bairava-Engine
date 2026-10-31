@@ -305,7 +305,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   ├── warrior.png            Original warrior artwork (kept unchanged)
 │   ├── warrior_keyed.png      Output of the asset keyer on warrior.png. Not in the sprite list
 │   ├── warrior_16x32.png      Sprite sheet, 5 columns × 4 rows of 16×32 cells, packed into the atlas at build time
-│   ├── wind1.wav              Sound (PCM WAV). The manifest builds an IMA ADPCM sidecar for it; the game doesn't play it yet
+│   ├── wind1.wav              Looping ambience, with an IMA ADPCM sidecar built by the manifest
 │   ├── font.ttf               UI font; TrueType and OpenType CFF outlines are supported. Copy a font here; fonts are not included.
 │   └── maps/level1.txt        Level 1 tile map: layers of tile IDs, solid tiles, spawn cell
 ├── vendor/                    log.c and log.h; stb image and atlas tools; stb_truetype; FreeType 2.15.0 source and license; cglm (headers, C sources, license) in vendor/cglm/
@@ -475,7 +475,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Entities | `ecs/entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
 | Debug overlay | `profiling/debug_overlay.zig`, `profiling/frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
 | Collision | none | Not started | 0% | |
-| Audio | `audio/audio.zig`, `audio/voices.zig`, `audio/ima.zig`, `platform/sdl/audio.zig` | Early | 45% | Engine audio owns sounds and voices; the SDL backend owns the optional playback device, streams, WAV byte decoding, and format conversion. Build-generated IMA sidecars decode in the platform-independent engine module. Decoder and voice rules have unit tests. The game plays no sounds yet. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
+| Audio | `audio/audio.zig`, `audio/voices.zig`, `audio/ima.zig`, `platform/sdl/audio.zig` | Early | 45% | Engine audio owns sounds and voices; the SDL backend owns the optional playback device, streams, WAV byte decoding, and format conversion. Build-generated IMA sidecars decode in the platform-independent engine module. The game loops `wind1.wav`, controlled by the demo volume slider. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
 | Text | `text/text.c`, `text/text.h`, `ui/ui.zig` | Early | 45% | Build-time TTF/CFF preprocessing into `.bfnt` v2 bitmap or v3 SDF sidecars with glyph atlas, metrics, codepoint range, and kerning pairs; v1 sidecars remain readable. `Font.load` lazily rasterizes and caches missing codepoints, growing the atlas and refreshing its GPU texture. One quad per glyph, UTF-8 input. Missing: shaping for Tamil and other complex scripts. |
 | UI widgets | `ui/imgui.c`, `ui/imgui.h` | Early | 35% | Label, button, and slider with hot and active ids and `##` suffixes. Tested with the C harness using scripted input. Not yet checked in the running game. Missing: checkbox, panels and layouts beyond one column, text input, keyboard focus, scrolling. |
 | Scenes and state | none | Not started | 0% | |
@@ -560,7 +560,7 @@ These are the natural extension points. Each one reuses existing code.
 - [ ] Asset manager with caching. Executable-relative paths already work. The cache module exists in `assets/cache.zig`, but the game doesn't load its textures through it yet.
 - [x] Asynchronous texture uploads.
 - [x] Shader embedding at build time.
-- [x] Audio through SDL3 audio streams, with PCM WAV support and optional build-encoded IMA ADPCM sidecars. The demo game doesn't play sounds yet.
+- [x] Audio through SDL3 audio streams, with PCM WAV support and optional build-encoded IMA ADPCM sidecars. The demo loops its wind ambience and exposes master volume through the UI slider.
 - [ ] Text rendering and basic UI widgets.
 - [ ] On-screen debug overlay with a frame-time graph, replacing the title stats.
 - [x] Profiling zones (for example Tracy), and log file output.
