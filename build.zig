@@ -424,5 +424,6 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("ztracy", ztracy.module("root"));
     const tests = b.addTest(.{ .root_module = test_module });
     const run_tests = b.addRunArtifact(tests);
+    run_tests.setCwd(b.path("."));
     b.step("test", "Run unit tests (no GPU device or window; links SDL and needs slangc)").dependOn(&run_tests.step);
 }
