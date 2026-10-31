@@ -84,6 +84,27 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_PATH -Value $compiler.DirectoryName
           & $compiler.FullName -version
 
+      - name: Cache Zig packages
+        uses: actions/cache@v4
+        with:
+          path: zig-pkg
+          key: zig-pkg-${{ runner.os }}-${{ hashFiles('build.zig.zon') }}
+
+      # A dependency download can fail on a dropped connection, and that happens before any code is
+      # compiled. Retry the fetch here, so a flaky download does not fail the job.
+      - name: Fetch dependencies, retrying on network failures
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4; do
+            if zig build --fetch; then
+              exit 0
+            fi
+            echo "Dependency fetch failed on attempt $attempt; retrying."
+            sleep $((attempt * 15))
+          done
+          echo "Dependency fetch failed after 4 attempts." >&2
+          exit 1
+
       - name: Build
         run: zig build
 
