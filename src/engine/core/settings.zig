@@ -246,3 +246,17 @@ test "parseKeyList stops at the per-action limit and counts the rest as skipped"
 test "an empty key list has no keys" {
     try std.testing.expectEqual(@as(usize, 0), parseKeyList("  ").len);
 }
+
+test "settings window values override explicit startup values and malformed values keep the override" {
+    var window = Window{ .width = 960, .height = 540, .fullscreen = false, .vsync = true };
+    try std.testing.expectEqual(Applied.applied, applyWindowLine(&window, "resolution", "1280x720"));
+    try std.testing.expectEqual(Applied.applied, applyWindowLine(&window, "fullscreen", "on"));
+    try std.testing.expectEqual(Applied.applied, applyWindowLine(&window, "vsync", "off"));
+    try std.testing.expectEqual(Applied.bad_value, applyWindowLine(&window, "resolution", "wide"));
+    try std.testing.expectEqual(Applied.bad_value, applyWindowLine(&window, "fullscreen", "maybe"));
+
+    try std.testing.expectEqual(@as(c_int, 1280), window.width);
+    try std.testing.expectEqual(@as(c_int, 720), window.height);
+    try std.testing.expect(window.fullscreen);
+    try std.testing.expect(!window.vsync);
+}

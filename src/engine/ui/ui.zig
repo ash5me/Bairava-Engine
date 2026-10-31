@@ -27,23 +27,24 @@ pub const Color = struct {
 /// with one directly, and `Ui` builds one for its widgets. The font lives on the heap because the
 /// C side keeps pointers into it.
 pub const Canvas = struct {
+    allocator: std.mem.Allocator,
     font: *Font,
     list: *c.ui_quad_list,
 
-    /// Takes ownership of `font`. Panics when memory runs out, like the rest of the engine's setup.
-    pub fn create(font: Font) Canvas {
-        const heap_font = std.heap.page_allocator.create(Font) catch @panic("out of memory");
+    /// Takes ownership of `font`; all wrapper memory uses `allocator`.
+    pub fn create(allocator: std.mem.Allocator, font: Font) Canvas {
+        const heap_font = allocator.create(Font) catch @panic("out of memory");
         heap_font.* = font;
-        const list = std.heap.page_allocator.create(c.ui_quad_list) catch @panic("out of memory");
+        const list = allocator.create(c.ui_quad_list) catch @panic("out of memory");
         list.count = 0;
         list.dropped = 0;
-        return .{ .font = heap_font, .list = list };
+        return .{ .allocator = allocator, .font = heap_font, .list = list };
     }
 
     pub fn deinit(self: *Canvas) void {
         self.font.deinit();
-        std.heap.page_allocator.destroy(self.font);
-        std.heap.page_allocator.destroy(self.list);
+        self.allocator.destroy(self.font);
+        self.allocator.destroy(self.list);
     }
 
     /// Empties the quad list, ready for a new frame.
@@ -89,19 +90,20 @@ pub const Canvas = struct {
 /// it Zig values. Labels are copied into a buffer for the length of each call, because the C side
 /// hashes them and draws them during the call and keeps no pointer to them.
 pub const Ui = struct {
+    allocator: std.mem.Allocator,
     canvas: Canvas,
     ctx: *c.ui_context,
 
-    /// Takes ownership of `font`. The context keeps a pointer to the font, so both live on the heap.
-    pub fn init(font: Font) Ui {
-        const canvas = Canvas.create(font);
-        const ctx = std.heap.page_allocator.create(c.ui_context) catch @panic("out of memory");
+    /// Takes ownership of `font`; wrapper memory uses `allocator`.
+    pub fn init(allocator: std.mem.Allocator, font: Font) Ui {
+        const canvas = Canvas.create(allocator, font);
+        const ctx = allocator.create(c.ui_context) catch @panic("out of memory");
         c.ui_init(ctx, &canvas.font.baked);
-        return .{ .canvas = canvas, .ctx = ctx };
+        return .{ .allocator = allocator, .canvas = canvas, .ctx = ctx };
     }
 
     pub fn deinit(self: *Ui) void {
-        std.heap.page_allocator.destroy(self.ctx);
+        self.allocator.destroy(self.ctx);
         self.canvas.deinit();
     }
 

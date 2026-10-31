@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-const engine = @import("engine/core/engine.zig");
+const engine = @import("bairava");
 const config = @import("game/config.zig");
 const Game = @import("game/game.zig").Game;
 

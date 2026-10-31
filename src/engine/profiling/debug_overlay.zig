@@ -49,17 +49,17 @@ pub const Stats = struct {
 };
 
 pub const Overlay = struct {
-    canvas: ui.Canvas,
+    canvas: ?ui.Canvas,
     history: frame_history.FrameHistory = .{},
     visible: bool = true,
 
     /// Takes ownership of the font. The overlay draws with it every frame, so it lives for the run.
-    pub fn init(font: ui.Font) Overlay {
-        return .{ .canvas = ui.Canvas.create(font) };
+    pub fn init(allocator: std.mem.Allocator, font: ?ui.Font) Overlay {
+        return .{ .canvas = if (font) |value| ui.Canvas.create(allocator, value) else null };
     }
 
     pub fn deinit(self: *Overlay) void {
-        self.canvas.deinit();
+        if (self.canvas) |*canvas| canvas.deinit();
     }
 
     /// Adds one frame time to the graph. The engine calls this once per loop iteration.
@@ -75,7 +75,7 @@ pub const Overlay = struct {
     /// width in view pixels. The panel sits in the top-right corner.
     pub fn draw(self: *Overlay, batch: *sprite.SpriteBatch, view_w: f32, stats: Stats) void {
         if (!self.visible) return;
-        const canvas = &self.canvas;
+        const canvas = if (self.canvas) |*value| value else return;
         canvas.clear();
 
         // The text is built first, so the panel can be sized to its widest line.

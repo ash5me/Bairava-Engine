@@ -20,11 +20,13 @@ pub fn fromSdl(sdl_window: *c.SDL_Window) *Window {
 }
 
 /// Creates the game window. It is resizable and uses the full pixel density of high-DPI displays.
-pub fn create(title: [:0]const u8, width: c_int, height: c_int, fullscreen: bool) *Window {
+pub const CreateError = error{WindowCreateFailed};
+
+pub fn create(title: [:0]const u8, width: c_int, height: c_int, fullscreen: bool) CreateError!*Window {
     const window_flags: u64 = @as(u64, c.SDL_WINDOW_RESIZABLE) | @as(u64, c.SDL_WINDOW_HIGH_PIXEL_DENSITY) |
         (if (fullscreen) @as(u64, c.SDL_WINDOW_FULLSCREEN) else 0);
     const sdl_window = c.SDL_CreateWindow(title.ptr, width, height, window_flags) orelse {
-        std.debug.panic("SDL_CreateWindow failed: {s}", .{c.SDL_GetError()});
+        return error.WindowCreateFailed;
     };
     return fromSdl(sdl_window);
 }

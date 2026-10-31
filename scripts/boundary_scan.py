@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Platform-boundary scanner for the SDL migration (migration.md, Step 9).
+"""Platform-boundary scanner for engine/game migration (migration.md P0.5).
 
 Finds SDL references under src/, classifies each hit against ALLOWLIST
 (migration.md, decision D9), and reports three groups:
@@ -11,9 +11,22 @@ Finds SDL references under src/, classifies each hit against ALLOWLIST
     they are reported as notices and never fail.
 
 Categories
-  sdl_name        an SDL_ or SDLK_ name, or a use of an SDL import alias, in code
-  sdl_import      an import of platform/sdl/sdl.zig, or an SDL3 include
-  backend_import  an import of another platform/sdl/ file from outside that folder
+  sdl_name           an SDL_ or SDLK_ name, or a use of an SDL import alias, in code
+  sdl_import         an import of platform/sdl/sdl.zig, or an SDL3 include
+  backend_import     an import of another platform/sdl/ file from outside that folder
+  engine_game_import an engine file imports a game implementation file
+  private_engine_import a game file imports an engine implementation path directly
+  game_sdl_import    a game file imports, aliases, names, or includes SDL
+
+Scope:
+  - Zig, C, and header files under src/ are scanned, based on reachability from
+    src/main.zig, src/engine/core/engine.zig, src/tests.zig, and
+    src/engine_api_test.zig.
+  - Generated files, vendored dependencies, build scripts, and tools outside
+    src/ are excluded unless explicitly added to a future build root.
+  - scripts/boundary-fixtures/ contain isolated negative fixtures and are
+    not part of the repository source reachability graph.
+  - ALLOWLIST entries are narrow exceptions owned by migration.md D9.
 
 Comments are removed, and string-literal bodies are blanked before matching,
 so text in comments and strings does not count as a reference. SDL names that
@@ -34,10 +47,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-BUILD_ROOTS = ["src/main.zig", "src/tests.zig"]
+BUILD_ROOTS = ["src/main.zig", "src/engine/core/engine.zig", "src/tests.zig", "src/engine_api_test.zig"]
 SDL_BACKEND_DIR = "src/engine/platform/sdl/"
 
-ALL_CATEGORIES = {"sdl_name", "sdl_import", "backend_import"}
+ALL_CATEGORIES = {
+    "sdl_name", "sdl_import", "backend_import",
+    "engine_game_import", "private_engine_import", "game_sdl_import",
+}
 
 # (path or directory prefix ending in "/", allowed categories, reason).
 # Source: migration.md D9. A file missing here must have no hits.
@@ -63,6 +79,21 @@ DECL_IMPORT_RE = re.compile(r'(?:pub\s+)?const\s+(\w+)\s*=\s*@import\("([^"]+)"\
 DECL_CIMPORT_RE = re.compile(r'(?:pub\s+)?const\s+(\w+)\s*=\s*@cImport\b')
 SDL_NAME_RE = re.compile(r'\bSDLK?_[A-Za-z0-9_]+')
 C_INCLUDE_SDL_RE = re.compile(r'#\s*include\s*[<"]SDL3/')
+
+
+def classify_boundary_import(rel, resolved, target):
+    """Return prohibited dependency categories for one Zig import."""
+    cats = set()
+    if rel.startswith("src/engine/") and resolved.startswith("src/game/"):
+        cats.add("engine_game_import")
+    if rel.startswith("src/game/"):
+        if resolved.startswith("src/engine/"):
+            cats.add("private_engine_import")
+        if target in ("SDL", "sdl", "bairava_engine_sdl", "platform/sdl/sdl.zig"):
+            cats.add("game_sdl_import")
+        if resolved.startswith("src/engine/platform/sdl/"):
+            cats.add("game_sdl_import")
+    return cats
 
 
 def allowed_for(rel):
@@ -143,22 +174,31 @@ def scan_file(path, rel):
         if is_c:
             if C_INCLUDE_SDL_RE.search(raw):
                 cats.add("sdl_import")
+                if rel.startswith("src/game/"):
+                    cats.add("game_sdl_import")
         else:
             for m in IMPORT_RE.finditer(raw.split("//", 1)[0]):
                 target = m.group(1)
                 resolved = os.path.normpath(os.path.join(os.path.dirname(rel), target)).replace(os.sep, "/")
                 base = os.path.basename(resolved)
+                cats.update(classify_boundary_import(rel, resolved, target))
                 if resolved.startswith(SDL_BACKEND_DIR) and not rel.startswith(SDL_BACKEND_DIR):
                     cats.add("sdl_import" if base == "sdl.zig" else "backend_import")
+                    if rel.startswith("src/game/"):
+                        cats.add("game_sdl_import")
                 elif base == "sdl.zig":
                     cats.add("sdl_import")
             if "@cImport" in code and file_is_sdl_cimport:
                 cats.add("sdl_import")
             if SDL_NAME_RE.search(code):
                 cats.add("sdl_name")
+                if rel.startswith("src/game/"):
+                    cats.add("game_sdl_import")
             for a in sdl_aliases:
                 if alias_use[a].search(code):
                     cats.add("sdl_name")
+                    if rel.startswith("src/game/"):
+                        cats.add("game_sdl_import")
         if cats:
             hits[lineno] = frozenset(cats)
         elif SDL_NAME_RE.search(" ".join(strings)):
@@ -202,7 +242,11 @@ def counts(hits):
 
 
 def fmt_counts(c):
-    return ", ".join(f"{k} {c[k]}" for k in ("sdl_name", "sdl_import", "backend_import") if k in c)
+    category_order = (
+        "sdl_name", "sdl_import", "backend_import",
+        "engine_game_import", "private_engine_import", "game_sdl_import",
+    )
+    return ", ".join(f"{k} {c[k]}" for k in category_order if k in c)
 
 
 def render(results, reach):
@@ -210,7 +254,7 @@ def render(results, reach):
     total = len(results)
     zig = sum(1 for r in results if not r["is_c"])
     live_zig = sum(1 for r in results if not r["is_c"] and r["rel"] in reach)
-    out.append("Platform-boundary scan (migration.md Step 9)")
+    out.append("Platform-boundary scan (migration.md P0.5)")
     out.append(f"Scanned {total} files under src/ ({zig} .zig, {total - zig} .c/.h).")
     out.append(f"Reachable .zig from {', '.join(BUILD_ROOTS)}: {live_zig}. "
                f"Unreachable .zig: {zig - live_zig}.")
@@ -266,7 +310,40 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fail", action="store_true", help="exit 1 when reachable violations exist")
     ap.add_argument("--report", metavar="FILE", help="also write the report to FILE")
+    ap.add_argument("--self-test", action="store_true", help="run built-in negative boundary fixtures")
     args = ap.parse_args()
+    if args.self_test:
+        cases = [
+            ("engine-game-import.zig", "src/engine/core/example.zig", "engine_game_import"),
+            ("game-private-engine-import.zig", "src/game/example.zig", "private_engine_import"),
+            ("game-sdl-import.zig", "src/game/example.zig", "game_sdl_import"),
+        ]
+        failed = False
+        fixture_dir = ROOT / "scripts" / "boundary-fixtures"
+        for filename, virtual_rel, expected in cases:
+            fixture = fixture_dir / filename
+            if not fixture.is_file():
+                print(f"self-test failed: missing fixture {fixture}", file=sys.stderr)
+                failed = True
+                continue
+            raw = fixture.read_text(encoding="utf-8")
+            matches = list(IMPORT_RE.finditer(raw))
+            if not matches:
+                print(f"self-test failed: {filename} has no import", file=sys.stderr)
+                failed = True
+                continue
+            target = matches[0].group(1)
+            resolved = os.path.normpath(os.path.join(os.path.dirname(virtual_rel), target)).replace(os.sep, "/")
+            found = classify_boundary_import(virtual_rel, resolved, target)
+            if virtual_rel.startswith("src/game/") and resolved.startswith(SDL_BACKEND_DIR):
+                found.add("game_sdl_import")
+            if expected not in found:
+                print(f"self-test failed: {filename} did not report {expected}", file=sys.stderr)
+                failed = True
+        if failed:
+            return 1
+        print("Boundary self-test: 3/3 negative fixtures rejected")
+        return 0
 
     if not SRC.is_dir():
         print(f"error: {SRC} not found", file=sys.stderr)

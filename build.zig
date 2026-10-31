@@ -109,6 +109,35 @@ fn addFreeType(b: *std.Build, module: *std.Build.Module) void {
     for (freetype_sources) |path| module.addCSourceFile(.{ .file = b.path(path) });
 }
 
+fn configureEngineModule(
+    b: *std.Build,
+    module: *std.Build.Module,
+    sdl: *std.Build.Dependency,
+    ztracy: *std.Build.Dependency,
+    options: *std.Build.Step.Options,
+    target: std.Build.ResolvedTarget,
+    tracy_enabled: bool,
+) void {
+    module.linkLibrary(sdl.artifact("SDL3"));
+    module.addOptions("build_options", options);
+    module.addImport("ztracy", ztracy.module("root"));
+    if (tracy_enabled) module.linkLibrary(ztracy.artifact("tracy"));
+    if (tracy_enabled and target.result.os.tag == .windows) module.linkSystemLibrary("secur32", .{});
+
+    module.addIncludePath(b.path("vendor"));
+    module.addIncludePath(b.path("src/engine/ui"));
+    module.addIncludePath(b.path("src/engine/text"));
+    module.addIncludePath(b.path("src/engine/logging"));
+    addFreeType(b, module);
+    addCglm(b, module);
+    module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
+    module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
+    module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
+    module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
+    module.addCSourceFile(.{ .file = b.path("src/engine/logging/log_file.c") });
+}
+
 /// One entry point of shaders/default.slang. To add a shader, add a row here, then declare a
 /// `shader.Source` in the code that uses it.
 const ShaderEntry = struct {
@@ -220,6 +249,14 @@ pub fn build(b: *std.Build) void {
     const tracy_enabled = b.option(bool, "tracy", "Record profiling zones for the Tracy profiler") orelse false;
     const ztracy = b.dependency("ztracy", .{ .enable_ztracy = tracy_enabled });
 
+    const engine_module = b.createModule(.{
+        .root_source_file = b.path("src/engine/bairava.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    configureEngineModule(b, engine_module, sdl, ztracy, options, target, tracy_enabled);
+
     const exe = b.addExecutable(.{
         .name = "Semkootru",
         .root_module = b.createModule(.{
@@ -229,34 +266,11 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    exe.root_module.linkLibrary(sdl.artifact("SDL3"));
-    exe.root_module.addOptions("build_options", options);
-    exe.root_module.addImport("ztracy", ztracy.module("root"));
-    // Only a Tracy build needs the Tracy client library. Without it, the zone calls compile to nothing.
-    if (tracy_enabled) exe.root_module.linkLibrary(ztracy.artifact("tracy"));
-    if (tracy_enabled and target.result.os.tag == .windows) exe.root_module.linkSystemLibrary("secur32", .{});
+    exe.root_module.addImport("bairava", engine_module);
 
-    // stb_image: the header is declared to Zig through @cImport, and this file compiles its implementation.
+    // Parson belongs to the game save module, not to the Bairava engine module.
     exe.root_module.addIncludePath(b.path("vendor"));
-    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
-
-    // Text and UI: stb_truetype and FreeType bake fonts from vendor/, and the C widget code in
-    // src/engine/ui/ builds the quads that src/engine/ui/ui.zig draws. None of it touches SDL or the GPU.
-    exe.root_module.addIncludePath(b.path("src/engine/ui"));
-    exe.root_module.addIncludePath(b.path("src/engine/text"));
-    addFreeType(b, exe.root_module);
-    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
-
-    // Log file output: log.c (vendor/) delivers each message to log_file.c, which writes it to the file.
-    exe.root_module.addIncludePath(b.path("src/engine/logging"));
-    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/logging/log_file.c") });
-
-    // cglm: vector and matrix math. See addCglm above.
-    addCglm(b, exe.root_module);
 
     b.installArtifact(exe);
 
@@ -396,7 +410,7 @@ pub fn build(b: *std.Build) void {
     }
     const embedded_source = embeddedSource(b, dxil_enabled, metal_enabled);
     const embedded_module = shader_files.add("embedded_shaders.zig", embedded_source);
-    exe.root_module.addAnonymousImport("embedded_shaders", .{ .root_source_file = embedded_module });
+    engine_module.addAnonymousImport("embedded_shaders", .{ .root_source_file = embedded_module });
 
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());
@@ -425,5 +439,19 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{ .root_module = test_module });
     const run_tests = b.addRunArtifact(tests);
     run_tests.setCwd(b.path("."));
-    b.step("test", "Run unit tests (no GPU device or window; links SDL and needs slangc)").dependOn(&run_tests.step);
+
+    const api_test_module = b.createModule(.{
+        .root_source_file = b.path("src/engine_api_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    api_test_module.addImport("bairava", engine_module);
+    const api_tests = b.addTest(.{ .root_module = api_test_module });
+    const run_api_tests = b.addRunArtifact(api_tests);
+    run_api_tests.setCwd(b.path("."));
+
+    const test_step = b.step("test", "Run unit tests (no GPU device or window; links SDL and needs slangc)");
+    test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_api_tests.step);
 }

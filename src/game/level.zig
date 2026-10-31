@@ -2,7 +2,7 @@
 //! (engine/renderer/tilemap_draw.zig), and game.zig decides which layer is drawn when.
 
 const std = @import("std");
-const engine = @import("../engine/core/engine.zig");
+const engine = @import("bairava");
 
 /// Side length of one tile, in native pixels.
 pub const tile_px = engine.tilemap.tile_px;
@@ -10,22 +10,29 @@ pub const tile_px = engine.tilemap.tile_px;
 /// The level's tile map, loaded from a text file at startup.
 pub const Level = struct {
     map: engine.tilemap.TileMap,
+    allocator: std.mem.Allocator,
 
-    /// Reads and parses the map file at `path`, relative to the executable's folder. A missing or
-    /// malformed map is a bug in the game's data, so this panics and says why.
-    pub fn load(ctx: *const engine.Context, path: []const u8) Level {
-        const text = ctx.readFile(path) catch |err| {
-            std.debug.panic("map '{s}' could not be read: {s}", .{ path, @errorName(err) });
+    /// Reads and parses the map file. Missing or malformed game assets return an error to the
+    /// game's initializer, which lets the runtime unwind engine-owned state cleanly.
+    pub fn load(ctx: *const engine.Context, path: []const u8) engine.AssetError!Level {
+        const text = ctx.readFile(ctx.allocators.asset, path) catch |err| {
+            return switch (err) {
+                error.FileNotFound => error.FileNotFound,
+                error.PathTooLong => error.PathTooLong,
+                error.OutOfMemory => error.OutOfMemory,
+                else => error.ReadFailed,
+            };
         };
-        defer std.heap.page_allocator.free(text);
-        const map = engine.tilemap.TileMap.parse(std.heap.page_allocator, text) catch |err| {
-            std.debug.panic("map '{s}' is invalid: {s}", .{ path, @errorName(err) });
+        defer ctx.allocators.asset.free(text);
+        const allocator = ctx.allocators.asset;
+        const map = engine.tilemap.TileMap.parse(allocator, text) catch {
+            return error.InvalidLevel;
         };
-        return .{ .map = map };
+        return .{ .map = map, .allocator = allocator };
     }
 
     pub fn deinit(self: *const Level) void {
-        self.map.deinit(std.heap.page_allocator);
+        self.map.deinit(self.allocator);
     }
 
     pub fn widthPx(self: *const Level) f32 {

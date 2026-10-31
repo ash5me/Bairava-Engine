@@ -8,6 +8,7 @@
 const std = @import("std");
 const platform = @import("../platform/platform.zig");
 const application = @import("application.zig");
+const allocator_types = @import("allocators.zig");
 const context = @import("context.zig");
 const event = @import("event.zig");
 const lifecycle = @import("lifecycle.zig");
@@ -16,7 +17,9 @@ const profile = @import("../profiling/profile.zig");
 const debug_overlay = @import("../profiling/debug_overlay.zig");
 const renderer = @import("../renderer/renderer.zig");
 const view = @import("../renderer/view.zig");
-const Rect = @import("../renderer/sprite.zig").Rect;
+const sprite = @import("../renderer/sprite.zig");
+const Rect = sprite.Rect;
+const texture = @import("../renderer/texture.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 
 const Config = application.Config;
@@ -35,6 +38,11 @@ const black = renderer.Color{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 pub fn run(comptime Game: type, config: Config) void {
+    config.validate() catch |err| {
+        elog.err("{s}", .{Config.validationMessage(err)});
+        return;
+    };
+
     // The logger reads the platform clock, so it is set before the first log line. Its timestamps
     // then share a clock with the frame timing below.
     logging.setClock(platform.clock.nowNs);
@@ -44,19 +52,30 @@ pub fn run(comptime Game: type, config: Config) void {
     defer logging.closeFile();
     elog.info("profiling zones {s}", .{if (profile.enabled) "on (Tracy)" else "off"});
 
-    logging.assert(config.update_hz > 0, @src(), "update rate must be positive, got {d}", .{config.update_hz});
-    logging.assert(config.zoom_min > 0 and config.zoom_min <= 1.0 and config.zoom_max >= 1.0, @src(), "zoom bounds {d} to {d} must be positive and include 1", .{ config.zoom_min, config.zoom_max });
     const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
 
+    var allocators = allocator_types.RuntimeAllocators.init(config.allocator);
+    defer allocators.deinit();
+
     var session = lifecycle.Session{};
-    session.start(config);
+    session.start(config, &allocators) catch |err| {
+        elog.err("engine startup failed: {s}", .{@errorName(err)});
+        return;
+    };
     defer session.stop();
     const ctx = &session.ctx;
 
-    var game = Game.init(ctx);
+    var game = Game.init(ctx) catch |err| {
+        elog.err("game initialization failed: {s}", .{@errorName(err)});
+        return;
+    };
     defer game.deinit();
     // The overlay bakes its own copy of the debug font, loaded from the same files as the game's fonts.
-    var overlay = debug_overlay.Overlay.init(ctx.loadFont(config.debug_font_path, config.debug_font_px));
+    const debug_font = ctx.loadFont(config.debug_font_path, config.debug_font_px) catch |err| blk: {
+        elog.warn("debug overlay font '{s}' unavailable: {s}; overlay disabled", .{ config.debug_font_path, @errorName(err) });
+        break :blk null;
+    };
+    var overlay = debug_overlay.Overlay.init(allocators.engineAllocator(), debug_font);
     defer overlay.deinit();
 
     const native_wf: f32 = @floatFromInt(config.native_w);
@@ -75,6 +94,7 @@ pub fn run(comptime Game: type, config: Config) void {
     var last_draw_calls: u32 = 0;
 
     while (ctx.running) {
+        allocators.resetFrame();
         // Each Tracy frame runs from one mark to the next, so idle frames show in the profile too.
         profile.frameMark();
         const frame_zone = profile.zoneNamed(@src(), "frame");
@@ -163,7 +183,7 @@ pub fn run(comptime Game: type, config: Config) void {
             // Wait first, because the old target may still be in use by the GPU.
             platform.gpu.waitIdle(session.gpu.device);
             session.target.deinit();
-            session.target = Texture.initTarget(session.gpu.device, view_w, view_h, session.format);
+            session.target = texture.createTarget(allocators.engineAllocator(), session.gpu.device, view_w, view_h, session.format);
             elog.debug("native target is now {d}x{d} at {d:.2} scale ({s})", .{ view_w, view_h, fit.scale, mode_label });
         }
 
@@ -203,9 +223,9 @@ pub fn run(comptime Game: type, config: Config) void {
             .view_w = view_w,
             .view_h = view_h,
         });
-        session.world_batch.upload(frame.cmd);
-        const world_pass = renderer.beginPass(frame.cmd, session.target.texture, clear);
-        session.world_batch.draw(world_pass);
+        sprite.upload(&session.world_batch, frame.cmd);
+        const world_pass = renderer.beginPass(frame.cmd, texture.backendTexture(&session.target), clear);
+        sprite.draw(&session.world_batch, world_pass);
         renderer.endPass(world_pass);
 
         // Pass 2: stretch the target onto the window. Fit mode covers the whole window. Integer
@@ -237,9 +257,9 @@ pub fn run(comptime Game: type, config: Config) void {
             const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
             session.screen_batch.begin(win_wf, win_hf);
             session.screen_batch.drawSprite(&session.target, view_rect, dst_rect, .{});
-            session.screen_batch.upload(frame.cmd);
+            sprite.upload(&session.screen_batch, frame.cmd);
             const screen_pass = renderer.beginPass(frame.cmd, frame.swapchain, black);
-            session.screen_batch.draw(screen_pass);
+            sprite.draw(&session.screen_batch, screen_pass);
             renderer.endPass(screen_pass);
         }
 
