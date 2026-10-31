@@ -35,6 +35,40 @@ pub const Scancode = enum {
 
 pub const MouseButton = enum { left, right, middle };
 
+/// The most gamepads the engine tracks at once. A device that connects past this is not tracked.
+pub const max_gamepads = 8;
+
+/// A button on a standard gamepad, named by where it sits, so one name is the same control on every
+/// controller. A button without a standard place (paddles, the touchpad, extra buttons) is not reported.
+pub const GamepadButton = enum {
+    south,
+    east,
+    west,
+    north,
+    back,
+    guide,
+    start,
+    left_stick,
+    right_stick,
+    left_shoulder,
+    right_shoulder,
+    dpad_up,
+    dpad_down,
+    dpad_left,
+    dpad_right,
+};
+
+/// An axis on a standard gamepad. Each stick has an x and a y axis, and each trigger has one axis.
+pub const GamepadAxis = enum { left_x, left_y, right_x, right_y, left_trigger, right_trigger };
+
+/// A connected gamepad as the engine names it. `slot` is its place in the engine's table, and
+/// `generation` rises each time that place is given to a new device, so an id from an earlier device
+/// no longer matches. The platform makes these, and no SDL identifier leaves the backend.
+pub const GamepadId = struct {
+    slot: u8,
+    generation: u32,
+};
+
 /// An event the engine consumes. Backends translate native events into these and drop the rest.
 /// Quit is never dropped.
 pub const Event = union(enum) {
@@ -45,6 +79,14 @@ pub const Event = union(enum) {
     mouse_motion: struct { x: f32, y: f32 },
     mouse_button_down: MouseButton,
     mouse_button_up: MouseButton,
+    /// A gamepad connected. Its id is valid until the matching `gamepad_removed`.
+    gamepad_added: GamepadId,
+    gamepad_removed: GamepadId,
+    gamepad_button_down: struct { id: GamepadId, button: GamepadButton },
+    gamepad_button_up: struct { id: GamepadId, button: GamepadButton },
+    /// An axis moved. A stick reads from -1 (left or up) to 1 (right or down), and a trigger from 0 to 1.
+    /// The value is the raw position, before any dead zone.
+    gamepad_axis: struct { id: GamepadId, axis: GamepadAxis, value: f32 },
 };
 
 /// An application window. The engine holds and passes pointers to it. Only the platform backend knows

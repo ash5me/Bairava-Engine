@@ -34,7 +34,11 @@ test {
     _ = @import("engine/renderer/backends/sdl_gpu/shader.zig");
     _ = @import("engine/renderer/backends/sdl_gpu/pass.zig");
     _ = @import("engine/input/input.zig");
+    _ = @import("engine/input/gamepad.zig");
+    _ = @import("engine/input/action.zig");
+    _ = @import("engine/input/mapping.zig");
     _ = @import("engine/platform/sdl/input.zig");
+    _ = @import("engine/platform/sdl/gamepad.zig");
     _ = @import("engine/platform/sdl/audio.zig");
     _ = @import("engine/platform/sdl/init.zig");
     _ = @import("engine/platform/sdl/clock.zig");

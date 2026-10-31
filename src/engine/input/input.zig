@@ -1,15 +1,25 @@
-//! Keyboard and mouse state, with no platform code. Platform events reach it through `apply` as
-//! they arrive, and held keys are sampled once per frame by `sampleHeld`.
+//! Keyboard, mouse, and gamepad state, with no platform code. Platform events reach it through `apply`
+//! as they arrive, and held keys are sampled once per frame by `sampleHeld`.
 //!
 //! Frame order: the platform event queue is drained (each event goes to `apply`), held keys are
 //! sampled, each update step runs after `latch`, and then the frame is drawn. Presses, releases, and
 //! clicks gather between update steps, so a frame with no update step keeps them for the next one.
 //! The game reads them during `update`, where each press or click appears in exactly one step.
+//!
+//! Gamepads follow the same path. Their buttons and axes arrive as events and set held state as they
+//! arrive, so a button that goes down and up within one frame is still seen as a press and a release.
+//! Actions read them through `ActionMap` (input/action.zig), not from here.
 
 const std = @import("std");
 const types = @import("../platform/types.zig");
+const gamepad = @import("gamepad.zig");
+
 const Scancode = types.Scancode;
 const Event = types.Event;
+const MouseButton = types.MouseButton;
+const GamepadId = types.GamepadId;
+const GamepadButton = types.GamepadButton;
+const GamepadAxis = types.GamepadAxis;
 
 /// Keys the engine can report. To add one, add it here, add its physical key to `Scancode` in
 /// platform/types.zig, map it both ways in `scancodeOf` and `keyFor` below, and map the scancode
@@ -105,49 +115,50 @@ pub fn keyFor(code: Scancode) ?Key {
     };
 }
 
-
 /// Number of keys in `Key`. Per-key arrays are indexed by `@intFromEnum(key)`.
 const key_count = std.enums.values(Key).len;
 
+/// Number of mouse buttons the engine reports. Per-button arrays are indexed by `@intFromEnum`.
+const mouse_count = std.enums.values(MouseButton).len;
 
 /// Input state. Held keys are set by the platform once per frame. Presses, releases, and clicks
 /// gather as events arrive, and `latch` hands them to the game one update step at a time.
 pub const Input = struct {
     /// Held state of each key, indexed by `@intFromEnum(key)`, as of the latest event pump.
     held_keys: [key_count]bool = [_]bool{false} ** key_count,
-    /// Events gathered since the last `latch`.
+    /// Key events gathered since the last `latch`.
     pending_pressed: [key_count]bool = [_]bool{false} ** key_count,
     pending_released: [key_count]bool = [_]bool{false} ** key_count,
-    pending_left_click: bool = false,
-    /// Left button edges gathered since the last `latch`.
-    pending_mouse_pressed: bool = false,
-    pending_mouse_released: bool = false,
-    /// Events handed to the game by the latest `latch`. These are what the query methods report.
+    /// Key events handed to the game by the latest `latch`. These are what the query methods report.
     pressed: [key_count]bool = [_]bool{false} ** key_count,
     released: [key_count]bool = [_]bool{false} ** key_count,
-    left_clicked: bool = false,
-    /// The left button is held down, as of the latest event. Unlike the one-shot fields, this is live.
-    mouse_down: bool = false,
-    /// Left button edges handed to the game by the latest `latch`.
-    mouse_pressed: bool = false,
-    mouse_released: bool = false,
+    /// Each mouse button is held down, as of the latest event. Unlike the one-shot arrays, this is live.
+    mouse_held: [mouse_count]bool = [_]bool{false} ** mouse_count,
+    /// Mouse button edges gathered since the last `latch`, and the ones handed to the game by it.
+    pending_mouse_pressed: [mouse_count]bool = [_]bool{false} ** mouse_count,
+    pending_mouse_released: [mouse_count]bool = [_]bool{false} ** mouse_count,
+    mouse_pressed: [mouse_count]bool = [_]bool{false} ** mouse_count,
+    mouse_released: [mouse_count]bool = [_]bool{false} ** mouse_count,
     /// Mouse position in window points. `Context.mouseWorld` converts it to world pixels.
     mouse_x: f32 = 0,
     mouse_y: f32 = 0,
+    /// Gamepad slots, indexed by `GamepadId.slot`. An empty slot has no id.
+    pads: [types.max_gamepads]gamepad.Slot = [_]gamepad.Slot{.{}} ** types.max_gamepads,
+    /// How many gamepads have connected so far. Each new one takes the next value as its `order`.
+    connections: u64 = 0,
 
     /// Hands the events gathered since the last call to the game, and starts gathering afresh.
     /// The engine calls this before each update step, so each press or click reaches exactly one update.
     pub fn latch(self: *Input) void {
         self.pressed = self.pending_pressed;
         self.released = self.pending_released;
-        self.left_clicked = self.pending_left_click;
         self.mouse_pressed = self.pending_mouse_pressed;
         self.mouse_released = self.pending_mouse_released;
         @memset(&self.pending_pressed, false);
         @memset(&self.pending_released, false);
-        self.pending_left_click = false;
-        self.pending_mouse_pressed = false;
-        self.pending_mouse_released = false;
+        @memset(&self.pending_mouse_pressed, false);
+        @memset(&self.pending_mouse_released, false);
+        for (&self.pads) |*pad| pad.latch();
     }
 
     /// True while the key is held down, as of the latest event pump.
@@ -165,30 +176,6 @@ pub const Input = struct {
         return self.released[@intFromEnum(key)];
     }
 
-    /// True while any of `keys` is held.
-    pub fn anyHeld(self: *const Input, keys: []const Key) bool {
-        for (keys) |key| {
-            if (self.held(key)) return true;
-        }
-        return false;
-    }
-
-    /// True during the update step that first sees any of `keys` go down.
-    pub fn anyPressed(self: *const Input, keys: []const Key) bool {
-        for (keys) |key| {
-            if (self.wasPressed(key)) return true;
-        }
-        return false;
-    }
-
-    /// True during the update step that first sees any of `keys` go up.
-    pub fn anyReleased(self: *const Input, keys: []const Key) bool {
-        for (keys) |key| {
-            if (self.wasReleased(key)) return true;
-        }
-        return false;
-    }
-
     /// Sets whether a key is held. `sampleHeld` calls this once per frame.
     pub fn setHeld(self: *Input, key: Key, down: bool) void {
         self.held_keys[@intFromEnum(key)] = down;
@@ -202,8 +189,34 @@ pub const Input = struct {
         }
     }
 
-    /// Applies one platform event. Presses ignore auto-repeat, and only the left mouse button is
-    /// recorded. `quit` is handled by the event pump, so it changes no input state here.
+    /// True while the mouse button is held down, as of the latest event.
+    pub fn mouseDown(self: *const Input, button: MouseButton) bool {
+        return self.mouse_held[@intFromEnum(button)];
+    }
+
+    /// True during the update step that first sees the mouse button go down.
+    pub fn mousePressed(self: *const Input, button: MouseButton) bool {
+        return self.mouse_pressed[@intFromEnum(button)];
+    }
+
+    /// True during the update step that first sees the mouse button go up.
+    pub fn mouseReleased(self: *const Input, button: MouseButton) bool {
+        return self.mouse_released[@intFromEnum(button)];
+    }
+
+    /// The gamepad that counts for actions: the one connected first among those still connected.
+    /// Null when no gamepad is connected. A second controller is ignored until the first one leaves.
+    pub fn primaryPad(self: *const Input) ?*const gamepad.Slot {
+        var best: ?*const gamepad.Slot = null;
+        for (&self.pads) |*pad| {
+            if (pad.id == null) continue;
+            if (best == null or pad.order < best.?.order) best = pad;
+        }
+        return best;
+    }
+
+    /// Applies one platform event. Presses ignore auto-repeat. `quit` is handled by the event pump, so
+    /// it changes no input state here.
     pub fn apply(self: *Input, event: Event) void {
         switch (event) {
             .quit => {},
@@ -215,12 +228,13 @@ pub const Input = struct {
                 if (keyFor(up.scancode)) |key| self.keyUp(key);
             },
             .mouse_motion => |motion| self.moveMouse(motion.x, motion.y),
-            .mouse_button_down => |button| {
-                if (button == .left) self.leftButton(true);
-            },
-            .mouse_button_up => |button| {
-                if (button == .left) self.leftButton(false);
-            },
+            .mouse_button_down => |button| self.mouseButton(button, true),
+            .mouse_button_up => |button| self.mouseButton(button, false),
+            .gamepad_added => |id| self.gamepadAdded(id),
+            .gamepad_removed => |id| self.gamepadRemoved(id),
+            .gamepad_button_down => |button| self.gamepadButton(button.id, button.button, true),
+            .gamepad_button_up => |button| self.gamepadButton(button.id, button.button, false),
+            .gamepad_axis => |axis| self.gamepadAxis(axis.id, axis.axis, axis.value),
         }
     }
 
@@ -240,16 +254,58 @@ pub const Input = struct {
         self.mouse_y = y;
     }
 
-    /// Records a left button press (`down` true) or release. Other buttons are not recorded.
-    pub fn leftButton(self: *Input, down: bool) void {
+    /// Records a mouse button press (`down` true) or release.
+    pub fn mouseButton(self: *Input, button: MouseButton, down: bool) void {
+        const index = @intFromEnum(button);
         if (down) {
-            self.pending_left_click = true;
-            self.pending_mouse_pressed = true;
-            self.mouse_down = true;
+            self.pending_mouse_pressed[index] = true;
+            self.mouse_held[index] = true;
         } else {
-            self.pending_mouse_released = true;
-            self.mouse_down = false;
+            self.pending_mouse_released[index] = true;
+            self.mouse_held[index] = false;
         }
+    }
+
+    /// Records a gamepad joining. A repeat report for a gamepad already in its slot changes nothing.
+    /// A different device in the slot is released first, so it cannot leave controls stuck on.
+    pub fn gamepadAdded(self: *Input, id: GamepadId) void {
+        if (id.slot >= self.pads.len) return;
+        const pad = &self.pads[id.slot];
+        if (pad.id) |current| {
+            if (current.generation == id.generation) return;
+        }
+        pad.disconnect();
+        self.connections += 1;
+        pad.id = id;
+        pad.order = self.connections;
+    }
+
+    /// Records a gamepad leaving. Its held controls are released, and an id that no longer matches
+    /// its slot is ignored.
+    pub fn gamepadRemoved(self: *Input, id: GamepadId) void {
+        const pad = self.slotOf(id) orelse return;
+        pad.disconnect();
+    }
+
+    /// Records a gamepad button going down or up.
+    pub fn gamepadButton(self: *Input, id: GamepadId, button: GamepadButton, down: bool) void {
+        const pad = self.slotOf(id) orelse return;
+        pad.setHeld(gamepad.buttonControl(button), down);
+    }
+
+    /// Records an axis moving to a raw value. Sticks run from -1 to 1 and triggers from 0 to 1.
+    pub fn gamepadAxis(self: *Input, id: GamepadId, axis: GamepadAxis, value: f32) void {
+        const pad = self.slotOf(id) orelse return;
+        pad.setAxis(axis, value);
+    }
+
+    /// The slot holding the gamepad `id` names, or null when that gamepad is no longer connected.
+    fn slotOf(self: *Input, id: GamepadId) ?*gamepad.Slot {
+        if (id.slot >= self.pads.len) return null;
+        const pad = &self.pads[id.slot];
+        const current = pad.id orelse return null;
+        if (current.generation != id.generation) return null;
+        return pad;
     }
 };
 
@@ -316,21 +372,6 @@ test "held reports only the key that was set" {
     }
 }
 
-test "anyHeld, anyPressed and anyReleased are true when any listed key matches" {
-    var input = Input{};
-    input.setHeld(.left, true);
-    try std.testing.expect(input.anyHeld(&.{ .w, .left }));
-    try std.testing.expect(!input.anyHeld(&.{ .w, .d }));
-    const none: []const Key = &.{};
-    try std.testing.expect(!input.anyHeld(none));
-
-    input.keyDown(.d);
-    input.latch();
-    try std.testing.expect(input.anyPressed(&.{ .w, .d }));
-    try std.testing.expect(!input.anyPressed(&.{ .w, .a }));
-    try std.testing.expect(!input.anyReleased(&.{ .w, .d }));
-}
-
 test "mouse motion updates the position at once, before the next latch" {
     var input = Input{};
     input.moveMouse(120.5, 60.25);
@@ -338,44 +379,32 @@ test "mouse motion updates the position at once, before the next latch" {
     try std.testing.expectEqual(@as(f32, 60.25), input.mouse_y);
 }
 
-test "a left button press is latched as one click" {
+test "a left button press is latched once, and sets the held state at once" {
     var input = Input{};
-    input.leftButton(true);
-    try std.testing.expect(!input.left_clicked);
+    input.mouseButton(.left, true);
+    try std.testing.expect(input.mouseDown(.left));
+    try std.testing.expect(!input.mousePressed(.left));
 
     input.latch();
-    try std.testing.expect(input.left_clicked);
+    try std.testing.expect(input.mousePressed(.left));
 
     input.latch();
-    try std.testing.expect(!input.left_clicked);
+    try std.testing.expect(!input.mousePressed(.left));
 }
 
-test "a left press sets mouse_down at once, and reaches the update step after latch" {
+test "a left release clears the held state and reaches the update step once" {
     var input = Input{};
-    input.leftButton(true);
-    try std.testing.expect(input.mouse_down);
-    try std.testing.expect(!input.mouse_pressed);
+    input.mouseButton(.left, true);
+    input.latch();
+    input.mouseButton(.left, false);
+    try std.testing.expect(!input.mouseDown(.left));
+    try std.testing.expect(!input.mouseReleased(.left));
 
     input.latch();
-    try std.testing.expect(input.mouse_pressed);
+    try std.testing.expect(input.mouseReleased(.left));
 
     input.latch();
-    try std.testing.expect(!input.mouse_pressed);
-}
-
-test "a left release clears mouse_down and reaches the update step once" {
-    var input = Input{};
-    input.leftButton(true);
-    input.latch();
-    input.leftButton(false);
-    try std.testing.expect(!input.mouse_down);
-    try std.testing.expect(!input.mouse_released);
-
-    input.latch();
-    try std.testing.expect(input.mouse_released);
-
-    input.latch();
-    try std.testing.expect(!input.mouse_released);
+    try std.testing.expect(!input.mouseReleased(.left));
 }
 
 test "every engine key has a scancode, and that scancode maps back to it" {
@@ -421,7 +450,7 @@ test "a scancode the engine does not key on changes no key" {
     }
 }
 
-test "apply moves the mouse, and records only the left button" {
+test "apply moves the mouse, and records every mouse button separately" {
     var input = Input{};
     input.apply(.{ .mouse_motion = .{ .x = 120.5, .y = 60.25 } });
     try std.testing.expectEqual(@as(f32, 120.5), input.mouse_x);
@@ -429,18 +458,20 @@ test "apply moves the mouse, and records only the left button" {
 
     input.apply(.{ .mouse_button_down = .right });
     input.latch();
-    try std.testing.expect(!input.left_clicked);
-    try std.testing.expect(!input.mouse_down);
+    try std.testing.expect(input.mousePressed(.right));
+    try std.testing.expect(!input.mousePressed(.left));
+    try std.testing.expect(input.mouseDown(.right));
+    input.apply(.{ .mouse_button_up = .right });
 
     input.apply(.{ .mouse_button_down = .left });
     input.latch();
-    try std.testing.expect(input.left_clicked);
-    try std.testing.expect(input.mouse_down);
+    try std.testing.expect(input.mousePressed(.left));
+    try std.testing.expect(input.mouseDown(.left));
 
     input.apply(.{ .mouse_button_up = .left });
     input.latch();
-    try std.testing.expect(input.mouse_released);
-    try std.testing.expect(!input.mouse_down);
+    try std.testing.expect(input.mouseReleased(.left));
+    try std.testing.expect(!input.mouseDown(.left));
 }
 
 test "quit changes no input state, because the event pump handles it" {
@@ -450,7 +481,7 @@ test "quit changes no input state, because the event pump handles it" {
     for (std.enums.values(Key)) |key| {
         try std.testing.expect(!input.wasPressed(key));
     }
-    try std.testing.expect(!input.mouse_down);
+    try std.testing.expect(!input.mouseDown(.left));
 }
 
 fn onlyWHeld(code: Scancode) bool {
@@ -471,4 +502,84 @@ test "sampleHeld sets each key's held state from the platform query" {
     // A later sample replaces the earlier one, so a key that is no longer down stops being held.
     input.sampleHeld(noneHeld);
     try std.testing.expect(!input.held(.w));
+}
+
+const pad_a = GamepadId{ .slot = 0, .generation = 1 };
+const pad_b = GamepadId{ .slot = 1, .generation = 1 };
+
+test "the first gamepad connected is the primary one, and a second waits its turn" {
+    var input = Input{};
+    try std.testing.expect(input.primaryPad() == null);
+
+    input.apply(.{ .gamepad_added = pad_b });
+    input.apply(.{ .gamepad_added = pad_a });
+    // pad_b connected first, so it is primary even though it sits in the higher slot.
+    try std.testing.expectEqual(@as(u8, 1), input.primaryPad().?.id.?.slot);
+
+    input.apply(.{ .gamepad_removed = pad_b });
+    try std.testing.expectEqual(@as(u8, 0), input.primaryPad().?.id.?.slot);
+}
+
+test "a gamepad button goes down and up through the event path, and latches like a key" {
+    var input = Input{};
+    input.apply(.{ .gamepad_added = pad_a });
+    input.apply(.{ .gamepad_button_down = .{ .id = pad_a, .button = .south } });
+    input.latch();
+    const pad = input.primaryPad().?;
+    try std.testing.expect(pad.held[gamepad.buttonControl(.south)]);
+    try std.testing.expect(pad.pressed[gamepad.buttonControl(.south)]);
+
+    input.apply(.{ .gamepad_button_up = .{ .id = pad_a, .button = .south } });
+    input.latch();
+    try std.testing.expect(!input.primaryPad().?.held[gamepad.buttonControl(.south)]);
+    try std.testing.expect(input.primaryPad().?.released[gamepad.buttonControl(.south)]);
+}
+
+test "events from a gamepad that has left are ignored" {
+    var input = Input{};
+    input.apply(.{ .gamepad_added = pad_a });
+    input.apply(.{ .gamepad_removed = pad_a });
+    input.apply(.{ .gamepad_button_down = .{ .id = pad_a, .button = .south } });
+    input.apply(.{ .gamepad_axis = .{ .id = pad_a, .axis = .left_x, .value = 1.0 } });
+    input.latch();
+    try std.testing.expect(input.primaryPad() == null);
+}
+
+test "a new gamepad in a reused slot does not answer to the id of the one before" {
+    var input = Input{};
+    input.apply(.{ .gamepad_added = pad_a });
+    input.apply(.{ .gamepad_removed = pad_a });
+    const reused = GamepadId{ .slot = 0, .generation = 2 };
+    input.apply(.{ .gamepad_added = reused });
+
+    // The old id has the same slot but an older generation, so its button press does nothing.
+    input.apply(.{ .gamepad_button_down = .{ .id = pad_a, .button = .north } });
+    input.latch();
+    try std.testing.expect(!input.primaryPad().?.pressed[gamepad.buttonControl(.north)]);
+
+    input.apply(.{ .gamepad_button_down = .{ .id = reused, .button = .north } });
+    input.latch();
+    try std.testing.expect(input.primaryPad().?.pressed[gamepad.buttonControl(.north)]);
+}
+
+test "a gamepad that leaves while a button is held releases it at the next update" {
+    var input = Input{};
+    input.apply(.{ .gamepad_added = pad_a });
+    input.apply(.{ .gamepad_button_down = .{ .id = pad_a, .button = .start } });
+    input.latch();
+
+    input.apply(.{ .gamepad_removed = pad_a });
+    input.latch();
+    // The slot is empty, so no action can read it. The release is still recorded in the slot the
+    // gamepad left, so the next update sees it.
+    try std.testing.expect(input.primaryPad() == null);
+    try std.testing.expect(input.pads[0].released[gamepad.buttonControl(.start)]);
+}
+
+test "a repeated arrival for a gamepad already in its slot changes nothing" {
+    var input = Input{};
+    input.apply(.{ .gamepad_added = pad_a });
+    input.apply(.{ .gamepad_added = pad_a });
+    try std.testing.expectEqual(@as(u64, 1), input.connections);
+    try std.testing.expectEqual(@as(u64, 1), input.pads[0].order);
 }

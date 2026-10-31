@@ -37,8 +37,9 @@ pub fn init() InitError!void {
 }
 
 /// Stops the platform and everything it started. Call it once, after every window, device, and
-/// audio stream has been released.
+/// audio stream has been released. Open gamepads are closed first, while SDL is still running.
 pub fn shutdown() void {
+    sdl_input.releaseGamepads();
     sdl_init.shutdown();
 }
 

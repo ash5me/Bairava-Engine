@@ -66,7 +66,7 @@ pub const Game = struct {
             return err;
         };
         const ui = engine.ui.Ui.init(ctx.allocators.game, ui_font);
-        const bindings = controls.Bindings.load(ctx.settings_text);
+        const bindings = controls.load(ctx.settings_text);
         const ambient_sound: ?engine.audio.Sound = ctx.loadSound(config.ambient_sound_path) catch |err| blk: {
             if (err != error.NoDevice) log.warn("ambient sound could not be loaded: {s}", .{@errorName(err)});
             break :blk null;

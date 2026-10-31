@@ -24,6 +24,18 @@ test "engine resource fields do not expose SDL types" {
     expectNoSdlApi(bairava.ui.Ui);
     expectNoSdlApi(bairava.audio.Audio);
     expectNoSdlApi(bairava.audio.Sound);
+    expectNoSdlApi(bairava.Input);
+}
+
+test "the action map and its bindings expose no SDL types" {
+    const Action = enum { jump };
+    expectNoSdlApi(bairava.ActionMap(Action));
+    inline for (@typeInfo(bairava.Binding).@"union".fields) |field| {
+        if (comptime std.mem.indexOf(u8, @typeName(field.type), "SDL_") != null)
+            @compileError("bindings must not carry SDL types");
+    }
+    try std.testing.expect(@hasDecl(bairava.ActionMap(Action), "pressed"));
+    try std.testing.expect(@hasDecl(bairava.ActionMap(Action), "value"));
 }
 
 test "engine resource types do not publish backend operations" {

@@ -1,12 +1,17 @@
-//! Keyboard and mouse through SDL3. This file turns SDL events and the keyboard state into the
-//! platform-neutral types in platform/types.zig. It is the only place that names SDL keys.
+//! Keyboard, mouse, and gamepads through SDL3. This file turns SDL events and the keyboard state into
+//! the platform-neutral types in platform/types.zig. It is the only place that names SDL keys, and
+//! gamepad.zig holds the table of open gamepads that it reads.
 
 const std = @import("std");
 const c = @import("sdl.zig").c;
 const types = @import("../types.zig");
+const gamepad = @import("gamepad.zig");
 const Scancode = types.Scancode;
 const Event = types.Event;
 const MouseButton = types.MouseButton;
+
+/// The gamepads that are open, by slot. Only `poll` and `releaseGamepads` change it.
+var pads: gamepad.Table = .{};
 
 /// SDL's keyboard state has one entry per scancode, so arrays of that size index it.
 const scancode_count: usize = @intCast(c.SDL_SCANCODE_COUNT);
@@ -61,9 +66,10 @@ fn mouseButton(button: u8) ?MouseButton {
 }
 
 /// Turns one SDL event into a platform event. Returns null for event types the engine does not
-/// consume, and for keys and buttons it does not name. Repeat is passed through, so the engine
-/// decides what an auto-repeated key-down means.
-pub fn translate(event: *const c.SDL_Event) ?Event {
+/// consume, and for keys, buttons, and axes it does not name. Repeat is passed through, so the engine
+/// decides what an auto-repeated key-down means. A gamepad event from a device `table` does not hold
+/// is dropped, since the engine has no id for that device.
+pub fn translate(event: *const c.SDL_Event, table: *const gamepad.Table) ?Event {
     switch (event.type) {
         c.SDL_EVENT_QUIT => return .quit,
         c.SDL_EVENT_KEY_DOWN => {
@@ -83,18 +89,51 @@ pub fn translate(event: *const c.SDL_Event) ?Event {
             const button = mouseButton(event.button.button) orelse return null;
             return .{ .mouse_button_up = button };
         },
+        c.SDL_EVENT_GAMEPAD_BUTTON_DOWN => return gamepadButton(event, table, true),
+        c.SDL_EVENT_GAMEPAD_BUTTON_UP => return gamepadButton(event, table, false),
+        c.SDL_EVENT_GAMEPAD_AXIS_MOTION => {
+            const id = gamepad.idOf(table, event.gaxis.which) orelse return null;
+            const axis = gamepad.axisFromSdl(event.gaxis.axis) orelse return null;
+            return .{ .gamepad_axis = .{ .id = id, .axis = axis, .value = gamepad.normalizeAxis(axis, event.gaxis.value) } };
+        },
         else => return null,
     }
 }
 
+/// A gamepad button event as a platform event, read against `table`.
+fn gamepadButton(event: *const c.SDL_Event, table: *const gamepad.Table, down: bool) ?Event {
+    const id = gamepad.idOf(table, event.gbutton.which) orelse return null;
+    const button = gamepad.buttonFromSdl(event.gbutton.button) orelse return null;
+    if (down) return .{ .gamepad_button_down = .{ .id = id, .button = button } };
+    return .{ .gamepad_button_up = .{ .id = id, .button = button } };
+}
+
 /// Returns the next event the engine consumes from SDL's queue, or null when none is waiting.
-/// Events the engine does not consume are drained here, so a null means nothing more is waiting.
+/// A gamepad that connects or disconnects is opened or closed here, before its event is translated,
+/// since that changes the table the translation reads. Events the engine does not consume are drained
+/// here, so a null means nothing more is waiting.
 pub fn poll() ?Event {
     var raw: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&raw)) {
-        if (translate(&raw)) |event| return event;
+        switch (raw.type) {
+            c.SDL_EVENT_GAMEPAD_ADDED => {
+                if (gamepad.attach(&pads, raw.gdevice.which)) |id| return .{ .gamepad_added = id };
+                continue;
+            },
+            c.SDL_EVENT_GAMEPAD_REMOVED => {
+                if (gamepad.detach(&pads, raw.gdevice.which)) |id| return .{ .gamepad_removed = id };
+                continue;
+            },
+            else => {},
+        }
+        if (translate(&raw, &pads)) |event| return event;
     }
     return null;
+}
+
+/// Closes every gamepad still open. Shutdown calls this before SDL stops, so no device outlives it.
+pub fn releaseGamepads() void {
+    gamepad.closeAll(&pads);
 }
 
 /// Whether the physical key is held, as of SDL's current keyboard state.
@@ -146,9 +185,39 @@ fn typeOnly(event_type: anytype) c.SDL_Event {
     return event;
 }
 
+/// A table with no gamepads open, for the tests that read keys and the mouse.
+const no_pads = gamepad.Table{};
+
+/// A gamepad event as SDL fills one in, from the device with this instance id.
+fn gamepadButtonEvent(event_type: anytype, instance: u32, button: c_int) c.SDL_Event {
+    var event = std.mem.zeroes(c.SDL_Event);
+    event.type = @intCast(event_type);
+    event.gbutton.which = instance;
+    event.gbutton.button = @intCast(button);
+    return event;
+}
+
+/// A gamepad axis event as SDL fills one in: the raw value runs from -32768 to 32767.
+fn gamepadAxisEvent(instance: u32, axis: c_int, value: i16) c.SDL_Event {
+    var event = std.mem.zeroes(c.SDL_Event);
+    event.type = @intCast(c.SDL_EVENT_GAMEPAD_AXIS_MOTION);
+    event.gaxis.which = instance;
+    event.gaxis.axis = @intCast(axis);
+    event.gaxis.value = value;
+    return event;
+}
+
+/// A table with one gamepad open: SDL instance 7, in slot 2, at generation 3.
+fn tableWithPad() gamepad.Table {
+    var table = gamepad.Table{};
+    table.instance[2] = 7;
+    table.generation[2] = 3;
+    return table;
+}
+
 /// The engine event for an SDL event. Fails the test if the engine does not consume it.
 fn consumed(event: *const c.SDL_Event) !Event {
-    return translate(event) orelse error.NotConsumed;
+    return translate(event, &no_pads) orelse error.NotConsumed;
 }
 
 test "scancodes map to the SDL names the controls use, and an unnamed key maps to nothing" {
@@ -218,8 +287,8 @@ test "a key-up translates to a key_up event" {
 test "a key the engine does not name is not consumed, for key-down and key-up alike" {
     const down = keyEvent(c.SDL_EVENT_KEY_DOWN, c.SDL_SCANCODE_Z, false);
     const up = keyEvent(c.SDL_EVENT_KEY_UP, c.SDL_SCANCODE_Z, false);
-    try std.testing.expect(translate(&down) == null);
-    try std.testing.expect(translate(&up) == null);
+    try std.testing.expect(translate(&down, &no_pads) == null);
+    try std.testing.expect(translate(&up, &no_pads) == null);
 }
 
 test "mouse motion translates with its position in points" {
@@ -252,7 +321,7 @@ test "left, right, and middle buttons translate on press and release, and other 
         }
     }
     const extra = buttonEvent(c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_BUTTON_X1);
-    try std.testing.expect(translate(&extra) == null);
+    try std.testing.expect(translate(&extra, &no_pads) == null);
 }
 
 test "quit translates to quit, and an event type the engine does not consume translates to null" {
@@ -262,7 +331,7 @@ test "quit translates to quit, and an event type the engine does not consume tra
         else => return error.WrongEvent,
     }
     const wheel = typeOnly(c.SDL_EVENT_MOUSE_WHEEL);
-    try std.testing.expect(translate(&wheel) == null);
+    try std.testing.expect(translate(&wheel, &no_pads) == null);
 }
 
 test "isDown reports only the key whose scancode is down" {
@@ -272,5 +341,42 @@ test "isDown reports only the key whose scancode is down" {
         for (std.enums.values(Scancode)) |code| {
             try std.testing.expectEqual(code == down, isDown(&keys, code));
         }
+    }
+}
+
+test "a gamepad button from an open device translates to the engine's id and name" {
+    const table = tableWithPad();
+    const down = gamepadButtonEvent(c.SDL_EVENT_GAMEPAD_BUTTON_DOWN, 7, c.SDL_GAMEPAD_BUTTON_SOUTH);
+    switch (translate(&down, &table) orelse return error.NotConsumed) {
+        .gamepad_button_down => |button| {
+            try std.testing.expectEqual(types.GamepadId{ .slot = 2, .generation = 3 }, button.id);
+            try std.testing.expectEqual(types.GamepadButton.south, button.button);
+        },
+        else => return error.WrongEvent,
+    }
+    const up = gamepadButtonEvent(c.SDL_EVENT_GAMEPAD_BUTTON_UP, 7, c.SDL_GAMEPAD_BUTTON_SOUTH);
+    switch (translate(&up, &table) orelse return error.NotConsumed) {
+        .gamepad_button_up => |button| try std.testing.expectEqual(types.GamepadButton.south, button.button),
+        else => return error.WrongEvent,
+    }
+}
+
+test "a gamepad event from a device the table does not hold, or a button the engine does not name, is dropped" {
+    const table = tableWithPad();
+    const stranger = gamepadButtonEvent(c.SDL_EVENT_GAMEPAD_BUTTON_DOWN, 9, c.SDL_GAMEPAD_BUTTON_SOUTH);
+    try std.testing.expect(translate(&stranger, &table) == null);
+    const unnamed = gamepadButtonEvent(c.SDL_EVENT_GAMEPAD_BUTTON_DOWN, 7, c.SDL_GAMEPAD_BUTTON_MISC1);
+    try std.testing.expect(translate(&unnamed, &table) == null);
+}
+
+test "an axis event translates with its value normalized to the engine's range" {
+    const table = tableWithPad();
+    const full = gamepadAxisEvent(7, c.SDL_GAMEPAD_AXIS_LEFTX, 32767);
+    switch (translate(&full, &table) orelse return error.NotConsumed) {
+        .gamepad_axis => |axis| {
+            try std.testing.expectEqual(types.GamepadAxis.left_x, axis.axis);
+            try std.testing.expectApproxEqAbs(@as(f32, 1), axis.value, 1e-6);
+        },
+        else => return error.WrongEvent,
     }
 }

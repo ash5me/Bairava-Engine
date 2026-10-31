@@ -1,17 +1,9 @@
 //! The settings file: `name = value` lines, read once at startup from beside the executable.
 //! Blank lines and lines that start with `#` are comments. This file reads the window settings,
-//! `resolution`, `fullscreen`, and `vsync`. Lines that start with `bind` are key bindings, which
-//! the game reads in game/controls.zig. Each reader skips the lines it doesn't use and reports
-//! values it can't read.
+//! `resolution`, `fullscreen`, and `vsync`. Lines that start with `bind` are input bindings, which
+//! input/mapping.zig reads. Each reader skips the lines it doesn't use and reports values it can't read.
 
 const std = @import("std");
-const input = @import("../input/input.zig");
-
-/// A key the engine can report. Settings name keys with these enum names, such as `left` or `a`.
-pub const Key = input.Key;
-
-/// The most keys one action can be bound to. Extra names in a `bind` line are dropped.
-pub const max_keys_per_action = 4;
 
 /// The smallest and largest window side the settings file accepts, in pixels.
 const min_side: c_int = 64;
@@ -136,35 +128,6 @@ pub fn parseResolution(text: []const u8) ?Size {
     return .{ .width = width, .height = height };
 }
 
-/// The keys named in a `bind` line's value, in order. `skipped` counts names that aren't keys and
-/// keys past `max_keys_per_action`. The reader drops both and reports them.
-pub const KeyList = struct {
-    keys: [max_keys_per_action]Key = undefined,
-    len: usize = 0,
-    skipped: usize = 0,
-};
-
-/// Reads a comma-separated list of key names, such as `left, a`.
-pub fn parseKeyList(text: []const u8) KeyList {
-    var list = KeyList{};
-    var names = std.mem.splitScalar(u8, text, ',');
-    while (names.next()) |raw| {
-        const name = std.mem.trim(u8, raw, " \t");
-        if (name.len == 0) continue;
-        const key = std.meta.stringToEnum(Key, name) orelse {
-            list.skipped += 1;
-            continue;
-        };
-        if (list.len == max_keys_per_action) {
-            list.skipped += 1;
-            continue;
-        }
-        list.keys[list.len] = key;
-        list.len += 1;
-    }
-    return list;
-}
-
 test "Lines skips blank lines and comments, and numbers the rest from 1" {
     var lines = Lines.init("# header\n\nresolution = 960x540\r\n  # indented comment\nfullscreen = true");
     const first = lines.next().?;
@@ -226,25 +189,6 @@ test "applyWindowLine sets window values, keeps the old value on a bad one, and 
     try std.testing.expectEqual(Applied.applied, applyWindowLine(&window, "vsync", "off"));
     try std.testing.expect(!window.vsync);
     try std.testing.expectEqual(Applied.not_window, applyWindowLine(&window, "bind move_left", "a"));
-}
-
-test "parseKeyList reads comma-separated names and counts the ones it skips" {
-    const list = parseKeyList(" left, a, bogus, keypad_plus ");
-    try std.testing.expectEqual(@as(usize, 3), list.len);
-    try std.testing.expectEqual(Key.left, list.keys[0]);
-    try std.testing.expectEqual(Key.a, list.keys[1]);
-    try std.testing.expectEqual(Key.keypad_plus, list.keys[2]);
-    try std.testing.expectEqual(@as(usize, 1), list.skipped);
-}
-
-test "parseKeyList stops at the per-action limit and counts the rest as skipped" {
-    const list = parseKeyList("a, b, d, s, w");
-    try std.testing.expectEqual(@as(usize, max_keys_per_action), list.len);
-    try std.testing.expectEqual(@as(usize, 1), list.skipped);
-}
-
-test "an empty key list has no keys" {
-    try std.testing.expectEqual(@as(usize, 0), parseKeyList("  ").len);
 }
 
 test "settings window values override explicit startup values and malformed values keep the override" {

@@ -23,9 +23,23 @@ pub const run = @import("runtime.zig").run;
 /// How the native view is fitted to the window. See `view.chooseFit`.
 pub const ScaleMode = @import("../renderer/view.zig").ScaleMode;
 
-/// Keys and mouse state for the game. See input/input.zig.
+/// Keys, mouse, and gamepad state for the game. See input/input.zig.
 pub const Input = @import("../input/input.zig").Input;
 pub const Key = @import("../input/input.zig").Key;
+/// Physical controls that actions can be bound to: a key, a mouse button, a gamepad button, or half of
+/// a gamepad axis. See input/action.zig.
+pub const Binding = @import("../input/action.zig").Binding;
+/// Maps the game's actions to their bindings. Build one from `ActionDefaults`, and ask it about actions
+/// each update step. See input/action.zig.
+pub const ActionMap = @import("../input/action.zig").ActionMap;
+/// The starting bindings of an action enum, as a table indexed by action. See input/action.zig.
+pub const ActionDefaults = @import("../input/action.zig").Defaults;
+/// Reads the `bind` lines of the settings file over a game's defaults. See input/mapping.zig.
+pub const bindings = @import("../input/mapping.zig");
+/// The buttons and axes of a standard gamepad, and the mouse buttons, as bindings name them.
+pub const MouseButton = @import("../platform/types.zig").MouseButton;
+pub const GamepadButton = @import("../platform/types.zig").GamepadButton;
+pub const GamepadAxis = @import("../platform/types.zig").GamepadAxis;
 pub const Camera = @import("../renderer/camera.zig").Camera;
 pub const Rect = @import("../renderer/sprite.zig").Rect;
 pub const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;

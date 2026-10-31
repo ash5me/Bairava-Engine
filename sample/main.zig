@@ -1,6 +1,10 @@
-//! Sample game for the scene system and the entity world. It uses only the public Bairava API and
-//! imports nothing from Semkootru. Space switches between the red and blue squares, and Tab opens the
-//! swarm from either square. Tab in the swarm returns to the red square. Escape quits.
+//! Sample game for the scene system, the entity world, and semantic input. It uses only the public
+//! Bairava API and imports nothing from Semkootru. Space switches between the red and blue squares, and
+//! Tab opens the swarm from either square. Tab in the swarm returns to the red square. Escape quits.
+//!
+//! The controls are actions, not keys. Each one answers to a keyboard key and to a gamepad button, so the
+//! same action works from either: the gamepad's south button is the same as Space, and its Start button
+//! is the same as Escape. A left click also opens and closes the swarm.
 //!
 //! Each square scene loads its texture in `init` and releases it in `deinit`. Textures loaded through
 //! the asset loader keep a little host bookkeeping until the run ends, so each switch adds a small amount
@@ -10,6 +14,17 @@ const engine = @import("bairava");
 
 /// A 4x4 white PNG beside the executable. Drawing it with a tint gives a solid square.
 const white_path = "assets/sample/white.png";
+
+/// What the player can ask for. The bindings below say which keys and buttons ask for it.
+const Action = enum { switch_square, toggle_swarm, quit };
+
+/// The sample's bindings. Each action lists its keyboard key first, then its gamepad button, and the
+/// swarm also has a mouse button.
+const bindings = engine.ActionMap(Action).fromDefaults(engine.ActionDefaults(Action).init(.{
+    .switch_square = &.{ .{ .key = .space }, .{ .gamepad_button = .south } },
+    .toggle_swarm = &.{ .{ .key = .tab }, .{ .gamepad_button = .north }, .{ .mouse = .left } },
+    .quit = &.{ .{ .key = .escape }, .{ .gamepad_button = .start } },
+}));
 
 const config = engine.Config{
     .title = "Bairava sample",
@@ -42,9 +57,9 @@ const Red = struct {
 
     pub fn update(self: *Red, ctx: *engine.Context, nav: *engine.SceneNavigator) void {
         _ = self;
-        if (ctx.input.wasPressed(.space)) nav.switchTo(Blue);
-        if (ctx.input.wasPressed(.tab)) nav.switchTo(Swarm);
-        if (ctx.input.wasPressed(.escape)) ctx.running = false;
+        if (bindings.pressed(ctx.input, .switch_square)) nav.switchTo(Blue);
+        if (bindings.pressed(ctx.input, .toggle_swarm)) nav.switchTo(Swarm);
+        if (bindings.pressed(ctx.input, .quit)) ctx.running = false;
     }
 
     pub fn draw(self: *Red, dc: *const engine.DrawContext) void {
@@ -66,9 +81,9 @@ const Blue = struct {
 
     pub fn update(self: *Blue, ctx: *engine.Context, nav: *engine.SceneNavigator) void {
         _ = self;
-        if (ctx.input.wasPressed(.space)) nav.switchTo(Red);
-        if (ctx.input.wasPressed(.tab)) nav.switchTo(Swarm);
-        if (ctx.input.wasPressed(.escape)) ctx.running = false;
+        if (bindings.pressed(ctx.input, .switch_square)) nav.switchTo(Red);
+        if (bindings.pressed(ctx.input, .toggle_swarm)) nav.switchTo(Swarm);
+        if (bindings.pressed(ctx.input, .quit)) ctx.running = false;
     }
 
     pub fn draw(self: *Blue, dc: *const engine.DrawContext) void {
@@ -156,8 +171,8 @@ const Swarm = struct {
     }
 
     pub fn update(self: *Swarm, ctx: *engine.Context, nav: *engine.SceneNavigator) void {
-        if (ctx.input.wasPressed(.tab)) nav.switchTo(Red);
-        if (ctx.input.wasPressed(.escape)) ctx.running = false;
+        if (bindings.pressed(ctx.input, .toggle_swarm)) nav.switchTo(Red);
+        if (bindings.pressed(ctx.input, .quit)) ctx.running = false;
 
         // Spawning happens here, outside the system's loop, so it cannot disturb the walk.
         self.spawn_accum += spawn_rate * ctx.dt;

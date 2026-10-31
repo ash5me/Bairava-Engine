@@ -4,7 +4,7 @@
 //!
 //! Order, as `core/lifecycle.zig` calls it. Startup: settings are read, then `init`, then the
 //! window, the GPU device, and the audio device. Shutdown: the audio device, the batches, the
-//! target, the GPU, and the window are released, then `shutdown`.
+//! target, the GPU, and the window are released, then the gamepads (see platform.zig), then `shutdown`.
 
 const std = @import("std");
 
@@ -12,10 +12,12 @@ const c = @import("sdl.zig").c;
 const logging = @import("../../logging/log.zig");
 
 const audio_log = logging.scoped("audio");
+const gamepad_log = logging.scoped("gamepad");
 
-/// Starts SDL's video subsystem, which the window and GPU need, and its audio subsystem. A video
-/// failure is fatal, so this panics. An audio failure is logged, and the game runs silent, since the
-/// audio backend opens no device when the subsystem is not up.
+/// Starts SDL's video subsystem, which the window and GPU need, and its audio and gamepad subsystems.
+/// A video failure is fatal. An audio failure is logged, and the game runs silent, since the audio
+/// backend opens no device when the subsystem is not up. A gamepad failure is logged, and the game
+/// runs on the keyboard and mouse.
 pub const InitError = error{
     VideoInitFailed,
 };
@@ -27,6 +29,9 @@ pub fn init() InitError!void {
     }
     if (!c.SDL_InitSubSystem(c.SDL_INIT_AUDIO)) {
         audio_log.warn("audio subsystem unavailable, continuing silent: {s}", .{c.SDL_GetError()});
+    }
+    if (!c.SDL_InitSubSystem(c.SDL_INIT_GAMEPAD)) {
+        gamepad_log.warn("gamepad subsystem unavailable, continuing without controllers: {s}", .{c.SDL_GetError()});
     }
 }
 

@@ -175,7 +175,7 @@ defer zone.End();
 | F9 | Load the game from `save.json` |
 | Left mouse button | Presses the demo panel's button and drags its slider. |
 
-Keys are bound to named actions in `game/controls.zig`. The defaults are in the table above, and `settings.txt` can rebind them.
+Keys are bound to named actions in `game/controls.zig`. The defaults are in the table above, and `settings.txt` can rebind them to keys, mouse buttons, gamepad buttons, or gamepad stick and trigger halves. Semkootru's defaults are keyboard only, so a gamepad needs a `bind` line, for example `bind move_left = pad_dpad_left, pad_left_x-`.
 
 ### Settings file
 
@@ -186,7 +186,7 @@ The game reads `settings.txt` from beside the executable at startup. The project
 | `resolution` | `WIDTHxHEIGHT` in pixels, each from 64 to 8192 | `960x540` |
 | `fullscreen` | `true` or `false`. `yes`/`no` and `on`/`off` also work. | `false` |
 | `vsync` | `true` or `false`, or `on`/`off` and `yes`/`no`. Off presents frames as soon as they are ready, which can tear. | `true` |
-| `bind <action> = <key>, ...` | Replaces the keys for one action, up to 4 keys. Key names are listed in `settings.txt`. | The keys in the table above |
+| `bind <action> = <binding>, ...` | Replaces the bindings for one action, up to 4. Keys use their names (`left`, `a`, `f5`). Mouse buttons are `mouse_left`, `mouse_right`, and `mouse_middle`. Gamepad buttons are `pad_` and the name, such as `pad_south` or `pad_dpad_left`. Stick halves are `pad_left_x-` or `pad_right_y+`, and triggers are `pad_left_trigger`. The full grammar is in `src/engine/input/mapping.zig`. | The keys in the table above |
 
 The action names for `bind` are `move_left`, `move_right`, `move_up`, `move_down`, `quit`, `toggle_scale`, `zoom_in`, `zoom_out`, `zoom_reset`, `save_game`, and `load_game`.
 
@@ -208,7 +208,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │   ├── context.zig    `Context` (init and update), `DrawContext` (draw), and asset loading through them
 │   │   │   ├── lifecycle.zig  `Session`: startup and shutdown of settings, platform, window, GPU, batches, input, audio
 │   │   │   ├── event.zig      Event pump: quit, F11 fullscreen, F3 overlay, and input events
-│   │   │   ├── settings.zig   Settings file: name = value lines, window settings, key bind lines
+│   │   │   ├── settings.zig   Settings file: name = value lines and the window settings. `bind` lines are read by input/mapping.zig
 │   │   │   └── math.zig       cglm wrappers: projection, transforms, normalization. The only cglm import
 │   │   ├── platform/          SDL-free engine contract and the SDL implementation
 │   │   │   ├── platform.zig   Explicit forwarders for files, events, window, clock, audio, and GPU
@@ -220,7 +220,8 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │       ├── clock.zig  Monotonic time and delay
 │   │   │       ├── window.zig Window creation, fullscreen, pixel size and density
 │   │   │       ├── gpu.zig    GPU device, swapchain, frame acquire/submit, and idle wait
-│   │   │       ├── input.zig  SDL events and keyboard state into platform events
+│   │   │       ├── input.zig  SDL events, keyboard, mouse, and gamepad state into platform events
+│   │       ├── gamepad.zig  The open gamepads: SDL ids to engine ids, and buttons and axes to engine names
 │   │   │       └── audio.zig  Playback device, WAV decoding, conversion, and SDL streams
 │   │   ├── renderer/          Drawing
 │   │   │   ├── renderer.zig   Render passes and color targets, on engine-owned types
@@ -245,7 +246,10 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │       ├── image.zig  Image decoding through stb_image, to RGBA8
 │   │   │       └── atlas.zig  Texture atlas index: parsing and lookup by name
 │   │   ├── input/
-│   │   │   └── input.zig      `Key` enum, held, pressed, released, and mouse state. No platform code
+│   │   │   ├── input.zig      Keys, mouse buttons, and gamepad slots: held, pressed, and released. No platform code
+│   │   │   ├── gamepad.zig    Gamepad slots: buttons and axes, the dead zone, and the threshold for stick halves
+│   │   │   ├── action.zig     `ActionMap`: the bindings of each game action, and how each one reads
+│   │   │   └── mapping.zig    Reads `bind` lines from the settings file into an action map
 │   │   ├── audio/
 │   │   │   ├── audio.zig      Sound ownership, loading, and playback API through the platform facade
 │   │   │   ├── voices.zig     Voice handles, gain, and the finish and loop rules. No SDL
@@ -341,7 +345,7 @@ Zoom multiplies the scale, and the view size follows from it. At zoom 2 the scal
 The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing runs once per frame.
 
 1. Measure the frame time since the last frame, capped at 0.1 s.
-2. Drain the SDL event queue. The engine handles quit requests, F11, and F3. Key and mouse events update the held state, and presses, releases, and clicks wait in `Input` for the next update step.
+2. Drain the SDL event queue. The engine handles quit requests, F11, and F3. Key, mouse, and gamepad events update the held state, and presses and releases wait in `Input` for the next update step.
 3. Add the frame time to an accumulator. While it holds at least one fixed step (1/60 s by default), latch the pending input so it reaches exactly one update, run game `update` with `ctx.dt` set to that step, and subtract the step. Stop early if the game sets `running` to false.
 4. Game `update`: read actions from `game/controls.zig`. Quit, scale toggle, and zoom act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and solid tiles stop the player's feet on each axis, so the player slides along walls.
 5. Compute `alpha`, the leftover fraction of a step, from 0 to 1. Drawing blends between the last two updates with it, so motion stays smooth when the display rate and update rate differ.
@@ -368,7 +372,7 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 | Name | Version | Used for | License |
 |---|---|---|---|
 | Zig | 0.16.0-dev, pinned by `minimum_zig_version` | Language, build system, standard library | MIT |
-| SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard state, SDL_GPU API, file loading, timing, memory, audio streams | zlib |
+| SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard and gamepad state, SDL_GPU API, file loading, timing, memory, audio streams | zlib |
 | stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8, and image validation in the importer (`tools/assets/import.c`) and the keyer (`tools/assets/keyer.c`) | Public domain or MIT |
 | stb_image_write | Vendored in `vendor/` | Writing `atlas.png` in the build's atlas packer | Public domain or MIT |
 | stb_rect_pack | Vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
@@ -426,7 +430,9 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 - Text becomes one quad per glyph, decoded from UTF-8. `Font.load` lazily rasterizes and caches codepoints outside the baked range from the retained font source; unsupported glyphs draw as `?`.
 - Immediate-mode widgets in `src/engine/ui/imgui.c`: label, button, and slider. Hover and press are tracked through two ids, and a `##` suffix tells duplicate labels apart without drawing the suffix.
 - `src/engine/ui/ui.zig` uploads the font and queues the UI quads as sprites at z 1000, so they draw above the world.
-- Input tracks the left button's held state, and its press and release each reach one update step.
+- Input tracks the held state of keys and all three mouse buttons, and each press and release reaches one update step.
+- Semantic actions: a game names its actions and binds each to keys, mouse buttons, gamepad buttons, or stick and trigger halves. A key and a gamepad button can trigger the same action. The sample switches scenes with either.
+- Gamepads through SDL: hotplug, a dead zone on sticks, and the first gamepad connected as the primary one. Presses and releases latch like keys.
 - A demo panel in `game/game.zig` (a label, a click counter, and a volume slider) runs in the update step, as a first end-to-end check of the text and widget path.
 
 **Math and data**
@@ -473,7 +479,9 @@ These estimates are rough. They measure how close each area is to something usab
 | Animation | `animation/animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
 | Level | `game/level.zig` | Early | 50% | Loads the tile map and reports its size. Drawing is in `engine/renderer/tilemap_draw.zig`, one layer at a time in ground, decoration, player, foreground order, with culling. Solid tiles block the player. No tile animation. |
 | Tile map | `engine/scene/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |
-| Input | `input/input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. The left button's held, pressed, and released state is tracked for the UI. Clicks don't store a position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `input/input.zig` and run through `src/tests.zig`. |
+| Input | `input/input.zig` | Functional | 75% | Held, pressed, and released keys and mouse buttons. One-shot input reaches exactly one update step. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. Clicks don't store a position yet. No text input. Unit tests run through `src/tests.zig`. |
+| Actions | `input/action.zig`, `input/mapping.zig` | Functional | 70% | `ActionMap` evaluates each game action from any of its bindings: keys, mouse buttons, gamepad buttons, and stick or trigger halves. `bind` lines in the settings file replace an action's bindings, and problems are logged. Missing: rebinding UI, which is out of scope for P1. |
+| Gamepad | `input/gamepad.zig`, `platform/sdl/gamepad.zig` | Functional | 65% | Connect and disconnect with hotplug, the first gamepad connected as the primary, a dead zone on sticks, and a stale id is ignored once its slot is reused. Unit-tested without SDL. Not yet checked with a physical controller. Missing: rumble, sensors, and per-player routing. |
 | View mapping | `renderer/view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
 | Build | `build.zig`, `.github/workflows/ci.yml` | Functional | 70% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, optional DXIL and MSL), the texture atlas, the asset keyer, run step, and test step. CI builds and tests on Linux, macOS, and Windows. |
 | Assets | `tools/assets/keyer.c` | Utility | 30% | Cross-platform checkerboard keyer with configurable color thresholds, connected-border flood fill, and PNG output. It replaces the old one-off PowerShell script; it is not a general asset pipeline. |
@@ -499,7 +507,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add camera effects.** The camera is a position and a view size. `followSmooth` eases toward the clamped target, and `camera_rate` in `game/config.zig` sets how fast. Shake is an offset applied after `follow`. Zoom is already in place: `Context.zoomBy` and `resetZoom` set the target, `engine/core/engine.zig` eases `Camera.zoom` toward it each frame, and `view.chooseFit` turns the zoom into a scale and a view size. Drawing and culling read the view size, so they need no changes. To change the limits or the step, edit `zoom_min`, `zoom_max`, `zoom_step`, and `zoom_rate` in `game/config.zig`.
 
-**Add input actions.** Add a name to `Action` in `game/controls.zig`, give it default keys in `defaultKeys`, and query it with `self.bindings.held`, `self.bindings.pressed`, or `self.bindings.released`. The settings file can then bind it with a `bind` line. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input/input.zig` and map it to its SDL scancode. A new key name works in `bind` lines as soon as it is in `Key`.
+**Add input actions.** Add a name to `Action` in `game/controls.zig` and give it default bindings in `defaults`. Query it with `self.bindings.held(input, .name)`, `pressed`, `released`, or `value`, where `value` is the strength from 0 to 1 that an analog stick sets. The settings file can then bind it with a `bind` line. Gameplay never checks a key or a button directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input/input.zig` and map it to its SDL scancode, and it works in `bind` lines at once. To use a gamepad button the engine doesn't name yet, add it to `GamepadButton` in `platform/types.zig` and map its SDL name in `platform/sdl/gamepad.zig`.
 
 **Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `renderer/backends/sdl_gpu/sprite.zig` with the stage, resource counts, and embedded code for each format. DXIL and MSL slices are empty unless enabled with `-Ddxil=true` or `-Dmetal=true`. Follow the target-specific resource declarations in `default.slang`; Slang emits Metal texture and sampler arguments for MSL. Load it with `shader.load` and create a pipeline the way `backends/sdl_gpu/sprite.zig`'s `create` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
 
@@ -612,7 +620,7 @@ The engine is currently a 2D project, so prioritize textures, audio, and fonts r
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
 - SDL's C header is imported once in `platform/sdl/sdl.zig`. SDL imports and names are allowed in `platform/sdl/`, the forwarding contract, `src/tests.zig` backend-test imports, and the SDL GPU backend in `renderer/backends/sdl_gpu/`; Linux CI enforces this list with `scripts/boundary_scan.py --fail`. Core code uses the platform facade and renderer-owned values, not SDL declarations. Unrelated C integrations such as cglm, Parson, stb_image, and the UI bridge are outside this SDL boundary. Only `core/math.zig` imports cglm's headers, and only `profiling/profile.zig` imports ztracy.
 - The C code for text and widgets lives in `src/engine/ui/` and never touches SDL or the GPU. `text.c` uses stb_truetype for TrueType and FreeType for CFF-capable font rasterization; `vendor/stb_truetype_impl.c` provides stb_truetype's implementation. `ui/ui.zig` is the one bridge from that code to the sprite batch.
-- `core/math.zig`, `memory/string.zig`, `memory/hash_map.zig`, `assets/registry.zig`, `assets/cache.zig`, `assets/loaders/atlas.zig`, `memory/vector.zig`, `ecs/entity.zig`, `renderer/view.zig`, `scene/tilemap.zig`, `scene/scene_manager.zig`, `physics/collision.zig`, `physics/queries.zig`, `renderer/camera.zig`, `animation/animation.zig`, and `audio/voices.zig` are device-independent and have unit tests. Keep new pure code the same way when you can. Platform backend and renderer GPU tests may use SDL declarations but do not open a window or create a GPU device.
+- `core/math.zig`, `memory/string.zig`, `memory/hash_map.zig`, `assets/registry.zig`, `assets/cache.zig`, `assets/loaders/atlas.zig`, `memory/vector.zig`, `ecs/entity.zig`, `renderer/view.zig`, `scene/tilemap.zig`, `scene/scene_manager.zig`, `physics/collision.zig`, `physics/queries.zig`, `renderer/camera.zig`, `animation/animation.zig`, `audio/voices.zig`, `input/input.zig`, `input/gamepad.zig`, `input/action.zig`, and `input/mapping.zig` are device-independent and have unit tests. Keep new pure code the same way when you can. Platform backend and renderer GPU tests may use SDL declarations but do not open a window or create a GPU device.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/core/engine.zig`.
 - Startup failures (configuration, window, GPU device, and the game's `init`) are logged, release what was opened, and come back from `engine.run` as an error. GPU resources created once the device is running (textures, shaders, pipelines, buffers) panic with the SDL message, because the engine can't continue without them. Asset loaders return Zig errors. Ownership rules are in `docs/ownership.md`.

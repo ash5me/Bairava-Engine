@@ -114,9 +114,9 @@ pub const Ui = struct {
         const frame = c.ui_input{
             .mouse_x = pointer.x,
             .mouse_y = pointer.y,
-            .mouse_down = @intFromBool(in_state.mouse_down),
-            .mouse_pressed = @intFromBool(in_state.mouse_pressed),
-            .mouse_released = @intFromBool(in_state.mouse_released),
+            .mouse_down = @intFromBool(in_state.mouseDown(.left)),
+            .mouse_pressed = @intFromBool(in_state.mousePressed(.left)),
+            .mouse_released = @intFromBool(in_state.mouseReleased(.left)),
         };
         c.ui_begin(self.ctx, &frame, x, y, width);
     }

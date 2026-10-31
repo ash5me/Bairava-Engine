@@ -1,6 +1,6 @@
 //! Drains the platform event queue once per frame. Quit, F11 (fullscreen), and F3 (overlay) are
-//! handled here. Every event also reaches the input state, which keeps presses and clicks until the
-//! next update step takes them.
+//! handled here. Every event also reaches the input state, which keeps presses, releases, and clicks
+//! until the next update step takes them. Gamepads connecting and leaving are logged here as well.
 
 const platform = @import("../platform/platform.zig");
 const Input = @import("../input/input.zig").Input;
@@ -37,6 +37,8 @@ pub fn pump(window: *platform.Window, input: *Input) Result {
                     }
                 }
             },
+            .gamepad_added => |id| elog.info("gamepad connected in slot {d}", .{id.slot}),
+            .gamepad_removed => |id| elog.info("gamepad removed from slot {d}", .{id.slot}),
             else => {},
         }
         input.apply(event);
