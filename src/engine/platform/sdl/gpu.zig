@@ -5,6 +5,8 @@ const std = @import("std");
 const embedded = @import("embedded_shaders");
 const c = @import("sdl.zig").c;
 const profile = @import("../../profiling/profile.zig");
+const types = @import("../types.zig");
+const window_backend = @import("window.zig");
 
 /// A frame in progress: the command buffer and the swapchain texture it draws to.
 pub const Frame = struct {
@@ -18,12 +20,14 @@ pub const Frame = struct {
 /// Owns the GPU device and the window's swapchain. Each frame runs in this order:
 /// beginFrame, uploads, beginPass, draws, endPass, then endFrame.
 pub const Gpu = struct {
+    /// The SDL window this device is claimed for. It stays inside the backend.
     window: *c.SDL_Window,
     device: *c.SDL_GPUDevice,
 
     /// Creates the GPU device and claims the window for it.
     /// `window` must outlive the returned Gpu.
-    pub fn init(window: *c.SDL_Window, gpu_debug: bool) Gpu {
+    pub fn init(window: *types.Window, gpu_debug: bool) Gpu {
+        const sdl_window = window_backend.toSdl(window);
         // Request Vulkan 1.2 so the device accepts SPIR-V 1.5, which Slang emits by default.
         // Version 1.2.0 is (1 << 22) | (2 << 12); Zig can't translate VK_MAKE_API_VERSION.
         var vk_opts = std.mem.zeroes(c.SDL_GPUVulkanOptions);
@@ -53,11 +57,11 @@ pub const Gpu = struct {
             std.debug.panic("SDL_CreateGPUDeviceWithProperties failed: {s}", .{c.SDL_GetError()});
         };
 
-        if (!c.SDL_ClaimWindowForGPUDevice(device, window)) {
+        if (!c.SDL_ClaimWindowForGPUDevice(device, sdl_window)) {
             std.debug.panic("SDL_ClaimWindowForGPUDevice failed: {s}", .{c.SDL_GetError()});
         }
 
-        return .{ .window = window, .device = device };
+        return .{ .window = sdl_window, .device = device };
     }
 
     /// The format the window's swapchain uses. Textures and pipelines that draw

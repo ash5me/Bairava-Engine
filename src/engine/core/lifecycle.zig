@@ -28,7 +28,7 @@ pub const Session = struct {
     base_path: []const u8,
     /// Text of the settings file. It is kept for the whole run, because the game reads from it.
     settings_bytes: ?[]u8 = null,
-    window: *c.SDL_Window = undefined,
+    window: *platform.Window = undefined,
     gpu: platform.gpu.Gpu = undefined,
     /// The swapchain format. Targets and pipelines use it so they can be drawn into the window.
     format: c.SDL_GPUTextureFormat = undefined,
@@ -101,7 +101,7 @@ pub const Session = struct {
         self.target.deinit();
         // The device must go before the window, because it is still claimed for that window.
         self.gpu.deinit();
-        c.SDL_DestroyWindow(self.window);
+        platform.window.destroy(self.window);
         c.SDL_Quit();
         if (self.settings_bytes) |bytes| std.heap.page_allocator.free(bytes);
     }

@@ -2,7 +2,6 @@
 //! handled here. Every event also reaches the input state, which keeps presses and clicks until the
 //! next update step takes them.
 
-const c = @import("../platform/sdl/sdl.zig").c;
 const platform = @import("../platform/platform.zig");
 const Input = @import("../input/input.zig").Input;
 const logging = @import("../logging/log.zig");
@@ -17,8 +16,7 @@ pub const Result = struct {
 };
 
 /// Handles every queued platform event. Keyboard and mouse state is updated as each event arrives.
-/// The window is still an SDL window here. The window step changes it to `platform.Window`.
-pub fn pump(window: *c.SDL_Window, input: *Input) Result {
+pub fn pump(window: *platform.Window, input: *Input) Result {
     var result = Result{};
     while (platform.events.poll()) |event| {
         switch (event) {
