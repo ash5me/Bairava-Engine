@@ -117,13 +117,13 @@ fn clamp01(x: f32) f32 {
 
 /// A voice has finished when it isn't looping and nothing is left in its stream, neither queued
 /// input nor converted output. A looping voice never finishes on its own.
-pub fn isFinished(looping: bool, queued_bytes: c_int, available_bytes: c_int) bool {
+pub fn isFinished(looping: bool, queued_bytes: i32, available_bytes: i32) bool {
     return !looping and queued_bytes <= 0 and available_bytes <= 0;
 }
 
 /// A looping voice needs another copy of its sound when less than one full copy is still queued.
 /// Adding the copy before the queue runs dry is what keeps the loop seamless.
-pub fn needsLoopCopy(queued_bytes: c_int, sound_bytes: c_int) bool {
+pub fn needsLoopCopy(queued_bytes: i32, sound_bytes: i32) bool {
     return queued_bytes < sound_bytes;
 }
 

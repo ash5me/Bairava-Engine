@@ -35,6 +35,7 @@ test {
     _ = @import("engine/platform/sdl/audio.zig");
     _ = @import("engine/platform/sdl/init.zig");
     _ = @import("engine/platform/sdl/clock.zig");
+    _ = @import("engine/platform/sdl/files.zig");
     _ = @import("engine/logging/log.zig");
     _ = @import("engine/platform/sdl/window.zig");
     _ = @import("engine/physics/shapes.zig");

@@ -54,3 +54,46 @@ pub const Window = opaque {};
 /// A window size in pixels. This is the swapchain size, which on high-DPI displays is larger than the
 /// window's size in points.
 pub const PixelSize = struct { w: c_int, h: c_int };
+
+/// Where a file lives. `.packaged` holds the shipped assets and is read-only. `.beside_executable`
+/// holds settings, the log, and save data, and it is the only location that accepts writes.
+pub const Location = enum { packaged, beside_executable };
+
+/// The longest full path the file API builds, in bytes. A longer path is an error, never a cut-off.
+pub const max_full_path = 1024;
+
+/// Errors from file access. `NotFound` means the path does not exist. Any other failure to read
+/// is `ReadFailed`.
+pub const FileError = error{ NotFound, ReadFailed, WriteFailed, ReadOnlyLocation, PathTooLong, OutOfMemory };
+
+/// An open playback device. The engine holds a pointer to it, and only the SDL backend knows what it means.
+pub const AudioDevice = opaque {};
+
+/// A playback stream that is bound to a device. Like `AudioDevice`, the backend gives it meaning.
+pub const AudioStream = opaque {};
+
+/// How one sample is stored. These are the only sample kinds the engine handles.
+pub const SampleKind = enum { uint8, int16, int32, float32 };
+
+/// Interleaved PCM: the sample rate in Hz, the channel count, and the sample kind.
+pub const PcmFormat = struct {
+    sample_rate: u32,
+    channels: u8,
+    kind: SampleKind,
+};
+
+/// Decoded PCM bytes, with the format they are in. The caller owns `samples`.
+pub const PcmBuffer = struct {
+    samples: []u8,
+    format: PcmFormat,
+};
+
+/// A playback device that opened, and the format the engine mixes in for it.
+pub const OpenedAudio = struct {
+    device: *AudioDevice,
+    format: PcmFormat,
+};
+
+/// Errors from the audio backend's decoding and conversion. Device and stream failures are optional
+/// returns, and the engine turns them into its own errors.
+pub const AudioError = error{ DecodeFailed, ConvertFailed, OutOfMemory };
