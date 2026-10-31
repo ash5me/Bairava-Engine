@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""Platform-boundary scanner for the SDL migration (migration.md, Steps 0 and 9).
+
+Finds references to SDL and to C bindings under src/, classifies each hit
+against ALLOWLIST (migration.md, decision D9), and reports three groups:
+
+  * violations in files reachable from the build roots. These produce CI
+    warnings. With --fail they also fail the run (Step 9).
+  * allowed hits, listed separately so they do not read as problems.
+  * hits in unreachable files. These are dead code that Step 1 removes, so
+    they are reported as notices and never fail.
+
+Categories
+  sdl_name        an SDL_ or SDLK_ name, or a use of an SDL import alias, in code
+  sdl_import      an import of platform/sdl/sdl.zig, or an SDL3 include
+  backend_import  an import of another platform/sdl/ file from outside that folder
+  c_binding       a non-SDL C binding: an @cImport, or a use of a c.zig alias
+
+Comments are removed, and string-literal bodies are blanked before matching,
+so text in comments and strings does not count as a reference. SDL names that
+appear only inside strings (for example a panic message) are listed as
+information, not as violations.
+
+Usage:
+  python3 scripts/boundary_scan.py                 report; exit 0
+  python3 scripts/boundary_scan.py --fail          exit 1 on reachable violations
+  python3 scripts/boundary_scan.py --report FILE   also write the report to FILE
+"""
+
+import argparse
+import os
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SRC = ROOT / "src"
+BUILD_ROOTS = ["src/main.zig", "src/tests.zig"]
+SDL_BACKEND_DIR = "src/engine/platform/sdl/"
+
+ALL_CATEGORIES = {"sdl_name", "sdl_import", "backend_import", "c_binding"}
+
+# (path or directory prefix ending in "/", allowed categories, reason).
+# Source: migration.md D9. A file missing here must have no hits.
+ALLOWLIST = [
+    ("src/engine/platform/sdl/", ALL_CATEGORIES,
+     "platform/sdl: the SDL implementation"),
+    ("src/engine/renderer/renderer.zig", {"sdl_name", "sdl_import"},
+     "render passes and command buffers use SDL_GPU types"),
+    ("src/engine/renderer/shader.zig", {"sdl_name", "sdl_import"},
+     "SDL_GPU shader creation and format flags"),
+    ("src/engine/renderer/sprite.zig", {"sdl_name", "sdl_import"},
+     "SDL_GPU pipelines, buffers, and draws"),
+    ("src/engine/renderer/texture.zig", {"sdl_name", "sdl_import"},
+     "SDL_GPU textures, samplers, and transfer buffers"),
+    ("src/engine/text/font.zig", {"sdl_name", "sdl_import"},
+     "SDL_GPUDevice in signatures; drops off once it uses platform.gpu.Device"),
+    ("src/tests.zig", {"sdl_name", "sdl_import", "backend_import"},
+     "colorTargetInfo test and backend tests; drops off once moved"),
+]
+
+IMPORT_RE = re.compile(r'@import\("([^"]+)"\)')
+DECL_IMPORT_RE = re.compile(r'(?:pub\s+)?const\s+(\w+)\s*=\s*@import\("([^"]+)"\)')
+DECL_CIMPORT_RE = re.compile(r'(?:pub\s+)?const\s+(\w+)\s*=\s*@cImport\b')
+SDL_NAME_RE = re.compile(r'\bSDLK?_[A-Za-z0-9_]+')
+C_INCLUDE_SDL_RE = re.compile(r'#\s*include\s*[<"]SDL3/')
+
+
+def allowed_for(rel):
+    for key, cats, why in ALLOWLIST:
+        if (key.endswith("/") and rel.startswith(key)) or rel == key:
+            return set(cats), why
+    return set(), None
+
+
+def split_code(raw, is_c, in_block):
+    """Return (code, strings, in_block). Comments are dropped; string bodies are blanked."""
+    code, strings = [], []
+    i, n = 0, len(raw)
+    while i < n:
+        if in_block:
+            j = raw.find("*/", i)
+            if j < 0:
+                return "".join(code), strings, True
+            i, in_block = j + 2, False
+            continue
+        if raw.startswith("//", i):
+            break
+        if is_c and raw.startswith("/*", i):
+            in_block, i = True, i + 2
+            continue
+        ch = raw[i]
+        if ch in ("'", '"'):
+            j, buf = i + 1, []
+            while j < n and raw[j] != ch:
+                if raw[j] == "\\" and j + 1 < n:
+                    buf.append(raw[j:j + 2])
+                    j += 2
+                else:
+                    buf.append(raw[j])
+                    j += 1
+            strings.append("".join(buf))
+            code.append(ch + ch)
+            i = j + 1
+            continue
+        code.append(ch)
+        i += 1
+    return "".join(code), strings, in_block
+
+
+def scan_file(path, rel):
+    is_c = path.suffix in (".c", ".h")
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+    parsed, in_block = [], False
+    for raw in lines:
+        if not is_c and raw.lstrip().startswith("\\\\"):  # Zig multi-line string
+            parsed.append(("", [raw.lstrip()[2:]]))
+            continue
+        code, strings, in_block = split_code(raw, is_c, in_block)
+        parsed.append((code, strings))
+
+    all_strings = [s for _, ss in parsed for s in ss]
+    file_is_sdl_cimport = any(s.startswith("SDL3/") for s in all_strings)
+
+    sdl_aliases, c_aliases = set(), set()
+    if not is_c:
+        for raw in lines:
+            bare = raw.split("//", 1)[0]
+            for m in DECL_IMPORT_RE.finditer(bare):
+                name, target = m.group(1), m.group(2)
+                base = target.rsplit("/", 1)[-1]
+                if base == "sdl.zig":
+                    sdl_aliases.add(name)
+                elif base == "c.zig":
+                    c_aliases.add(name)
+            for m in DECL_CIMPORT_RE.finditer(bare):
+                (sdl_aliases if file_is_sdl_cimport else c_aliases).add(m.group(1))
+
+    alias_use = {a: re.compile(r'(?<![\w.])' + re.escape(a) + r'\.[A-Za-z_]')
+                 for a in sdl_aliases | c_aliases}
+
+    hits, info = {}, []
+    for lineno, (raw, (code, strings)) in enumerate(zip(lines, parsed), 1):
+        cats = set()
+        if is_c:
+            if C_INCLUDE_SDL_RE.search(raw):
+                cats.add("sdl_import")
+        else:
+            for m in IMPORT_RE.finditer(raw.split("//", 1)[0]):
+                target = m.group(1)
+                resolved = os.path.normpath(os.path.join(os.path.dirname(rel), target)).replace(os.sep, "/")
+                base = os.path.basename(resolved)
+                if resolved.startswith(SDL_BACKEND_DIR) and not rel.startswith(SDL_BACKEND_DIR):
+                    cats.add("sdl_import" if base == "sdl.zig" else "backend_import")
+                elif base == "sdl.zig":
+                    cats.add("sdl_import")
+                elif base == "c.zig":
+                    cats.add("c_binding")
+            if "@cImport" in code:
+                cats.add("sdl_import" if file_is_sdl_cimport else "c_binding")
+            if SDL_NAME_RE.search(code):
+                cats.add("sdl_name")
+            for a in sdl_aliases:
+                if alias_use[a].search(code):
+                    cats.add("sdl_name")
+            for a in c_aliases:
+                if alias_use[a].search(code):
+                    cats.add("c_binding")
+        if cats:
+            hits[lineno] = frozenset(cats)
+        elif SDL_NAME_RE.search(" ".join(strings)):
+            info.append(lineno)
+
+    allowed, why = allowed_for(rel)
+    return {"rel": rel, "is_c": is_c, "lines": lines, "hits": hits, "info": info,
+            "allowed": allowed, "why": why}
+
+
+def reachable_zig():
+    seen, stack = set(), [ROOT / r for r in BUILD_ROOTS]
+    while stack:
+        p = stack.pop()
+        if not p.is_file():
+            continue
+        rel = p.relative_to(ROOT).as_posix()
+        if rel in seen:
+            continue
+        seen.add(rel)
+        for raw in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            for m in IMPORT_RE.finditer(raw.split("//", 1)[0]):
+                if not m.group(1).endswith(".zig"):
+                    continue
+                q = (p.parent / m.group(1)).resolve()
+                try:
+                    qrel = q.relative_to(ROOT).as_posix()
+                except ValueError:
+                    continue
+                if qrel.startswith("src/"):
+                    stack.append(q)
+    return seen
+
+
+def counts(hits):
+    out = {}
+    for cats in hits.values():
+        for c in cats:
+            out[c] = out.get(c, 0) + 1
+    return out
+
+
+def fmt_counts(c):
+    return ", ".join(f"{k} {c[k]}" for k in ("sdl_name", "sdl_import", "backend_import", "c_binding") if k in c)
+
+
+def render(results, reach):
+    out = []
+    total = len(results)
+    zig = sum(1 for r in results if not r["is_c"])
+    live_zig = sum(1 for r in results if not r["is_c"] and r["rel"] in reach)
+    out.append("Platform-boundary scan (migration.md Step 0)")
+    out.append(f"Scanned {total} files under src/ ({zig} .zig, {total - zig} .c/.h).")
+    out.append(f"Reachable .zig from {', '.join(BUILD_ROOTS)}: {live_zig}. "
+               f"Unreachable .zig: {zig - live_zig}.")
+    out.append("")
+
+    viol_files, allowed_files, dead_files, info_files = [], [], [], []
+    for r in sorted(results, key=lambda r: r["rel"]):
+        live = r["is_c"] or r["rel"] in reach
+        allowed_hits, viol_hits = {}, {}
+        for ln, cats in r["hits"].items():
+            a = cats & r["allowed"]
+            v = cats - r["allowed"]
+            if a:
+                allowed_hits[ln] = a
+            if v:
+                viol_hits[ln] = v
+        if r["info"]:
+            info_files.append(r)
+        if not live and r["hits"]:
+            dead_files.append(r)
+        elif live and viol_hits:
+            viol_files.append((r, viol_hits))
+        if live and allowed_hits:
+            allowed_files.append((r, allowed_hits))
+
+    viol_lines = sum(len(v) for _, v in viol_files)
+    out.append(f"REACHABLE VIOLATIONS: {viol_lines} line(s) in {len(viol_files)} file(s) (warning)")
+    for r, vh in viol_files:
+        out.append(f"  {r['rel']}")
+        out.append(f"      {fmt_counts(counts(vh))}")
+        for ln in sorted(vh):
+            out.append(f"      L{ln:<5} {','.join(sorted(vh[ln])):<22} {r['lines'][ln - 1].strip()[:140]}")
+    out.append("")
+
+    out.append("ALLOWED HITS (not violations)")
+    for r, ah in allowed_files:
+        out.append(f"  {r['rel']}: {fmt_counts(counts(ah))}  [{r['why']}]")
+    out.append("")
+
+    out.append("UNREACHABLE FILES WITH HITS (dead code; Step 1 candidates, not warned)")
+    for r in dead_files:
+        out.append(f"  {r['rel']}: {fmt_counts(counts(r['hits']))}")
+    out.append("")
+
+    out.append("INFORMATION: SDL names that appear only inside string literals")
+    for r in info_files:
+        out.append(f"  {r['rel']}: lines {', '.join(str(x) for x in r['info'])}")
+    out.append("")
+    return "\n".join(out)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--fail", action="store_true", help="exit 1 when reachable violations exist")
+    ap.add_argument("--report", metavar="FILE", help="also write the report to FILE")
+    args = ap.parse_args()
+
+    if not SRC.is_dir():
+        print(f"error: {SRC} not found", file=sys.stderr)
+        return 2
+
+    paths = sorted(p for p in SRC.rglob("*") if p.is_file() and p.suffix in (".zig", ".c", ".h"))
+    results = [scan_file(p, p.relative_to(ROOT).as_posix()) for p in paths]
+    reach = reachable_zig()
+    text = render(results, reach)
+    print(text)
+    if args.report:
+        Path(args.report).write_text(text + "\n", encoding="utf-8")
+
+    violating = [r for r in results
+                 if (r["is_c"] or r["rel"] in reach) and (set().union(*r["hits"].values()) - r["allowed"]
+                                                          if r["hits"] else False)]
+
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for r in violating:
+            viol = [ln for ln, cats in r["hits"].items() if cats - r["allowed"]]
+            cats = sorted(set().union(*(r["hits"][ln] for ln in viol)) - r["allowed"])
+            print(f"::warning file={r['rel']},line={min(viol)},title=SDL boundary::"
+                  f"{len(viol)} line(s) outside the allowlist ({', '.join(cats)}). "
+                  f"Full list in the job log.")
+
+    if args.fail and violating:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
