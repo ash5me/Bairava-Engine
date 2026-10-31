@@ -1,4 +1,4 @@
-// Sprite shaders. The vertex layout is defined in src/engine/sprite.zig (Vertex, and the
+// Sprite shaders. The vertex layout is defined in src/engine/renderer/sprite.zig (Vertex, and the
 // vb_attrs list in SpriteBatch.init). The locations below must match those attributes, so
 // change both together.
 
