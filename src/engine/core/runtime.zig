@@ -40,13 +40,8 @@ pub fn run(comptime Game: type, config: Config) void {
     // then share a clock with the frame timing below.
     logging.setClock(platform.clock.nowNs);
 
-    // The executable's folder comes first, so the log file can sit beside the executable. SDL3 owns
-    // the returned string until SDL_Quit, so it stays valid for the run.
-    const base_c = c.SDL_GetBasePath();
-    if (base_c == null) std.debug.panic("SDL_GetBasePath failed: {s}", .{c.SDL_GetError()});
-    const base_path = std.mem.span(base_c);
-
-    lifecycle.openLog(config, base_path);
+    // The log file sits beside the executable, which the platform resolves.
+    lifecycle.openLog(config);
     defer logging.closeFile();
     elog.info("profiling zones {s}", .{if (profile.enabled) "on (Tracy)" else "off"});
 
@@ -54,7 +49,7 @@ pub fn run(comptime Game: type, config: Config) void {
     logging.assert(config.zoom_min > 0 and config.zoom_min <= 1.0 and config.zoom_max >= 1.0, @src(), "zoom bounds {d} to {d} must be positive and include 1", .{ config.zoom_min, config.zoom_max });
     const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
 
-    var session = lifecycle.Session{ .base_path = base_path };
+    var session = lifecycle.Session{};
     session.start(config);
     defer session.stop();
     const ctx = &session.ctx;

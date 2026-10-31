@@ -125,6 +125,25 @@ test "compressed variants reject zero dimensions and guard payload size overflow
     try std.testing.expectError(error.InvalidCompressedImage, parseCompressed(std.testing.allocator, huge, .rgba8));
 }
 
+/// Decodes PNG (or any format supported by stb_image) bytes into RGBA8 pixels.
+pub fn decodeRgba8(bytes: []const u8) !Image {
+    if (bytes.len == 0 or bytes.len > std.math.maxInt(c_int)) return error.DecodeFailed;
+
+    var width: c_int = 0;
+    var height: c_int = 0;
+    var channels: c_int = 0;
+    const data = stb.stbi_load_from_memory(bytes.ptr, @intCast(bytes.len), &width, &height, &channels, 4);
+    if (data == null) return error.DecodeFailed;
+
+    const len = @as(usize, @intCast(width)) * @as(usize, @intCast(height)) * 4;
+    const ptr: [*]u8 = @ptrCast(data);
+    return .{
+        .width = @intCast(width),
+        .height = @intCast(height),
+        .pixels = ptr[0..len],
+    };
+}
+
 /// Loads a PNG (or any format stb_image supports) and converts it to RGBA8.
 /// `path` is relative to the project root, where `zig build run` runs.
 pub fn loadRgba8(path: [*:0]const u8) !Image {

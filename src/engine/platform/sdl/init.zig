@@ -14,8 +14,8 @@ const logging = @import("../../logging/log.zig");
 const audio_log = logging.scoped("audio");
 
 /// Starts SDL's video subsystem, which the window and GPU need, and its audio subsystem. A video
-/// failure is fatal, so this panics. An audio failure is logged, and the game runs silent, since
-/// `audio.Audio.init` skips the device when the subsystem is not up.
+/// failure is fatal, so this panics. An audio failure is logged, and the game runs silent, since the
+/// audio backend opens no device when the subsystem is not up.
 pub fn init() void {
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
         std.debug.panic("SDL_Init failed: {s}", .{c.SDL_GetError()});

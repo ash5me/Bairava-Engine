@@ -47,7 +47,7 @@ pub const tilemap = @import("../scene/tilemap.zig");
 pub const tilemap_draw = @import("../renderer/tilemap_draw.zig");
 /// Sprite-sheet animation: clips that name a row of frames, and an animator that plays them.
 pub const animation = @import("../animation/animation.zig");
-/// Sound output through SDL3 audio streams: the playback device, sounds, and voices.
+/// Sound output: the playback device, sounds, and voices.
 pub const audio = @import("../audio/audio.zig");
 /// The settings file: `name = value` lines, and the window settings the engine reads from them.
 pub const settings = @import("settings.zig");

@@ -24,8 +24,6 @@ const elog = logging.scoped("engine");
 
 /// Everything the running engine owns. `start` opens it and `stop` releases it.
 pub const Session = struct {
-    /// Directory of the executable, with a trailing separator.
-    base_path: []const u8,
     /// Text of the settings file. It is kept for the whole run, because the game reads from it.
     settings_bytes: ?[]u8 = null,
     window: *platform.Window = undefined,
@@ -45,7 +43,7 @@ pub const Session = struct {
     /// window, the GPU device, and the audio device. Panics on failures that leave the game unable
     /// to run. Missing audio does not panic; the game runs silent.
     pub fn start(self: *Session, config: Config) void {
-        self.settings_bytes = readSettings(self.base_path, config.settings_file);
+        self.settings_bytes = readSettings(config.settings_file);
         const settings_text: []const u8 = self.settings_bytes orelse "";
         const window_settings = loadWindowSettings(settings_text, .{
             .width = config.window_w,
@@ -87,7 +85,6 @@ pub const Session = struct {
             .zoom_max = config.zoom_max,
             .layout = .{ .dst_w = native_wf, .dst_h = native_hf, .view_w = native_wf, .view_h = native_hf },
             .camera = &self.cam,
-            .base_path = self.base_path,
             .audio = &self.audio,
             .settings_text = settings_text,
         };
@@ -110,10 +107,10 @@ pub const Session = struct {
 
 /// Opens the log file beside the executable when the game asks for one. Each run replaces the
 /// file from the last run. Startup messages and startup failures are kept, so this runs first.
-pub fn openLog(config: Config, base_path: []const u8) void {
+pub fn openLog(config: Config) void {
     if (config.log_file) |name| {
         var path_buf: [max_full_path]u8 = undefined;
-        const path = std.fmt.bufPrintZ(&path_buf, "{s}{s}", .{ base_path, name }) catch {
+        const path = platform.files.absolutePath(.beside_executable, name, &path_buf) catch {
             std.debug.panic("log file path is longer than {d} bytes", .{max_full_path});
         };
         if (logging.openFile(path)) {
@@ -124,23 +121,23 @@ pub fn openLog(config: Config, base_path: []const u8) void {
     }
 }
 
-/// Reads the settings file in the executable's folder. Returns null when there is no file. The
-/// caller frees the result with `std.heap.page_allocator`.
-fn readSettings(base_path: []const u8, name: []const u8) ?[]u8 {
+/// Reads the settings file beside the executable. Returns null when there is no file, or it can't be
+/// read. The caller frees the result with `std.heap.page_allocator`.
+fn readSettings(name: []const u8) ?[]u8 {
     var buf: [max_full_path]u8 = undefined;
-    const path = std.fmt.bufPrintZ(&buf, "{s}{s}", .{ base_path, name }) catch {
+    const shown = platform.files.absolutePath(.beside_executable, name, &buf) catch {
         elog.warn("settings file name '{s}' is too long, so the defaults are used", .{name});
         return null;
     };
-    var size: usize = 0;
-    const data = c.SDL_LoadFile(path.ptr, &size) orelse {
-        elog.info("no settings file at {s}, so the defaults are used", .{path});
+    const bytes = platform.files.read(std.heap.page_allocator, .beside_executable, name) catch |err| {
+        switch (err) {
+            error.NotFound => elog.info("no settings file at {s}, so the defaults are used", .{shown}),
+            else => elog.warn("settings file {s} could not be read, so the defaults are used", .{shown}),
+        }
         return null;
     };
-    defer c.SDL_free(data);
-    elog.info("settings file {s}", .{path});
-    const bytes: [*]const u8 = @ptrCast(data);
-    return std.heap.page_allocator.dupe(u8, bytes[0..size]) catch null;
+    elog.info("settings file {s}", .{shown});
+    return bytes;
 }
 
 /// Reads the window settings over `defaults`. A value that can't be read is logged, and its default is kept.
