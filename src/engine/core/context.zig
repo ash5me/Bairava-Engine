@@ -2,7 +2,6 @@
 //! assets relative to the folder of the executable. `DrawContext` is passed to `draw`.
 
 const std = @import("std");
-const c = @import("../platform/sdl/sdl.zig").c;
 const audio = @import("../audio/audio.zig");
 const platform = @import("../platform/platform.zig");
 const image = @import("../assets/loaders/image.zig");
@@ -25,7 +24,7 @@ pub const max_full_path = platform.max_full_path;
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
 pub const Context = struct {
-    device: *c.SDL_GPUDevice,
+    device: *platform.gpu.Device,
     /// Held keys, presses, releases, and clicks for this update step.
     input: *const Input,
     /// Length of one update step in seconds. This is always the fixed step.
@@ -75,10 +74,10 @@ pub const Context = struct {
     pub fn loadTexture(self: *const Context, relative: []const u8) Texture {
         const zone = profile.zoneNamed(@src(), "load texture");
         defer zone.End();
-        if (variantOrPanic(self, relative, ".astc", .astc_4x4, c.SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM)) |texture| return texture;
-        if (variantOrPanic(self, relative, ".bc3", .bc3, c.SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM)) |texture| return texture;
-        if (variantOrPanic(self, relative, ".bc1", .bc1, c.SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM)) |texture| return texture;
-        if (variantOrPanic(self, relative, ".rgba", .rgba8, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM)) |texture| return texture;
+        if (variantOrPanic(self, relative, ".astc", .astc_4x4)) |texture| return texture;
+        if (variantOrPanic(self, relative, ".bc3", .bc3)) |texture| return texture;
+        if (variantOrPanic(self, relative, ".bc1", .bc1)) |texture| return texture;
+        if (variantOrPanic(self, relative, ".rgba", .rgba8)) |texture| return texture;
         var abs_buf: [max_full_path]u8 = undefined;
         const abs = platform.files.absolutePath(.packaged, relative, &abs_buf) catch {
             std.debug.panic("asset path '{s}' is longer than {d} bytes", .{ relative, max_full_path });
@@ -177,9 +176,8 @@ fn loadCompressedVariant(
     relative: []const u8,
     suffix: []const u8,
     compression: image.Compression,
-    gpu_format: c.SDL_GPUTextureFormat,
 ) !?Texture {
-    if (compression != .rgba8 and !c.SDL_GPUTextureSupportsFormat(ctx.device, gpu_format, c.SDL_GPU_TEXTURETYPE_2D, c.SDL_GPU_TEXTUREUSAGE_SAMPLER)) return null;
+    if (compression != .rgba8 and !Texture.supportsCompression(ctx.device, compression)) return null;
     var name_buf: [max_full_path]u8 = undefined;
     const name = std.fmt.bufPrint(&name_buf, "{s}{s}", .{ relative, suffix }) catch return null;
     const bytes = platform.files.read(std.heap.page_allocator, .packaged, name) catch |err| switch (err) {
@@ -191,7 +189,7 @@ fn loadCompressedVariant(
     defer compressed.deinit();
     elog.debug("using {s} texture variant {s} ({d}x{d})", .{ @tagName(compression), name, compressed.width, compressed.height });
     if (compression == .rgba8) return Texture.initRgba8(ctx.device, compressed.width, compressed.height, compressed.blocks);
-    return Texture.initCompressed(ctx.device, compressed.width, compressed.height, gpu_format, compressed.blocks);
+    return Texture.initCompressed(ctx.device, compressed.width, compressed.height, compression, compressed.blocks);
 }
 
 /// `loadCompressedVariant` for `loadTexture`, which can't return an error. A read failure other than a
@@ -201,9 +199,8 @@ fn variantOrPanic(
     relative: []const u8,
     suffix: []const u8,
     compression: image.Compression,
-    gpu_format: c.SDL_GPUTextureFormat,
 ) ?Texture {
-    return loadCompressedVariant(ctx, relative, suffix, compression, gpu_format) catch |err| {
+    return loadCompressedVariant(ctx, relative, suffix, compression) catch |err| {
         std.debug.panic("could not read texture variant '{s}{s}': {s}", .{ relative, suffix, @errorName(err) });
     };
 }

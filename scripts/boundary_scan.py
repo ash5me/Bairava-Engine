@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Platform-boundary scanner for the SDL migration (migration.md, Steps 0 and 9).
+"""Platform-boundary scanner for the SDL migration (migration.md, Step 9).
 
-Finds references to SDL and to C bindings under src/, classifies each hit
-against ALLOWLIST (migration.md, decision D9), and reports three groups:
+Finds SDL references under src/, classifies each hit against ALLOWLIST
+(migration.md, decision D9), and reports three groups:
 
-  * violations in files reachable from the build roots. These produce CI
-    warnings. With --fail they also fail the run (Step 9).
+    * violations in files reachable from the build roots. These produce CI
+        warnings; --fail makes the scan fail (Step 9).
   * allowed hits, listed separately so they do not read as problems.
   * hits in unreachable files. These are dead code that Step 1 removes, so
     they are reported as notices and never fail.
@@ -14,7 +14,6 @@ Categories
   sdl_name        an SDL_ or SDLK_ name, or a use of an SDL import alias, in code
   sdl_import      an import of platform/sdl/sdl.zig, or an SDL3 include
   backend_import  an import of another platform/sdl/ file from outside that folder
-  c_binding       a non-SDL C binding: an @cImport, or a use of a c.zig alias
 
 Comments are removed, and string-literal bodies are blanked before matching,
 so text in comments and strings does not count as a reference. SDL names that
@@ -38,13 +37,15 @@ SRC = ROOT / "src"
 BUILD_ROOTS = ["src/main.zig", "src/tests.zig"]
 SDL_BACKEND_DIR = "src/engine/platform/sdl/"
 
-ALL_CATEGORIES = {"sdl_name", "sdl_import", "backend_import", "c_binding"}
+ALL_CATEGORIES = {"sdl_name", "sdl_import", "backend_import"}
 
 # (path or directory prefix ending in "/", allowed categories, reason).
 # Source: migration.md D9. A file missing here must have no hits.
 ALLOWLIST = [
     ("src/engine/platform/sdl/", ALL_CATEGORIES,
      "platform/sdl: the SDL implementation"),
+    ("src/engine/platform/platform.zig", {"backend_import"},
+     "platform facade: forwards engine-facing calls to the SDL backend"),
     ("src/engine/renderer/renderer.zig", {"sdl_name", "sdl_import"},
      "render passes and command buffers use SDL_GPU types"),
     ("src/engine/renderer/shader.zig", {"sdl_name", "sdl_import"},
@@ -53,10 +54,8 @@ ALLOWLIST = [
      "SDL_GPU pipelines, buffers, and draws"),
     ("src/engine/renderer/texture.zig", {"sdl_name", "sdl_import"},
      "SDL_GPU textures, samplers, and transfer buffers"),
-    ("src/engine/text/font.zig", {"sdl_name", "sdl_import"},
-     "SDL_GPUDevice in signatures; drops off once it uses platform.gpu.Device"),
-    ("src/tests.zig", {"sdl_name", "sdl_import", "backend_import"},
-     "colorTargetInfo test and backend tests; drops off once moved"),
+    ("src/tests.zig", {"backend_import"},
+     "imports SDL backend modules so their platform tests are included"),
 ]
 
 IMPORT_RE = re.compile(r'@import\("([^"]+)"\)')
@@ -123,7 +122,7 @@ def scan_file(path, rel):
     all_strings = [s for _, ss in parsed for s in ss]
     file_is_sdl_cimport = any(s.startswith("SDL3/") for s in all_strings)
 
-    sdl_aliases, c_aliases = set(), set()
+    sdl_aliases = set()
     if not is_c:
         for raw in lines:
             bare = raw.split("//", 1)[0]
@@ -132,13 +131,11 @@ def scan_file(path, rel):
                 base = target.rsplit("/", 1)[-1]
                 if base == "sdl.zig":
                     sdl_aliases.add(name)
-                elif base == "c.zig":
-                    c_aliases.add(name)
-            for m in DECL_CIMPORT_RE.finditer(bare):
-                (sdl_aliases if file_is_sdl_cimport else c_aliases).add(m.group(1))
+            if file_is_sdl_cimport:
+                sdl_aliases.update(m.group(1) for m in DECL_CIMPORT_RE.finditer(bare))
 
     alias_use = {a: re.compile(r'(?<![\w.])' + re.escape(a) + r'\.[A-Za-z_]')
-                 for a in sdl_aliases | c_aliases}
+                 for a in sdl_aliases}
 
     hits, info = {}, []
     for lineno, (raw, (code, strings)) in enumerate(zip(lines, parsed), 1):
@@ -155,18 +152,13 @@ def scan_file(path, rel):
                     cats.add("sdl_import" if base == "sdl.zig" else "backend_import")
                 elif base == "sdl.zig":
                     cats.add("sdl_import")
-                elif base == "c.zig":
-                    cats.add("c_binding")
-            if "@cImport" in code:
-                cats.add("sdl_import" if file_is_sdl_cimport else "c_binding")
+            if "@cImport" in code and file_is_sdl_cimport:
+                cats.add("sdl_import")
             if SDL_NAME_RE.search(code):
                 cats.add("sdl_name")
             for a in sdl_aliases:
                 if alias_use[a].search(code):
                     cats.add("sdl_name")
-            for a in c_aliases:
-                if alias_use[a].search(code):
-                    cats.add("c_binding")
         if cats:
             hits[lineno] = frozenset(cats)
         elif SDL_NAME_RE.search(" ".join(strings)):
@@ -210,7 +202,7 @@ def counts(hits):
 
 
 def fmt_counts(c):
-    return ", ".join(f"{k} {c[k]}" for k in ("sdl_name", "sdl_import", "backend_import", "c_binding") if k in c)
+    return ", ".join(f"{k} {c[k]}" for k in ("sdl_name", "sdl_import", "backend_import") if k in c)
 
 
 def render(results, reach):
@@ -218,7 +210,7 @@ def render(results, reach):
     total = len(results)
     zig = sum(1 for r in results if not r["is_c"])
     live_zig = sum(1 for r in results if not r["is_c"] and r["rel"] in reach)
-    out.append("Platform-boundary scan (migration.md Step 0)")
+    out.append("Platform-boundary scan (migration.md Step 9)")
     out.append(f"Scanned {total} files under src/ ({zig} .zig, {total - zig} .c/.h).")
     out.append(f"Reachable .zig from {', '.join(BUILD_ROOTS)}: {live_zig}. "
                f"Unreachable .zig: {zig - live_zig}.")

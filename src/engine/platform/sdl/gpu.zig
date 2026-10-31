@@ -8,6 +8,13 @@ const profile = @import("../../profiling/profile.zig");
 const types = @import("../types.zig");
 const window_backend = @import("window.zig");
 
+pub const Device = c.SDL_GPUDevice;
+pub const TextureFormat = c.SDL_GPUTextureFormat;
+
+pub fn waitIdle(device: *Device) void {
+    _ = c.SDL_WaitForGPUIdle(device);
+}
+
 /// A frame in progress: the command buffer and the swapchain texture it draws to.
 pub const Frame = struct {
     cmd: *c.SDL_GPUCommandBuffer,

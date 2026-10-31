@@ -6,7 +6,6 @@
 //! once per frame and gets `alpha` to blend between the last two updates.
 
 const std = @import("std");
-const c = @import("../platform/sdl/sdl.zig").c;
 const platform = @import("../platform/platform.zig");
 const application = @import("application.zig");
 const context = @import("context.zig");
@@ -32,7 +31,7 @@ const max_dt: f32 = 0.1;
 /// restored window shows up within a frame.
 const idle_sleep_ms: u32 = 16;
 
-const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
+const black = renderer.Color{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 pub fn run(comptime Game: type, config: Config) void {
@@ -62,7 +61,7 @@ pub fn run(comptime Game: type, config: Config) void {
 
     const native_wf: f32 = @floatFromInt(config.native_w);
     const native_hf: f32 = @floatFromInt(config.native_h);
-    const clear = c.SDL_FColor{
+    const clear = renderer.Color{
         .r = config.clear_rgb[0],
         .g = config.clear_rgb[1],
         .b = config.clear_rgb[2],
@@ -162,7 +161,7 @@ pub fn run(comptime Game: type, config: Config) void {
             const zone = profile.zoneNamed(@src(), "rebuild target");
             defer zone.End();
             // Wait first, because the old target may still be in use by the GPU.
-            _ = c.SDL_WaitForGPUIdle(session.gpu.device);
+            platform.gpu.waitIdle(session.gpu.device);
             session.target.deinit();
             session.target = Texture.initTarget(session.gpu.device, view_w, view_h, session.format);
             elog.debug("native target is now {d}x{d} at {d:.2} scale ({s})", .{ view_w, view_h, fit.scale, mode_label });

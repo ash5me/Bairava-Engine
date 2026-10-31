@@ -1,11 +1,9 @@
 //! Test root for `zig build test`. It holds every unit test. The pure modules need only the
-//! compiler. `input` and `renderer` import SDL's C header and the embedded shaders, so this root
-//! links SDL and needs slangc. No test opens a window or creates a GPU device.
+//! compiler. Renderer tests use SDL GPU structs without opening a window or creating a device, so
+//! the test binary links SDL and needs slangc for embedded shaders.
 
 const std = @import("std");
 
-const c = @import("engine/platform/sdl/sdl.zig").c;
-const renderer = @import("engine/renderer/renderer.zig");
 const sprite = @import("engine/renderer/sprite.zig");
 const math = @import("engine/core/math.zig");
 const Texture = @import("engine/renderer/texture.zig").Texture;
@@ -14,6 +12,7 @@ const camera = @import("engine/renderer/camera.zig");
 const animation = @import("engine/animation/animation.zig");
 
 test {
+    _ = @import("engine/renderer/renderer.zig");
     _ = @import("engine/memory/string.zig");
     _ = @import("engine/profiling/frame_history.zig");
     _ = @import("engine/memory/hash_map.zig");
@@ -40,34 +39,6 @@ test {
     _ = @import("engine/platform/sdl/window.zig");
     _ = @import("engine/physics/shapes.zig");
     _ = @import("engine/assets/manager.zig");
-}
-
-test "colorTargetInfo clears the target to the given color and keeps the result" {
-    var marker: u8 = 0;
-    const target: *c.SDL_GPUTexture = @ptrCast(&marker);
-    const clear = c.SDL_FColor{ .r = 0.25, .g = 0.5, .b = 0.75, .a = 1.0 };
-    const info = renderer.colorTargetInfo(target, clear);
-
-    try std.testing.expect(info.texture == target);
-    try std.testing.expectEqual(@as(f32, 0.25), info.clear_color.r);
-    try std.testing.expectEqual(@as(f32, 0.5), info.clear_color.g);
-    try std.testing.expectEqual(@as(f32, 0.75), info.clear_color.b);
-    try std.testing.expectEqual(@as(f32, 1.0), info.clear_color.a);
-    // A pass that loaded instead of clearing would draw over the last frame's pixels.
-    try std.testing.expect(info.load_op == c.SDL_GPU_LOADOP_CLEAR);
-    try std.testing.expect(info.store_op == c.SDL_GPU_STOREOP_STORE);
-}
-
-test "colorTargetInfo leaves the fields it does not use at zero" {
-    // Zero selects the base mip and layer, with no resolve target and no cycling. Those are the
-    // defaults the pass was written against, so a stray value here would change what gets drawn.
-    var marker: u8 = 0;
-    const target: *c.SDL_GPUTexture = @ptrCast(&marker);
-    const info = renderer.colorTargetInfo(target, .{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 });
-    try std.testing.expectEqual(@as(u32, 0), info.mip_level);
-    try std.testing.expectEqual(@as(u32, 0), info.layer_or_depth_plane);
-    try std.testing.expect(info.resolve_texture == null);
-    try std.testing.expect(!info.cycle);
 }
 
 /// A texture for the sprite tests. Sprites read only its size, so the GPU handles stay undefined and

@@ -48,7 +48,7 @@ zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 zig build run -Dtracy=true         # launch with Tracy profiling zones, for a Tracy profiler that is already running
 zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
 zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to select Metal
-zig build test                     # run unit tests (no GPU or window; links SDL and needs slangc)
+zig build test                     # run unit tests (no GPU device or window; links SDL and needs slangc)
 ```
 
 `zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Image, WAV, and TrueType/OpenType inputs are format-checked; maps and generic files are checked for existence. Image entries emit BC1, BC3, and RGBA8 GPU texture variants alongside the source image; when `astcenc` is installed and available on `PATH`, the builder also emits ASTC 4x4. The sprite atlas is packed from `assets/sprites.txt` and sent through the same texture processor, with its regions written to `atlas.txt`. At runtime, SDL's format support query picks ASTC, BC3, or BC1 when the active device can sample that format; otherwise the prebuilt RGBA8 variant or decoded source image is used. Audio entries are copied as WAV and encoded to compact IMA ADPCM sidecars; `wav` entries are copied uncompressed. Font entries generate `.bfnt` files containing a packed glyph atlas, metrics, codepoint range, and kerning pairs; bitmap atlases are default, while font rows may request SDF output. The UI and debug overlay load a sidecar that matches their configured pixel height and fall back to TTF baking if it is absent, malformed, or sized differently. The audio system prefers an IMA sidecar and falls back to WAV, then converts samples to the playback device's format.
@@ -59,7 +59,7 @@ The C code for text and widgets has its own tests in `tests/ui/`. They run from 
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` builds and runs the unit tests on GitHub-hosted Linux, macOS, and Windows runners. It installs the Zig version declared by `build.zig.zon` and Slang 2026.20. The macOS job also builds with `-Dmetal=true` to compile the Metal shaders.
+`.github/workflows/ci.yml` builds and runs the unit tests on GitHub-hosted Linux, macOS, and Windows runners. Linux also runs `scripts/boundary_scan.py --fail`, which enforces the SDL import allowlist. It installs the Zig version declared by `build.zig.zon` and Slang 2026.20. The macOS job also builds with `-Dmetal=true` to compile the Metal shaders.
 
 ## Asset keyer
 
@@ -205,22 +205,26 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │   ├── application.zig   `Config`: what the game passes to `run`
 │   │   │   ├── runtime.zig    `run` and the frame loop: fixed-timestep updates, layout, passes, present
 │   │   │   ├── context.zig    `Context` (init and update), `DrawContext` (draw), and asset loading through them
-│   │   │   ├── lifecycle.zig  `Session`: startup and shutdown of settings, SDL, window, GPU, batches, input, audio
+│   │   │   ├── lifecycle.zig  `Session`: startup and shutdown of settings, platform, window, GPU, batches, input, audio
 │   │   │   ├── event.zig      Event pump: quit, F11 fullscreen, F3 overlay, and input events
 │   │   │   ├── settings.zig   Settings file: name = value lines, window settings, key bind lines
 │   │   │   └── math.zig       cglm wrappers: projection, transforms, normalization. The only cglm import
-│   │   ├── platform/          Operating system and SDL. Only platform/sdl/ imports SDL
-│   │   │   ├── platform.zig   Facade over the platform backend
+│   │   ├── platform/          SDL-free engine contract and the SDL implementation
+│   │   │   ├── platform.zig   Explicit forwarders for files, events, window, clock, audio, and GPU
+│   │   │   ├── types.zig      SDL-free platform values, errors, and opaque handles
 │   │   │   └── sdl/
-│   │   │       ├── sdl.zig    The only SDL3 C import
+│   │   │       ├── sdl.zig    The SDL3 C import
+│   │   │       ├── init.zig   SDL subsystem initialization and shutdown
+│   │   │       ├── files.zig  Executable-relative file access
+│   │   │       ├── clock.zig  Monotonic time and delay
 │   │   │       ├── window.zig Window creation, fullscreen, pixel size and density
-│   │   │       ├── gpu.zig    GPU device, swapchain, frame acquire and submit
-│   │   │       ├── input.zig  SDL events and keyboard state into `Input`, and the scancode table
-│   │   │       └── audio.zig  Playback device, and one SDL audio stream per voice
+│   │   │       ├── gpu.zig    GPU device, swapchain, frame acquire/submit, and idle wait
+│   │   │       ├── input.zig  SDL events and keyboard state into platform events
+│   │   │       └── audio.zig  Playback device, WAV decoding, conversion, and SDL streams
 │   │   ├── renderer/          Drawing
 │   │   │   ├── renderer.zig   Render passes and color targets
 │   │   │   ├── sprite.zig     Batched textured quads, sprite pipeline, vertex upload
-│   │   │   ├── texture.zig    2D textures, render targets, nearest-neighbor sampler
+│   │   │   ├── texture.zig    2D textures, render targets, format mapping and support checks
 │   │   │   ├── shader.zig     Picks a shader format and creates GPU shaders from embedded code
 │   │   │   ├── camera.zig     View position, follow target, smoothing, edge clamping, zoom easing
 │   │   │   ├── view.zig       Fits the view to the window for each zoom and scale mode, and maps mouse positions
@@ -236,7 +240,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   ├── input/
 │   │   │   └── input.zig      `Key` enum, held, pressed, released, and mouse state. No platform code
 │   │   ├── audio/
-│   │   │   ├── audio.zig      Public audio API. Re-exports the SDL backend
+│   │   │   ├── audio.zig      Sound ownership, loading, and playback API through the platform facade
 │   │   │   ├── voices.zig     Voice handles, gain, and the finish and loop rules. No SDL
 │   │   │   └── ima.zig        BRAD IMA ADPCM decoder to interleaved signed 16-bit PCM
 │   │   ├── animation/
@@ -278,7 +282,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   ├── level.zig          Level: loads the tile map and reports its size
 │   │   ├── save.zig           Save file: versioned Parson JSON, with defaults for any fields a save omits
 │   │   └── config.zig         Title, window and native sizes, level path, UI font path and size, background color, update rate, scale mode, camera rate, zoom limits and step, asset list
-│   └── tests.zig              Test root for `zig build test`: every unit test. Pure modules, plus input and renderer, which import SDL. Opens no window.
+│   └── tests.zig              Test root for `zig build test`: unit and backend tests. Opens no window or GPU device.
 ├── shaders/
 │   └── default.slang          Sprite vertex and fragment shaders. Compiled once per target, and `-DDXIL_TARGET` selects the D3D12 sampler layout
 ├── scripts/
@@ -335,7 +339,7 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 4. Game `update`: read actions from `game/controls.zig`. Quit, scale toggle, and zoom act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and solid tiles stop the player's feet on each axis, so the player slides along walls.
 5. Compute `alpha`, the leftover fraction of a step, from 0 to 1. Drawing blends between the last two updates with it, so motion stays smooth when the display rate and update rate differ.
 6. Read the window size in pixels. If either side is zero, the window is minimized, so sleep for 16 ms (`idle_sleep_ms` in `engine/core/engine.zig`) and start the next frame. Otherwise, ease the camera's zoom toward the zoom the game asked for, choose the scale for the current scale mode and zoom (see Rendering model), then compute the view size. The reference native view is 320×180 in `game/config.zig`.
-7. If the view size changed, wait for the GPU to go idle and recreate the native target.
+7. If the view size changed, call `platform.gpu.waitIdle` and recreate the native target.
 8. Acquire a command buffer and swapchain texture. If either is unavailable, sleep for the same 16 ms and start the next frame, so a minimized window doesn't spin.
 9. Pass 1: game `draw` points the camera at the player's blended center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target. The debug overlay is queued after the game, in the same pass.
 10. Pass 2: queue one quad that stretches the native target across the window. In fit mode it covers the whole window. In integer mode it covers a centered whole-number multiple of the view.
@@ -397,7 +401,7 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 - Texture upload through a transfer buffer, queued without waiting for the GPU.
 - Render-target textures in the swapchain format.
 - Nearest-neighbor sampler with clamp-to-edge addressing.
-- Assets installed beside the executable and loaded through `SDL_GetBasePath`, so the game runs from any directory.
+- Assets installed beside the executable and loaded through `platform.files`, so the game runs from any directory.
 - Build-time texture atlas: `tools/atlas/pack.c` packs the sprites listed in `assets/sprites.txt` into one square PNG with stb_rect_pack. The square is the smallest power of two that fits, and each sprite has one transparent texel of padding on every side. `engine/assets/loaders/atlas.zig` reads the index written beside the image, and the game draws every sprite from that one texture.
 
 **2D rendering**
@@ -442,7 +446,7 @@ These estimates are rough. They measure how close each area is to something usab
 
 | Area | File | Status | Est. done | Notes |
 |---|---|---|---|---|
-| Platform | `platform/sdl/sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
+| Platform | `platform/platform.zig`, `platform/sdl/` | Complete | 100% | SDL-free forwarding contract; SDL imports are restricted to the backend and documented GPU renderer files. Linux CI enforces the allowlist. |
 | Engine | `engine/core/engine.zig` | Prototype | 65% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, camera zoom, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
 | Logging and assertions | `engine/logging/log.zig`, `logging/log_file.c`, `vendor/log.c` | Functional | 85% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Terminal and log file output through log.c, with panics recorded in the file. Missing: rotation, and keeping logs from earlier runs. |
 | Profiling | `profiling/profile.zig`, `engine/core/engine.zig` | Functional | 60% | Tracy zones for the frame, events, updates, passes, uploads, submit, and asset loads, plus frame marks. Compiled in only with `-Dtracy=true`. A captured session checked the zone names and counts. Missing: GPU timing zones, allocation tracking, and plots. |
@@ -466,12 +470,12 @@ These estimates are rough. They measure how close each area is to something usab
 | View mapping | `renderer/view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
 | Build | `build.zig`, `.github/workflows/ci.yml` | Functional | 70% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, optional DXIL and MSL), the texture atlas, the asset keyer, run step, and test step. CI builds and tests on Linux, macOS, and Windows. |
 | Assets | `tools/assets/keyer.c` | Utility | 30% | Cross-platform checkerboard keyer with configurable color thresholds, connected-border flood fill, and PNG output. It replaces the old one-off PowerShell script; it is not a general asset pipeline. |
-| Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, compressed texture headers, IMA ADPCM decoding, math, view, tile map, camera, animation, input, shader format selection, and renderer. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). Missing: tests that open a window or create a GPU device. |
+| Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, compressed texture headers, IMA ADPCM decoding, math, view, tile map, camera, animation, input, shader format selection, renderer, and platform backend tests. No test opens a window or creates a GPU device. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). |
 | Vector | `memory/vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
 | Entities | `ecs/entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
 | Debug overlay | `profiling/debug_overlay.zig`, `profiling/frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
 | Collision | none | Not started | 0% | |
-| Audio | `audio/audio.zig`, `audio/voices.zig`, `audio/ima.zig` | Early | 45% | One default playback device, WAV input plus build-generated IMA ADPCM sidecars, device-format conversion at load, and voices that each use one SDL audio stream, which SDL mixes. Decoder and voice rules have unit tests. The game plays no sounds yet. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
+| Audio | `audio/audio.zig`, `audio/voices.zig`, `audio/ima.zig`, `platform/sdl/audio.zig` | Early | 45% | Engine audio owns sounds and voices; the SDL backend owns the optional playback device, streams, WAV byte decoding, and format conversion. Build-generated IMA sidecars decode in the platform-independent engine module. Decoder and voice rules have unit tests. The game plays no sounds yet. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
 | Text | `text/text.c`, `text/text.h`, `ui/ui.zig` | Early | 45% | Build-time TTF/CFF preprocessing into `.bfnt` v2 bitmap or v3 SDF sidecars with glyph atlas, metrics, codepoint range, and kerning pairs; v1 sidecars remain readable. `Font.load` lazily rasterizes and caches missing codepoints, growing the atlas and refreshing its GPU texture. One quad per glyph, UTF-8 input. Missing: shaping for Tamil and other complex scripts. |
 | UI widgets | `ui/imgui.c`, `ui/imgui.h` | Early | 35% | Label, button, and slider with hot and active ids and `##` suffixes. Tested with the C harness using scripted input. Not yet checked in the running game. Missing: checkbox, panels and layouts beyond one column, text input, keyboard focus, scrolling. |
 | Scenes and state | none | Not started | 0% | |
@@ -504,7 +508,7 @@ These are the natural extension points. Each one reuses existing code.
 
 1. **Fixed: mouse coordinates were in window points, not world pixels.** `Context.mouseWorld` converts the mouse position from points to pixels, maps it through the rectangle the view was drawn into (which covers the scale, centering, and rounding), and adds the camera position. Both the layout and the camera come from the last frame drawn, so an update sees what the player saw. Clicks don't store a position yet, so a click handler reads the cursor's last known position.
 
-2. **Fixed: asset paths depended on the working directory.** The build installs `assets/` beside the executable, and `Context.loadTexture` resolves paths against the executable's folder from `SDL_GetBasePath`. Shaders are embedded at build time, so nothing else depends on the working directory.
+2. **Fixed: asset paths depended on the working directory.** The build installs `assets/` beside the executable, and `Context.loadTexture` resolves paths through `platform.files`. Shaders are embedded at build time, so nothing else depends on the working directory.
 
 3. **Fixed: a minimized window spun the CPU.** A zero-size window, or a frame with no swapchain, used to restart the loop without waiting. Both cases now sleep for 16 ms first, so a minimized window idles.
 
@@ -599,9 +603,9 @@ The engine is currently a 2D project, so prioritize textures, audio, and fonts r
 - Game `update` runs at the fixed rate `update_hz` in `game/config.zig`, and `ctx.dt` is that step. `draw` runs once per frame and gets `alpha`, which blends between the last two updates.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
-- Only `platform/sdl/sdl.zig` imports SDL's C headers, only `core/math.zig` imports cglm's, and only `profiling/profile.zig` imports ztracy.
+- SDL's C header is imported once in `platform/sdl/sdl.zig`. SDL imports and names are allowed in `platform/sdl/`, the forwarding contract, `src/tests.zig` backend-test imports, and `renderer/renderer.zig`, `renderer/shader.zig`, `renderer/sprite.zig`, and `renderer/texture.zig`; Linux CI enforces this file-specific list with `scripts/boundary_scan.py --fail`. Core code uses the platform facade and renderer-owned values, not SDL declarations. Unrelated C integrations such as cglm, Parson, stb_image, and the UI bridge are outside this SDL boundary. Only `core/math.zig` imports cglm's headers, and only `profiling/profile.zig` imports ztracy.
 - The C code for text and widgets lives in `src/engine/ui/` and never touches SDL or the GPU. `text.c` uses stb_truetype for TrueType and FreeType for CFF-capable font rasterization; `vendor/stb_truetype_impl.c` provides stb_truetype's implementation. `ui/ui.zig` is the one bridge from that code to the sprite batch.
-- `core/math.zig`, `memory/string.zig`, `memory/hash_map.zig`, `assets/registry.zig`, `assets/cache.zig`, `assets/loaders/atlas.zig`, `memory/vector.zig`, `ecs/entity.zig`, `renderer/view.zig`, `scene/tilemap.zig`, `renderer/camera.zig`, `animation/animation.zig`, and `audio/voices.zig` don't import SDL or `logging/log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
+- `core/math.zig`, `memory/string.zig`, `memory/hash_map.zig`, `assets/registry.zig`, `assets/cache.zig`, `assets/loaders/atlas.zig`, `memory/vector.zig`, `ecs/entity.zig`, `renderer/view.zig`, `scene/tilemap.zig`, `renderer/camera.zig`, `animation/animation.zig`, and `audio/voices.zig` are device-independent and have unit tests. Keep new pure code the same way when you can. Platform backend and renderer GPU tests may use SDL declarations but do not open a window or create a GPU device.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
 - Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/core/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
