@@ -5,7 +5,7 @@
 const std = @import("std");
 const engine = @import("bairava");
 
-/// The sprite is 16x32 pixels. The sheet is laid out in rows by facing.
+/// The sprite frames are 16x32 pixels. The validated animation file defines their rectangles.
 const width: f32 = 16.0;
 const height: f32 = 32.0;
 /// Collision uses the bottom half of the sprite, the feet. The top half may overlap walls, as it
@@ -14,9 +14,6 @@ const collide_top: f32 = 16.0;
 const collide_h: f32 = 16.0;
 /// Player speed, in native pixels per second.
 const speed: f32 = 80.0;
-/// Time each walk frame is shown, in seconds.
-const walk_frame_seconds: f32 = 0.12;
-
 /// Which way the player faces.
 pub const Facing = enum(u32) {
     down,
@@ -25,30 +22,18 @@ pub const Facing = enum(u32) {
     left,
 };
 
-/// The sheet row for each facing. The warrior sheet has four rows, in this order: front, back,
-/// left, right. Each row has five frames.
-fn sheetRow(facing: Facing) u32 {
-    return switch (facing) {
-        .down => 0,
-        .up => 1,
-        .left => 2,
-        .right => 3,
+/// Gameplay selects named clips; frame timing and rectangles come from the engine's animation data.
+fn clipFor(library: *const engine.animation.Library, facing: Facing, moving: bool) *const engine.animation.DataClip {
+    const prefix: []const u8 = if (moving) "walk_" else "idle_";
+    const direction = switch (facing) {
+        .down => "down",
+        .up => "up",
+        .left => "left",
+        .right => "right",
     };
-}
-
-/// The clip for a facing. Walking plays the facing's row through its five frames. Standing still
-/// holds the row's first frame.
-fn clipFor(facing: Facing, moving: bool) engine.animation.Clip {
-    const row = sheetRow(facing);
-    if (!moving) {
-        return .{ .row = row, .frame_count = 1, .frame_time = walk_frame_seconds, .looping = true };
-    }
-    return .{
-        .row = row,
-        .frame_count = 5,
-        .frame_time = walk_frame_seconds,
-        .looping = true,
-    };
+    var name: [16]u8 = undefined;
+    const clip_name = std.fmt.bufPrint(&name, "{s}{s}", .{ prefix, direction }) catch unreachable;
+    return library.find(clip_name) orelse unreachable;
 }
 
 /// A point in native pixels.
@@ -67,7 +52,7 @@ pub const Player = struct {
     /// Direction the player last moved in. It stays put when the player stops.
     facing: Facing = .down,
     /// Plays the walk and idle clips.
-    anim: engine.animation.Animator,
+    anim: engine.animation.Timeline,
 
     /// Sprite size in native pixels, so game code can check a position against the level.
     pub const sprite_w: f32 = width;
@@ -79,7 +64,7 @@ pub const Player = struct {
     }
 
     /// A player whose feet fill the given tile. The game starts the player on the map's spawn cell.
-    pub fn standingOn(col: u32, row: u32) Player {
+    pub fn standingOn(col: u32, row: u32, animations: *const engine.animation.Library) Player {
         const x = @as(f32, @floatFromInt(col)) * engine.tilemap.tile_px;
         const y = @as(f32, @floatFromInt(row)) * engine.tilemap.tile_px - collide_top;
         return .{
@@ -87,18 +72,18 @@ pub const Player = struct {
             .y = y,
             .prev_x = x,
             .prev_y = y,
-            .anim = engine.animation.Animator.init(clipFor(.down, false)),
+            .anim = engine.animation.Timeline.init(clipFor(animations, .down, false)),
         };
     }
 
     /// Restores persisted movement state without interpolating from an unrelated previous frame.
-    pub fn restore(self: *Player, x: f32, y: f32, facing: Facing, moving: bool, elapsed: f32) void {
+    pub fn restore(self: *Player, x: f32, y: f32, facing: Facing, moving: bool, elapsed: f32, animations: *const engine.animation.Library) void {
         self.x = x;
         self.y = y;
         self.prev_x = x;
         self.prev_y = y;
         self.facing = facing;
-        self.anim.play(clipFor(facing, moving));
+        self.anim.play(clipFor(animations, facing, moving));
         self.anim.time = @mod(@max(elapsed, 0), self.anim.clip.duration());
     }
 
@@ -119,7 +104,7 @@ pub const Player = struct {
 
     /// Moves the player. `move_x` and `move_y` are input directions, each -1, 0, or 1. Solid tiles
     /// in `map` stop the player on each axis, so the player slides along walls.
-    pub fn update(self: *Player, move_x: f32, move_y: f32, dt: f32, map: *const engine.tilemap.TileMap) void {
+    pub fn update(self: *Player, move_x: f32, move_y: f32, dt: f32, map: *const engine.tilemap.TileMap, animations: *const engine.animation.Library) void {
         // Remember where we were, so drawing can blend from here to the new position.
         self.prev_x = self.x;
         self.prev_y = self.y;
@@ -141,7 +126,7 @@ pub const Player = struct {
         // Switching clips restarts them, so a new walk begins at its first frame. Holding the same
         // clip keeps its place.
         const moving = dx != 0 or dy != 0;
-        self.anim.play(clipFor(self.facing, moving));
+        self.anim.play(clipFor(animations, self.facing, moving));
         self.anim.update(dt);
 
         // Diagonal input is normalized so it isn't faster. Cardinal input already has length 1,
@@ -158,6 +143,12 @@ pub const Player = struct {
         engine.log.assert(std.math.isFinite(self.x) and std.math.isFinite(self.y), @src(), "player position is not finite: ({d}, {d})", .{ self.x, self.y });
     }
 
+    /// The collision box (the feet) at the blended position, in world pixels. Debug geometry draws it.
+    pub fn collisionBox(self: *const Player, alpha: f32) engine.tilemap.Box {
+        const pos = self.drawPosition(alpha);
+        return feetAt(pos.x, pos.y);
+    }
+
     /// Queues the current frame at the blended position, relative to the camera. `atlas` is the
     /// texture that holds every sprite, and `sheet` is the warrior's region of it.
     pub fn draw(
@@ -169,18 +160,19 @@ pub const Player = struct {
         alpha: f32,
     ) void {
         const pos = self.drawPosition(alpha);
+        const frame = self.anim.frame();
         const src = engine.Rect{
-            .x = @as(f32, @floatFromInt(sheet.x)) + @as(f32, @floatFromInt(self.anim.frame())) * width,
-            .y = @as(f32, @floatFromInt(sheet.y)) + @as(f32, @floatFromInt(self.anim.clip.row)) * height,
-            .w = width,
-            .h = height,
+            .x = @floatFromInt(sheet.x + frame.x),
+            .y = @floatFromInt(sheet.y + frame.y),
+            .w = @floatFromInt(frame.w),
+            .h = @floatFromInt(frame.h),
         };
         // Whole native pixels keep the edges of the sprite sharp. The camera rounds once per sprite.
         const dst = engine.Rect{
             .x = cam.screenX(pos.x),
             .y = cam.screenY(pos.y),
-            .w = width,
-            .h = height,
+            .w = @floatFromInt(frame.w),
+            .h = @floatFromInt(frame.h),
         };
         batch.drawSprite(atlas, src, dst, .{});
     }

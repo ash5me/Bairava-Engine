@@ -50,6 +50,24 @@ pub const FrameHistory = struct {
         while (i < self.len) : (i += 1) largest = @max(largest, self.at(i));
         return largest;
     }
+
+    /// The nearest-rank percentile of the retained samples. `p` is clamped to 0..1.
+    pub fn percentile(self: *const FrameHistory, p: f32) f32 {
+        if (self.len == 0) return 0;
+        var sorted: [capacity]f32 = undefined;
+        for (0..self.len) |i| sorted[i] = self.at(i);
+        for (1..self.len) |i| {
+            const value = sorted[i];
+            var j = i;
+            while (j > 0 and sorted[j - 1] > value) : (j -= 1) sorted[j] = sorted[j - 1];
+            sorted[j] = value;
+        }
+        if (!std.math.isFinite(p) or p <= 0) return sorted[0];
+        const clamped = @min(p, 1);
+        const scaled = clamped * @as(f32, @floatFromInt(self.len));
+        const rank = @max(@as(usize, 1), @as(usize, @intFromFloat(@ceil(scaled))));
+        return sorted[@min(rank, self.len) - 1];
+    }
 };
 
 /// How far `seconds` reaches up a graph that is `full_scale` seconds tall, from 0 to 1. A zero or
@@ -92,6 +110,18 @@ test "average and max cover only the samples kept" {
     h.push(0.020);
     try std.testing.expectApproxEqAbs(@as(f32, 0.020), h.average(), 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 0.030), h.max(), 1e-6);
+}
+
+test "percentiles use nearest-rank ordering and tolerate empty input" {
+    var h = FrameHistory{};
+    try std.testing.expectEqual(@as(f32, 0), h.percentile(0.95));
+    h.push(0.030);
+    h.push(0.010);
+    h.push(0.020);
+    try std.testing.expectEqual(@as(f32, 0.010), h.percentile(0));
+    try std.testing.expectEqual(@as(f32, 0.020), h.percentile(0.5));
+    try std.testing.expectEqual(@as(f32, 0.030), h.percentile(0.95));
+    try std.testing.expectEqual(@as(f32, 0.030), h.percentile(2));
 }
 
 test "fraction scales into a graph, clamps, and tolerates a zero scale" {

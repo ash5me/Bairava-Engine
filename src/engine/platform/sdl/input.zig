@@ -42,10 +42,13 @@ fn sdlScancode(code: Scancode) c.SDL_Scancode {
         .e => c.SDL_SCANCODE_E,
         .f => c.SDL_SCANCODE_F,
         .r => c.SDL_SCANCODE_R,
+        .backspace => c.SDL_SCANCODE_BACKSPACE,
         .f5 => c.SDL_SCANCODE_F5,
         .f9 => c.SDL_SCANCODE_F9,
+        .f2 => c.SDL_SCANCODE_F2,
         .f3 => c.SDL_SCANCODE_F3,
         .f11 => c.SDL_SCANCODE_F11,
+        .f4 => c.SDL_SCANCODE_F4,
     };
 }
 
@@ -79,6 +82,14 @@ pub fn translate(event: *const c.SDL_Event, table: *const gamepad.Table) ?Event 
         c.SDL_EVENT_KEY_UP => {
             const code = scancodeFromSdl(event.key.scancode) orelse return null;
             return .{ .key_up = .{ .scancode = code } };
+        },
+        c.SDL_EVENT_TEXT_INPUT => {
+            const text = std.mem.sliceTo(event.text.text[0..], 0);
+            var input: types.TextInput = .{};
+            const len = @min(text.len, input.bytes.len);
+            @memcpy(input.bytes[0..len], text[0..len]);
+            input.len = @intCast(len);
+            return .{ .text_input = input };
         },
         c.SDL_EVENT_MOUSE_MOTION => return .{ .mouse_motion = .{ .x = event.motion.x, .y = event.motion.y } },
         c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
@@ -248,6 +259,7 @@ test "scancodes map to the SDL names the controls use, and an unnamed key maps t
     try std.testing.expectEqual(@as(?Scancode, .f9), scancodeFromSdl(c.SDL_SCANCODE_F9));
     try std.testing.expectEqual(@as(?Scancode, .f3), scancodeFromSdl(c.SDL_SCANCODE_F3));
     try std.testing.expectEqual(@as(?Scancode, .f11), scancodeFromSdl(c.SDL_SCANCODE_F11));
+    try std.testing.expectEqual(@as(?Scancode, .f4), scancodeFromSdl(c.SDL_SCANCODE_F4));
     try std.testing.expectEqual(@as(?Scancode, null), scancodeFromSdl(c.SDL_SCANCODE_Z));
 }
 

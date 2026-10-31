@@ -20,6 +20,7 @@
 
 const std = @import("std");
 const scene = @import("scene.zig");
+const Text = @import("../diagnostics/text.zig").Text;
 
 pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
     return struct {
@@ -31,6 +32,7 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
             update: *const fn (ptr: *anyopaque, ctx: *Ctx, nav: *Navigator) void,
             draw: *const fn (ptr: *anyopaque, dc: *const DrawCtx) void,
             destroy: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) void,
+            debug_text: *const fn (ptr: *anyopaque, out: *Text) void,
         };
 
         /// An open scene. Copying an `Instance` copies the handle, not the scene.
@@ -38,6 +40,8 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
             ptr: *anyopaque,
             vtable: *const Vtable,
             allocator: std.mem.Allocator,
+            /// The scene type's name, from `@typeName`. The overlay and the console show it.
+            name: []const u8,
 
             fn update(self: Instance, ctx: *Ctx, nav: *Navigator) void {
                 self.vtable.update(self.ptr, ctx, nav);
@@ -50,6 +54,18 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
             fn destroy(self: Instance) void {
                 self.vtable.destroy(self.ptr, self.allocator);
             }
+
+            fn debugText(self: Instance, out: *Text) void {
+                self.vtable.debug_text(self.ptr, out);
+            }
+        };
+
+        /// What the diagnostics overlay shows about the scenes: the active scene's name, the name of a
+        /// scene waiting to open, and how many scenes have opened so far.
+        pub const Info = struct {
+            name: []const u8,
+            pending: ?[]const u8,
+            switches: u32,
         };
 
         /// Opens one scene type. A pending request holds one of these.
@@ -58,17 +74,24 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
         /// The handle `update` receives. It records a request for the next safe point.
         pub const Navigator = struct {
             pending: ?Factory = null,
+            /// The name of the scene the pending request opens, so the overlay can show it before it opens.
+            pending_name: ?[]const u8 = null,
 
             /// Asks for a scene of type `T` to replace the active one at the next safe point.
             pub fn switchTo(self: *Navigator, comptime T: type) void {
                 scene.assertScene(T);
                 self.pending = &Maker(T).make;
+                self.pending_name = @typeName(T);
             }
         };
 
         allocator: std.mem.Allocator,
         active: ?Instance = null,
         navigator: Navigator = .{},
+        /// Name of the active scene, or "none" before the first one opens.
+        active_name: []const u8 = "none",
+        /// Scenes opened so far, counting the first.
+        switches: u32 = 0,
 
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{ .allocator = allocator };
@@ -78,7 +101,9 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
         pub fn deinit(self: *Self) void {
             if (self.active) |active| active.destroy();
             self.active = null;
+            self.active_name = "none";
             self.navigator.pending = null;
+            self.navigator.pending_name = null;
         }
 
         /// Asks for a scene of type `T` from host code, such as a menu handler. The switch happens
@@ -98,14 +123,31 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
             if (self.active) |active| active.draw(dc);
         }
 
+        /// The active scene's name, and whether a switch is waiting to open, for the diagnostics overlay.
+        pub fn info(self: *const Self) Info {
+            return .{
+                .name = self.active_name,
+                .pending = self.navigator.pending_name,
+                .switches = self.switches,
+            };
+        }
+
+        /// Adds the active scene's debug lines. A scene that has no `debugText` method adds none.
+        pub fn debugText(self: *const Self, out: *Text) void {
+            if (self.active) |active| active.debugText(out);
+        }
+
         /// Applies the pending request, if there is one. If the new scene's `init` fails, its error
         /// is returned, the current scene keeps running, and the failed request is dropped.
         pub fn applyPending(self: *Self, ctx: *Ctx) anyerror!void {
             const factory = self.navigator.pending orelse return;
             self.navigator.pending = null;
+            self.navigator.pending_name = null;
             const next = try factory(self.allocator, ctx);
             if (self.active) |old| old.destroy();
             self.active = next;
+            self.active_name = next.name;
+            self.switches += 1;
         }
 
         fn Maker(comptime T: type) type {
@@ -114,7 +156,7 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
                     const storage = try allocator.create(T);
                     errdefer allocator.destroy(storage);
                     storage.* = try T.init(ctx);
-                    return .{ .ptr = storage, .vtable = &Erased(T).vtable, .allocator = allocator };
+                    return .{ .ptr = storage, .vtable = &Erased(T).vtable, .allocator = allocator, .name = @typeName(T) };
                 }
             };
         }
@@ -139,7 +181,20 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
                     allocator.destroy(self);
                 }
 
-                const vtable: Vtable = .{ .update = callUpdate, .draw = callDraw, .destroy = callDestroy };
+                // A scene with no `debugText` method adds no lines, so the check is made at compile time.
+                fn callDebugText(ptr: *anyopaque, out: *Text) void {
+                    const self: *T = @ptrCast(@alignCast(ptr));
+                    if (comptime @hasDecl(T, "debugText")) {
+                        self.debugText(out);
+                    }
+                }
+
+                const vtable: Vtable = .{
+                    .update = callUpdate,
+                    .draw = callDraw,
+                    .destroy = callDestroy,
+                    .debug_text = callDebugText,
+                };
             };
         }
     };
@@ -326,6 +381,20 @@ test "repeated switches leak nothing and keep exactly one scene live" {
 
     manager.deinit();
     try std.testing.expectEqual(@as(usize, 0), ctx.trace.live);
+}
+
+test "the manager names the active scene, and reports a switch as pending until it opens" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+    defer manager.deinit();
+    try std.testing.expectEqualStrings("none", manager.info().name);
+
+    manager.switchTo(Alpha);
+    try std.testing.expect(manager.info().pending != null);
+    try manager.applyPending(&ctx);
+    try std.testing.expect(manager.info().pending == null);
+    try std.testing.expectEqualStrings(@typeName(Alpha), manager.info().name);
+    try std.testing.expectEqual(@as(u32, 1), manager.info().switches);
 }
 
 test "an empty manager ignores update, draw, and applyPending" {

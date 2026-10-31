@@ -239,6 +239,11 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption(bool, "gpu_debug", gpu_debug);
 
+    // Development tools: the debug overlay and its geometry, the console, and hot reload. On by default
+    // in Debug builds, and compiled out of release builds. See src/engine/diagnostics/gate.zig.
+    const dev_tools = b.option(bool, "dev-tools", "Include the debug overlay, console, and hot reload (default: on in Debug builds)") orelse (optimize == .Debug);
+    options.addOption(bool, "dev_tools", dev_tools);
+
     const sdl = b.dependency("sdl", .{
         .target = target,
         .optimize = optimize,
@@ -294,6 +299,21 @@ pub fn build(b: *std.Build) void {
     const run_sample = b.addRunArtifact(sample);
     run_sample.step.dependOn(b.getInstallStep());
     b.step("run-sample", "Build and run the scene sample").dependOn(&run_sample.step);
+
+    const benchmark = b.addExecutable(.{
+        .name = "BairavaBenchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/benchmark.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    benchmark.root_module.addImport("bairava", engine_module);
+    b.installArtifact(benchmark);
+    const run_benchmark = b.addRunArtifact(benchmark);
+    run_benchmark.step.dependOn(b.getInstallStep());
+    b.step("run-benchmark", "Run the deterministic 1000-sprite profiling workload").dependOn(&run_benchmark.step);
 
     // Texture atlas: every sprite in one image, packed at build time by tools/atlas/pack.c with
     // stb_rect_pack. The packer runs on the build machine, so it is built for the host, not the target.
@@ -376,6 +396,27 @@ pub fn build(b: *std.Build) void {
     });
     b.getInstallStep().dependOn(&install_runtime_assets.step);
     b.step("asset-build", "Validate and build compressed runtime assets from the manifest").dependOn(&run_asset_builder.step);
+
+    // Asset check: validates the manifests, the sprite list, and the installed atlas index. It opens no window
+    // and needs no GPU. Run it from the project root with `zig build check-assets`.
+    const asset_check_module = b.createModule(.{
+        .root_source_file = b.path("src/asset_check_root.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    const check_assets = b.addExecutable(.{
+        .name = "check_assets",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/check/check_assets.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+        }),
+    });
+    check_assets.root_module.addImport("asset_check", asset_check_module);
+    const run_check_assets = b.addRunArtifact(check_assets);
+    run_check_assets.setCwd(b.path("."));
+    b.step("check-assets", "Validate the asset manifest, sprite list, and installed atlas index").dependOn(&run_check_assets.step);
 
     // Portable, opt-in image tool for removing a checkerboard background. Build it for the host
     // so it can be used during development even when the game is cross-compiled for another OS.

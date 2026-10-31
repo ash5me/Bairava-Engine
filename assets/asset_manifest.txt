@@ -3,4 +3,6 @@ tile image assets/tile.png tile.png -
 warrior image assets/warrior_16x32.png warrior_16x32.png -
 font font assets/font.ttf font.ttf - 10 32 224
 level1 map assets/maps/level1.txt maps/level1.txt tile
+level1_spawn file assets/maps/level1.spawn maps/level1.spawn level1
+warrior_animation file assets/animations/warrior.anim animations/warrior.anim -
 wind1 audio assets/wind1.wav wind1.wav -

@@ -3,6 +3,11 @@
 //! Logs go to stderr with a timestamp, a level, and a scope:
 //!     [    1523ms] INFO  engine: window 960x540, native view 320x180, 60 update steps per second
 //!
+//! Levels, from the least to the most severe, are trace, debug, info, warn, and error. `min_level`
+//! drops the messages below it. Debug builds start at debug, and the other modes at info. The
+//! `log_level` line of the settings file sets it at startup, and the default is kept when the value is
+//! not a level name. See docs/logging.md.
+//!
 //! Once `openFile` succeeds, every message that reaches stderr also goes to the log file, through
 //! log.c (see log_file.c). The file line has a wall-clock time in place of milliseconds since start:
 //!     2026-10-29 07:31:02 INFO  engine: window 960x540, native view 320x180, 60 update steps per second
@@ -11,23 +16,30 @@
 //!     const log = logging.scoped("game");
 //!     log.info("level loaded", .{});
 //!
-//! Assertions check invariants. A failed assertion prints the caller's file and line, then
-//! panics. They are checked in Debug and ReleaseSafe builds and compiled out in ReleaseFast and
-//! ReleaseSmall. `fail` always panics, so use it where code should never run. Panics, including
-//! these, are recorded in the log file by the panic handler in main.zig.
+//! Failures use one shape: the operation, the resource it was working on, and the error. `recovered` is for a
+//! failure the caller continues past, and logs a warning that says what happens instead. `fatal` is for a
+//! failure that stops the operation, and logs an error. Neither replaces the error: the caller still returns
+//! the typed Zig error it got.
+//!
+//! Assertions check invariants. A failed assertion prints the caller's file and line, then panics. They are
+//! checked in Debug and ReleaseSafe builds and compiled out in ReleaseFast and ReleaseSmall. `fail` always
+//! panics, so use it where code should never run. Panics, including these, are recorded in the log file by
+//! the panic handler in main.zig.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const lf = @cImport(@cInclude("log_file.h"));
 
 pub const Level = enum(u8) {
+    trace,
     debug,
     info,
     warn,
     err,
 };
 
-/// Messages below this level are dropped. Debug builds show everything. Other builds show info and up.
+/// Messages below this level are dropped. Debug builds start at debug, and the other modes at info. The
+/// settings file's `log_level` line changes it at startup.
 pub var min_level: Level = if (builtin.mode == .Debug) .debug else .info;
 
 /// True when assertions are checked. They are off only in the fastest release builds.
@@ -55,9 +67,29 @@ pub fn timestampMs() u64 {
     return source() / 1_000_000;
 }
 
+/// True when a message at `level` is written. Callers can check it before building an expensive message.
+pub fn enabled(level: Level) bool {
+    return @intFromEnum(level) >= @intFromEnum(min_level);
+}
+
+/// Reads a level name from a settings value: trace, debug, info, warn (or warning), or error, in any case.
+/// Null for anything else, so the caller can say what was wrong.
+pub fn parseLevel(text: []const u8) ?Level {
+    if (std.ascii.eqlIgnoreCase(text, "trace")) return .trace;
+    if (std.ascii.eqlIgnoreCase(text, "debug")) return .debug;
+    if (std.ascii.eqlIgnoreCase(text, "info")) return .info;
+    if (std.ascii.eqlIgnoreCase(text, "warn") or std.ascii.eqlIgnoreCase(text, "warning")) return .warn;
+    if (std.ascii.eqlIgnoreCase(text, "error")) return .err;
+    return null;
+}
+
 /// A logger for one scope. `scope` names the part of the code, such as "engine" or "game".
 pub fn scoped(comptime scope: []const u8) type {
     return struct {
+        pub fn trace(comptime fmt: []const u8, args: anytype) void {
+            write(.trace, scope, fmt, args);
+        }
+
         pub fn debug(comptime fmt: []const u8, args: anytype) void {
             write(.debug, scope, fmt, args);
         }
@@ -74,6 +106,18 @@ pub fn scoped(comptime scope: []const u8) type {
             write(.err, scope, fmt, args);
         }
     };
+}
+
+/// Reports a failure the caller continues past: the operation, the resource, the error, and what happens
+/// instead. Logged at warning level, because nothing stops.
+pub fn recovered(comptime scope: []const u8, operation: []const u8, resource: []const u8, err_value: anyerror, instead: []const u8) void {
+    scoped(scope).warn("{s} failed for '{s}': {s}; {s}", .{ operation, resource, @errorName(err_value), instead });
+}
+
+/// Reports a failure that stops the operation: the operation, the resource, and the error. Logged at error
+/// level. The caller returns the same error afterwards.
+pub fn fatal(comptime scope: []const u8, operation: []const u8, resource: []const u8, err_value: anyerror) void {
+    scoped(scope).err("{s} failed for '{s}': {s}", .{ operation, resource, @errorName(err_value) });
 }
 
 /// Starts writing messages to the file at `path`. The file is replaced, so each run starts a new
@@ -117,7 +161,7 @@ pub fn fail(src: std.builtin.SourceLocation, comptime fmt: []const u8, args: any
 }
 
 fn write(comptime level: Level, comptime scope: []const u8, comptime fmt: []const u8, args: anytype) void {
-    if (@intFromEnum(level) < @intFromEnum(min_level)) return;
+    if (!enabled(level)) return;
     const ms = timestampMs();
     std.debug.print("[{d:>8}ms] {s} {s}: ", .{ ms, levelName(level), scope });
     std.debug.print(fmt ++ "\n", args);
@@ -129,6 +173,7 @@ fn write(comptime level: Level, comptime scope: []const u8, comptime fmt: []cons
 
 fn levelName(comptime level: Level) []const u8 {
     return switch (level) {
+        .trace => "TRACE",
         .debug => "DEBUG",
         .info => "INFO ",
         .warn => "WARN ",
@@ -150,4 +195,29 @@ test "timestamps read the injected clock in milliseconds" {
     setClock(&fake.now);
     defer setClock(null);
     try std.testing.expectEqual(@as(u64, 2500), timestampMs());
+}
+
+test "parseLevel reads each level name in any case, and refuses other words" {
+    try std.testing.expectEqual(@as(?Level, .trace), parseLevel("TRACE"));
+    try std.testing.expectEqual(@as(?Level, .debug), parseLevel("Debug"));
+    try std.testing.expectEqual(@as(?Level, .info), parseLevel("info"));
+    try std.testing.expectEqual(@as(?Level, .warn), parseLevel("warning"));
+    try std.testing.expectEqual(@as(?Level, .err), parseLevel("error"));
+    try std.testing.expectEqual(@as(?Level, null), parseLevel("loud"));
+    try std.testing.expectEqual(@as(?Level, null), parseLevel(""));
+}
+
+test "enabled drops the levels below min_level, and keeps the rest" {
+    const saved = min_level;
+    defer min_level = saved;
+
+    min_level = .warn;
+    try std.testing.expect(!enabled(.trace));
+    try std.testing.expect(!enabled(.debug));
+    try std.testing.expect(!enabled(.info));
+    try std.testing.expect(enabled(.warn));
+    try std.testing.expect(enabled(.err));
+
+    min_level = .trace;
+    try std.testing.expect(enabled(.trace));
 }

@@ -20,7 +20,7 @@ static FILE *log_fp = NULL;
 static int sink_added = 0;
 
 /* log.c's level for each level from log_file.h, in the same order. */
-static const int log_levels[] = { LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR };
+static const int log_levels[] = { LOG_TRACE, LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR };
 
 static void file_sink(log_Event *ev) {
   char when[32];
@@ -81,7 +81,7 @@ int log_file_open(const char *path) {
 void log_file_write(int level, const char *text) {
   if (!log_fp) return;
   if (level < 0) level = 0;
-  if (level > 3) level = 3;
+  if (level > 4) level = 4;
   /* The text goes through "%s", so a '%' in a message is printed, not read as a format. */
   log_log(log_levels[level], "", 0, "%s", text);
 }

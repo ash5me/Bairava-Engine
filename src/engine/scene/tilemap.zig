@@ -9,13 +9,14 @@
 //! Map file format, read by `TileMap.parse`:
 //!
 //!     # Comments start with '#'. Blank lines are ignored.
+//!     version 1                  optional for legacy files; new files declare it
 //!     size <cols> <rows>          required, both at least 1
+//!     tileset <count>             optional; IDs must be less than this count
 //!     solid <id> [<id> ...]       optional, any number of lines; these IDs block movement
-//!     spawn <col> <row>           required, the cell where the player starts
 //!     layer <name>                ground, decoration, or foreground; each name at most once
 //!     <entry> <entry> ...         one line per row, each with exactly <cols> entries
 //!
-//! The header lines (`size`, `solid`, `spawn`) come before the first `layer` line. Every row line
+//! The header lines (`version`, `size`, `tileset`, `solid`) come before the first `layer` line. Every row line
 //! belongs to the `layer` line above it. Layers may appear in any order. A layer the file leaves
 //! out is empty, but the file needs at least one layer. An entry is a tile ID from 0 to 254, which
 //! picks a tile from the tile texture, or `.` for a cell with no tile on that layer.
@@ -26,6 +27,8 @@ const shapes = @import("../physics/shapes.zig");
 /// Side of one tile, in pixels. Collision and drawing both use it.
 pub const tile_size: u32 = 16;
 pub const tile_px: f32 = @floatFromInt(tile_size);
+/// Prevents malformed level headers from requesting unreasonable allocation sizes.
+pub const max_map_cells: usize = 4_194_304;
 
 /// The entry for a cell with no tile on a layer. Files write it as `.`, so no tile ID equals it.
 pub const empty: u8 = 255;
@@ -51,14 +54,16 @@ pub const ParseError = error{
     BadNumber,
     /// `size` is missing, or a `layer` line comes before it.
     MissingSize,
-    /// `spawn` is missing, or a `layer` line comes before it.
-    MissingSpawn,
     /// There is no `layer` line.
     MissingLayer,
     /// A row has the wrong number of entries, or a layer has the wrong number of rows.
     BadRow,
-    /// The spawn cell is outside the map.
-    SpawnOutside,
+    /// The map is larger than the engine's supported allocation limit.
+    InvalidDimensions,
+    /// The file declares a format version the engine does not support.
+    UnsupportedVersion,
+    /// A tile or collision ID lies outside the declared tileset.
+    TileOutsideTileset,
 } || std.mem.Allocator.Error;
 
 /// A cell in the grid.
@@ -82,9 +87,8 @@ pub const TileMap = struct {
     tiles: []u8,
     /// Which IDs block movement, indexed by ID.
     solid: [256]bool,
-    /// The cell the player starts in.
-    spawn: Cell,
-
+    /// Expected number of cells in the tileset, when declared by the file.
+    tileset_count: ?u32 = null,
     /// Parses the text of a map file. The returned map owns its tiles and must be freed with `deinit`.
     pub fn parse(allocator: std.mem.Allocator, text: []const u8) ParseError!TileMap {
         var map = TileMap{
@@ -92,10 +96,10 @@ pub const TileMap = struct {
             .rows = 0,
             .tiles = undefined,
             .solid = [_]bool{false} ** 256,
-            .spawn = .{ .col = 0, .row = 0 },
         };
         var have_size = false;
-        var have_spawn = false;
+        var have_version = false;
+        var have_tileset = false;
         // Allocated at the first `layer` line, when the size is known, and freed on any later error.
         var storage: []u8 = undefined;
         var allocated = false;
@@ -131,10 +135,18 @@ pub const TileMap = struct {
                 }
             }
 
-            if (std.mem.eql(u8, keyword, "size")) {
+            if (std.mem.eql(u8, keyword, "version")) {
+                if (have_version) return error.BadHeader;
+                const version = try parseCount(words.next());
+                if (words.next() != null) return error.BadHeader;
+                if (version != 1) return error.UnsupportedVersion;
+                have_version = true;
+            } else if (std.mem.eql(u8, keyword, "size")) {
+                if (have_size) return error.BadHeader;
                 const cols = try parseCount(words.next());
                 const rows = try parseCount(words.next());
                 if (words.next() != null or cols == 0 or rows == 0) return error.BadHeader;
+                if (@as(usize, cols) > max_map_cells / rows) return error.InvalidDimensions;
                 map.cols = cols;
                 map.rows = rows;
                 have_size = true;
@@ -145,17 +157,16 @@ pub const TileMap = struct {
                     any = true;
                 }
                 if (!any) return error.BadHeader;
-            } else if (std.mem.eql(u8, keyword, "spawn")) {
-                const col = try parseCount(words.next());
-                const spawn_row = try parseCount(words.next());
-                if (words.next() != null) return error.BadHeader;
-                map.spawn = .{ .col = col, .row = spawn_row };
-                have_spawn = true;
+            } else if (std.mem.eql(u8, keyword, "tileset")) {
+                if (have_tileset) return error.BadHeader;
+                const count = try parseCount(words.next());
+                if (words.next() != null or count == 0 or count > @as(u32, empty)) return error.BadHeader;
+                map.tileset_count = count;
+                have_tileset = true;
             } else if (std.mem.eql(u8, keyword, "layer")) {
                 // The layer above must have all its rows before the next one starts.
                 if (current != null and row != map.rows) return error.BadRow;
                 if (!have_size) return error.MissingSize;
-                if (!have_spawn) return error.MissingSpawn;
                 const layer = try parseLayer(words.next());
                 if (words.next() != null) return error.BadHeader;
                 if (seen[@intFromEnum(layer)]) return error.BadHeader;
@@ -175,7 +186,14 @@ pub const TileMap = struct {
 
         if (!allocated) return error.MissingLayer;
         if (current != null and row != map.rows) return error.BadRow;
-        if (map.spawn.col >= map.cols or map.spawn.row >= map.rows) return error.SpawnOutside;
+        if (map.tileset_count) |count| {
+            for (storage) |id| {
+                if (id != empty and @as(u32, id) >= count) return error.TileOutsideTileset;
+            }
+            for (map.solid, 0..) |is_solid, id| {
+                if (is_solid and id >= @as(usize, count)) return error.TileOutsideTileset;
+            }
+        }
         map.tiles = storage;
         return map;
     }

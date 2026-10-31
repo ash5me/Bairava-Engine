@@ -43,6 +43,14 @@ pub fn toggleFullscreen(window: *Window) void {
     _ = c.SDL_SetWindowFullscreen(sdl_window, !fullscreen);
 }
 
+pub fn startTextInput(window: *Window) bool {
+    return c.SDL_StartTextInput(toSdl(window));
+}
+
+pub fn stopTextInput(window: *Window) bool {
+    return c.SDL_StopTextInput(toSdl(window));
+}
+
 /// The window's size in pixels. On high-DPI displays this is larger than its size in points.
 pub fn pixelSize(window: *Window) PixelSize {
     var w: c_int = 0;

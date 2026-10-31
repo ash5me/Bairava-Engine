@@ -2,8 +2,8 @@
 //! the platform backend can both use it without depending on each other.
 
 /// A physical key, named by its position on the keyboard. A layout changes the character a position
-/// produces, not the position, so bindings resolve through these. The engine reports 26 keys: the 24
-/// in `Key` (engine/input/input.zig), plus F3 and F11.
+/// produces, not the position, so bindings resolve through these. The engine reports 27 keys: the 24
+/// in `Key` (engine/input/input.zig), plus F3, F4, and F11.
 pub const Scancode = enum {
     escape,
     left,
@@ -27,10 +27,13 @@ pub const Scancode = enum {
     e,
     f,
     r,
+    backspace,
     f5,
     f9,
+    f2,
     f3,
     f11,
+    f4,
 };
 
 pub const MouseButton = enum { left, right, middle };
@@ -87,6 +90,8 @@ pub const Event = union(enum) {
     /// An axis moved. A stick reads from -1 (left or up) to 1 (right or down), and a trigger from 0 to 1.
     /// The value is the raw position, before any dead zone.
     gamepad_axis: struct { id: GamepadId, axis: GamepadAxis, value: f32 },
+    /// UTF-8 text from the active text-input session.
+    text_input: TextInput,
 };
 
 /// An application window. The engine holds and passes pointers to it. Only the platform backend knows
@@ -113,6 +118,16 @@ pub const AudioDevice = opaque {};
 
 /// A playback stream that is bound to a device. Like `AudioDevice`, the backend gives it meaning.
 pub const AudioStream = opaque {};
+
+/// Bounded text from one platform text-input event, copied out of the backend's event storage.
+pub const TextInput = struct {
+    bytes: [32]u8 = undefined,
+    len: u8 = 0,
+
+    pub fn slice(self: *const TextInput) []const u8 {
+        return self.bytes[0..self.len];
+    }
+};
 
 /// How one sample is stored. These are the only sample kinds the engine handles.
 pub const SampleKind = enum { uint8, int16, int32, float32 };

@@ -49,6 +49,7 @@ zig build run -Dtracy=true         # launch with Tracy profiling zones, for a Tr
 zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
 zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to select Metal
 zig build run-sample               # build and launch the scene sample, which uses no Semkootru code
+zig build run-benchmark            # launch a deterministic 1000-sprite profiling workload
 zig build test                     # run unit tests (no GPU device or window; links SDL and needs slangc)
 ```
 

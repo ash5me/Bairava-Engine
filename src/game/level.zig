@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const engine = @import("bairava");
+const level_data = @import("level_data.zig");
 
 /// Side length of one tile, in native pixels.
 pub const tile_px = engine.tilemap.tile_px;
@@ -10,11 +11,12 @@ pub const tile_px = engine.tilemap.tile_px;
 /// The level's tile map, loaded from a text file at startup.
 pub const Level = struct {
     map: engine.tilemap.TileMap,
+    spawn: level_data.Spawn,
     allocator: std.mem.Allocator,
 
     /// Reads and parses the map file. Missing or malformed game assets return an error to the
     /// game's initializer, which lets the runtime unwind engine-owned state cleanly.
-    pub fn load(ctx: *const engine.Context, path: []const u8) engine.AssetError!Level {
+    pub fn load(ctx: *const engine.Context, path: []const u8, spawn_path: []const u8) engine.AssetError!Level {
         const text = ctx.readFile(ctx.allocators.asset, path) catch |err| {
             return switch (err) {
                 error.FileNotFound => error.FileNotFound,
@@ -28,7 +30,21 @@ pub const Level = struct {
         const map = engine.tilemap.TileMap.parse(allocator, text) catch {
             return error.InvalidLevel;
         };
-        return .{ .map = map, .allocator = allocator };
+        const spawn_text = ctx.readFile(allocator, spawn_path) catch |err| {
+            map.deinit(allocator);
+            return switch (err) {
+                error.FileNotFound => error.FileNotFound,
+                error.PathTooLong => error.PathTooLong,
+                error.OutOfMemory => error.OutOfMemory,
+                else => error.ReadFailed,
+            };
+        };
+        defer allocator.free(spawn_text);
+        const spawn = level_data.parseSpawn(map.cols, map.rows, spawn_text) catch {
+            map.deinit(allocator);
+            return error.InvalidLevel;
+        };
+        return .{ .map = map, .spawn = spawn, .allocator = allocator };
     }
 
     pub fn deinit(self: *const Level) void {

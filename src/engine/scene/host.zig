@@ -9,6 +9,7 @@
 const std = @import("std");
 const logging = @import("../logging/log.zig");
 const manager = @import("scene_manager.zig");
+const Text = @import("../diagnostics/text.zig").Text;
 
 const elog = logging.scoped("scene");
 
@@ -36,6 +37,16 @@ pub fn Host(comptime Ctx: type, comptime DrawCtx: type, comptime Root: type) typ
 
         pub fn draw(self: *Self, dc: *const DrawCtx) void {
             self.scenes.draw(dc);
+        }
+
+        /// The active scene's name and any pending switch, for the diagnostics overlay.
+        pub fn sceneInfo(self: *const Self) Mgr.Info {
+            return self.scenes.info();
+        }
+
+        /// The active scene's debug lines. The scene adds them through its `debugText` method, if it has one.
+        pub fn debugText(self: *const Self, out: *Text) void {
+            self.scenes.debugText(out);
         }
 
         pub fn deinit(self: *Self) void {
@@ -153,6 +164,15 @@ test "the host opens the root, applies a switch right after the update that aske
     host.draw(&TestDraw{});
     host.deinit();
     try std.testing.expectEqualStrings("R+RuN+R-NdN-", ctx.text());
+}
+
+test "the host reports the active scene's name, and no switch is pending after init" {
+    var ctx = TestCtx{ .allocators = .{ .game = std.testing.allocator } };
+    var host = try Host(TestCtx, TestDraw, RootScene).init(&ctx);
+    defer host.deinit();
+    try std.testing.expectEqualStrings(@typeName(RootScene), host.sceneInfo().name);
+    try std.testing.expectEqual(@as(u32, 1), host.sceneInfo().switches);
+    try std.testing.expect(host.sceneInfo().pending == null);
 }
 
 test "a root whose init fails makes the host init fail, with nothing left open" {

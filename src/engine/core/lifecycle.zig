@@ -10,6 +10,9 @@ const platform = @import("../platform/platform.zig");
 const audio = @import("../audio/audio.zig");
 const logging = @import("../logging/log.zig");
 const Input = @import("../input/input.zig").Input;
+const diagnostics = @import("../diagnostics/collector.zig");
+const hot_reload = @import("../assets/hot_reload.zig");
+const startup = @import("startup.zig");
 const Camera = @import("../renderer/camera.zig").Camera;
 const sprite = @import("../renderer/sprite.zig");
 const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
@@ -47,6 +50,12 @@ pub const Session = struct {
     world_batch: SpriteBatch = undefined,
     screen_batch: SpriteBatch = undefined,
     input: Input = .{},
+    /// The step startup is on. After a failed start, it names the subsystem that failed. See startup.zig.
+    stage: startup.Stage = .not_started,
+    /// Frame timing, the published snapshot, and the debug overlay's switches and lines.
+    collector: diagnostics.Collector = .{},
+    /// Files watched for hot reload. Development builds poll them; release builds never do.
+    reloads: hot_reload.Watcher = .{},
     audio: audio.Audio = undefined,
     cam: Camera = undefined,
     ctx: Context = undefined,
@@ -68,6 +77,7 @@ pub const Session = struct {
         self.engine_allocator = allocators.engineAllocator();
         self.settings_bytes = readSettings(self.engine_allocator, config.settings_file);
         const settings_text: []const u8 = self.settings_bytes orelse "";
+        applyLogLevel(settings_text);
         const window_settings = loadWindowSettings(settings_text, .{
             .width = config.window_w,
             .height = config.window_h,
@@ -77,21 +87,18 @@ pub const Session = struct {
 
         self.stopped = false;
         errdefer self.stop();
+        self.stage = .platform;
         try platform.init();
         self.platform_started = true;
-        self.window = platform.window.create(config.title, window_settings.width, window_settings.height, window_settings.fullscreen) catch |err| {
-            elog.err("window creation failed: {s}", .{@errorName(err)});
-            return err;
-        };
+        self.stage = .window;
+        self.window = try platform.window.create(config.title, window_settings.width, window_settings.height, window_settings.fullscreen);
         self.window_created = true;
         elog.info("window {d}x{d}, native view {d}x{d}, {d} update steps per second", .{
             window_settings.width, window_settings.height, config.native_w, config.native_h, config.update_hz,
         });
 
-        self.gpu = platform.gpu.Gpu.init(self.window, build_options.gpu_debug) catch |err| {
-            elog.err("GPU device creation failed: {s}", .{@errorName(err)});
-            return err;
-        };
+        self.stage = .gpu;
+        self.gpu = try platform.gpu.Gpu.init(self.window, build_options.gpu_debug);
         self.gpu_created = true;
         if (!self.gpu.setVsync(window_settings.vsync)) elog.warn("immediate present is not available on this display, so vsync stays on", .{});
         const vsync_label: []const u8 = if (window_settings.vsync) "on" else "off";
@@ -103,6 +110,7 @@ pub const Session = struct {
 
         const native_wf: f32 = @floatFromInt(config.native_w);
         const native_hf: f32 = @floatFromInt(config.native_h);
+        self.stage = .targets;
         self.target = texture.createTarget(self.engine_allocator, self.gpu.device, config.native_w, config.native_h, self.format);
         self.target_created = true;
         self.world_batch = sprite.create(self.engine_allocator, self.gpu.device, self.format);
@@ -116,7 +124,9 @@ pub const Session = struct {
         self.cam = Camera{ .view_w = native_wf, .view_h = native_hf, .world_w = 0, .world_h = 0 };
         // The store is allocated before the context, because the context points at it. Its loader reads
         // textures through the context, so the store is set up once the context exists.
+        self.stage = .textures;
         self.textures = try self.engine_allocator.create(context.TextureStore);
+        self.reloads.stat = hotReloadStamp;
         // Before the first frame is drawn, assume the view fills the window at its native size.
         self.ctx = Context{
             .gpu_state = @ptrCast(self.gpu.device),
@@ -130,9 +140,12 @@ pub const Session = struct {
             .audio = &self.audio,
             .settings_text = settings_text,
             .textures = self.textures,
+            .diagnostics = &self.collector,
+            .reloads = &self.reloads,
         };
         try self.textures.init(self.engine_allocator, context.max_registered_textures, context.textureLoader(&self.ctx));
         self.textures_ready = true;
+        self.stage = .ready;
     }
 
     /// Releases everything `start` opened, in reverse order: the audio device, the batches, the
@@ -186,6 +199,28 @@ pub const Session = struct {
         }
     }
 };
+
+/// Reads the `log_level` line of the settings file, which sets the lowest level written. A value that is not a
+/// level name is logged, and the default is kept. Runs before anything else is logged at a level that matters.
+fn applyLogLevel(text: []const u8) void {
+    var lines = settings.Lines.init(text);
+    while (lines.next()) |line| {
+        if (!std.mem.eql(u8, line.key, "log_level")) continue;
+        const value = line.value orelse {
+            elog.warn("settings line {d}: 'log_level' needs a value: trace, debug, info, warn, or error", .{line.number});
+            continue;
+        };
+        logging.min_level = logging.parseLevel(value) orelse {
+            elog.warn("settings line {d}: '{s}' is not a log level (trace, debug, info, warn, or error), so the default is kept", .{ line.number, value });
+            continue;
+        };
+    }
+}
+
+/// The modification time of a packaged asset, for the hot reload watcher. Watched assets are packaged.
+fn hotReloadStamp(path: []const u8) ?i64 {
+    return platform.files.modifiedNs(.packaged, path);
+}
 
 /// Opens the log file beside the executable when the game asks for one. Each run replaces the
 /// file from the last run. Startup messages and startup failures are kept, so this runs first.

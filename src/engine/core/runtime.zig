@@ -12,15 +12,19 @@ const allocator_types = @import("allocators.zig");
 const context = @import("context.zig");
 const event = @import("event.zig");
 const lifecycle = @import("lifecycle.zig");
+const startup = @import("startup.zig");
 const logging = @import("../logging/log.zig");
 const profile = @import("../profiling/profile.zig");
 const debug_overlay = @import("../profiling/debug_overlay.zig");
+const debug_geometry = @import("../renderer/debug_geometry.zig");
+const gate = @import("../diagnostics/gate.zig");
+const console_mod = @import("../diagnostics/console.zig");
 const renderer = @import("../renderer/renderer.zig");
 const view = @import("../renderer/view.zig");
 const sprite = @import("../renderer/sprite.zig");
 const Rect = sprite.Rect;
 const texture = @import("../renderer/texture.zig");
-const Texture = @import("../renderer/texture.zig").Texture;
+const ui = @import("../ui/ui.zig");
 
 const Config = application.Config;
 const DrawContext = context.DrawContext;
@@ -35,6 +39,26 @@ const max_dt: f32 = 0.1;
 const idle_sleep_ms: u32 = 16;
 
 const black = renderer.Color{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
+
+/// The current time in nanoseconds, read only in development builds. A release build takes no
+/// timings, so it doesn't read the clock for them.
+fn clockIf() u64 {
+    return if (gate.enabled) platform.clock.nowNs() else 0;
+}
+
+/// Seconds from `start_ns` to `end_ns`, or 0 when diagnostics are compiled out.
+fn secondsBetween(start_ns: u64, end_ns: u64) f32 {
+    if (!gate.enabled) return 0;
+    return @as(f32, @floatFromInt(end_ns -| start_ns)) / 1_000_000_000.0;
+}
+
+/// Loads the overlay's font. A missing font turns the overlay off rather than stopping the game.
+fn loadOverlayFont(ctx: *const context.Context, config: Config) ?ui.Font {
+    return ctx.loadFont(config.debug_font_path, config.debug_font_px) catch |err| {
+        logging.recovered("engine", "loading the debug overlay font", config.debug_font_path, err, "the overlay is off");
+        return null;
+    };
+}
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 ///
@@ -55,6 +79,7 @@ pub fn run(comptime Game: type, config: Config) !void {
     lifecycle.openLog(config);
     defer logging.closeFile();
     elog.info("profiling zones {s}", .{if (profile.enabled) "on (Tracy)" else "off"});
+    elog.info("development tools {s}", .{if (gate.enabled) "on" else "off"});
 
     const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
 
@@ -63,7 +88,8 @@ pub fn run(comptime Game: type, config: Config) !void {
 
     var session = lifecycle.Session{};
     session.start(config, &allocators) catch |err| {
-        elog.err("engine startup failed: {s}", .{@errorName(err)});
+        var summary: [256]u8 = undefined;
+        elog.err("{s}", .{startup.failureSummary(&summary, session.stage, @errorName(err))});
         return err;
     };
     defer session.stop();
@@ -74,13 +100,17 @@ pub fn run(comptime Game: type, config: Config) !void {
         return err;
     };
     defer game.deinit();
+
     // The overlay bakes its own copy of the debug font, loaded from the same files as the game's fonts.
-    const debug_font = ctx.loadFont(config.debug_font_path, config.debug_font_px) catch |err| blk: {
-        elog.warn("debug overlay font '{s}' unavailable: {s}; overlay disabled", .{ config.debug_font_path, @errorName(err) });
-        break :blk null;
-    };
+    // Release builds have no overlay, so they load no font for it.
+    const debug_font: ?ui.Font = if (gate.enabled) loadOverlayFont(ctx, config) else null;
     var overlay = debug_overlay.Overlay.init(allocators.engineAllocator(), debug_font);
     defer overlay.deinit();
+    const collector = &session.collector;
+    var dev_console = console_mod.Console{};
+    defer if (dev_console.visible and !platform.window.stopTextInput(session.window)) {
+        elog.warn("could not stop text input during shutdown", .{});
+    };
 
     const native_wf: f32 = @floatFromInt(config.native_w);
     const native_hf: f32 = @floatFromInt(config.native_h);
@@ -110,43 +140,58 @@ pub fn run(comptime Game: type, config: Config) !void {
         const frame_seconds = @as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0;
         const frame_dt = @min(frame_seconds, max_dt);
         last_ns = now_ns;
-        overlay.record(frame_seconds);
+        if (gate.enabled) collector.stats.record(.frame, frame_seconds);
 
         // Events, then the held keys as of this pump. Presses and clicks wait in Input for an update.
+        const events_start = clockIf();
         {
             const zone = profile.zoneNamed(@src(), "events");
             defer zone.End();
-            const pumped = event.pump(session.window, &session.input);
+            const pumped = event.pump(session.window, &session.input, &dev_console, collector, &overlay.visible);
             if (pumped.quit) ctx.running = false;
             if (pumped.toggle_overlay) overlay.toggle();
+            if (gate.enabled and pumped.toggle_geometry) collector.toggleGeometry();
             session.input.sampleHeld(platform.events.isHeld);
+        }
+        if (gate.enabled) collector.stats.record(.events, secondsBetween(events_start, clockIf()));
+        // Hot reload looks at watched files here, before the updates, so a reload never runs during an update.
+        if (gate.enabled) {
+            const asset_start = clockIf();
+            session.reloads.poll(now_ns);
+            collector.stats.record(.asset, secondsBetween(asset_start, clockIf()));
         }
 
         // Fixed-timestep updates. Run whole steps while the accumulated time covers one, so game
         // logic advances at the same rate on any display. Stop early if the game quits.
         accumulator += frame_dt;
         var steps: u32 = 0;
+        var update_seconds: f32 = 0;
         while (accumulator >= fixed_dt and ctx.running) {
             session.input.latch();
             ctx.dt = fixed_dt;
+            const update_start = clockIf();
             {
                 const zone = profile.zoneNamed(@src(), "update");
                 defer zone.End();
                 game.update(ctx);
             }
+            update_seconds += secondsBetween(update_start, clockIf());
             accumulator -= fixed_dt;
             steps += 1;
         }
+        if (gate.enabled) collector.stats.record(.update, update_seconds);
         if (steps > 4) {
             elog.debug("{d} update steps in one frame, so the frame took {d:.1} ms", .{ steps, frame_dt * 1000.0 });
         }
         // Free finished voices and keep looping voices fed. Once per frame is enough, because a
         // looping voice queues a full copy of its sound ahead of time.
+        const audio_start = clockIf();
         {
             const zone = profile.zoneNamed(@src(), "audio");
             defer zone.End();
             session.audio.update();
         }
+        if (gate.enabled) collector.stats.record(.audio, secondsBetween(audio_start, clockIf()));
         if (ctx.scale_mode != last_mode) {
             elog.info("scale mode: {s}", .{@tagName(ctx.scale_mode)});
             last_mode = ctx.scale_mode;
@@ -202,7 +247,9 @@ pub fn run(comptime Game: type, config: Config) !void {
         };
 
         // Pass 1: the game queues its sprites, and they're drawn into the view-sized target.
+        const draw_start = clockIf();
         session.world_batch.begin(view_wf, view_hf);
+        collector.debug.clear();
         const draw_ctx = DrawContext{
             .batch = &session.world_batch,
             .cam = &session.cam,
@@ -210,30 +257,73 @@ pub fn run(comptime Game: type, config: Config) !void {
             .view_h = view_hf,
             .alpha = alpha,
             .dt = frame_dt,
+            .debug = &collector.debug,
+            .show = collector.geometry,
+            .layers = collector.layers,
         };
         {
             const zone = profile.zoneNamed(@src(), "game draw");
             defer zone.End();
             game.draw(&draw_ctx);
         }
-        // The overlay goes above the game in the same native view. Its draw-call count is from the
-        // last frame, since this frame's batches are not drawn until below.
-        overlay.draw(&session.world_batch, view_wf, .{
-            .sprites = session.world_batch.sprite_count,
-            .draw_calls = last_draw_calls,
-            .mode = mode_label,
-            .scale = fit.scale,
-            .zoom = session.cam.zoom,
-            .view_w = view_w,
-            .view_h = view_h,
-        });
+        if (gate.enabled and collector.geometry.camera) debug_geometry.cameraBounds(&collector.debug, &session.cam);
+
+        // The published snapshot and the game's lines, for the overlay. Built only in development builds.
+        if (gate.enabled) {
+            collector.text.clear();
+            if (comptime @hasDecl(@TypeOf(game), "debugText")) game.debugText(&collector.text);
+            if (comptime @hasDecl(@TypeOf(game), "sceneInfo")) {
+                const info = game.sceneInfo();
+                collector.snapshot.scene = .{ .name = info.name, .pending = info.pending, .switches = info.switches };
+            }
+            const textures = ctx.textureStats();
+            collector.snapshot.assets = .{
+                .loaded = textures.loaded,
+                .hits = textures.hits,
+                .misses = textures.misses,
+                .failed = textures.failed_loads,
+                .bytes = textures.bytes,
+            };
+            collector.snapshot.input = .{
+                .held = session.input.heldCount(),
+                .pressed = session.input.pressedCount(),
+                .mouse_x = session.input.mouse_x,
+                .mouse_y = session.input.mouse_y,
+            };
+            const previous_world = collector.snapshot.world;
+            collector.snapshot.world = .{
+                .sprites = session.world_batch.sprite_count,
+                .draw_calls = last_draw_calls,
+                .entities = previous_world.entities,
+                .collision_queries = previous_world.collision_queries,
+                .zoom = session.cam.zoom,
+                .cam_x = session.cam.x,
+                .cam_y = session.cam.y,
+                .view_w = view_w,
+                .view_h = view_h,
+                .mode = mode_label,
+                .scale = fit.scale,
+                .map_cols = previous_world.map_cols,
+                .map_rows = previous_world.map_rows,
+                .selected_col = previous_world.selected_col,
+                .selected_row = previous_world.selected_row,
+                .selected_tile = previous_world.selected_tile,
+                .selected_solid = previous_world.selected_solid,
+            };
+            collector.snapshot.frames = total_frames;
+            // The overlay goes above the game in the same native view. Its draw-call count is from the
+            // last frame, since this frame's batches are not drawn until below.
+            overlay.draw(&session.world_batch, view_wf, view_hf, collector, &dev_console);
+        }
         sprite.upload(&session.world_batch, frame.cmd);
         const world_pass = renderer.beginPass(frame.cmd, texture.backendTexture(&session.target), clear);
         sprite.draw(&session.world_batch, world_pass);
         renderer.endPass(world_pass);
+        if (gate.enabled) collector.stats.record(.draw, secondsBetween(draw_start, clockIf()));
 
         // Pass 2: stretch the target onto the window. Fit mode covers the whole window. Integer
         // mode covers a centered whole-number multiple of the view, and the edges stay black.
+        const present_start = clockIf();
         {
             const zone = profile.zoneNamed(@src(), "present");
             defer zone.End();
@@ -268,6 +358,7 @@ pub fn run(comptime Game: type, config: Config) !void {
         }
 
         platform.gpu.Gpu.endFrame(frame);
+        if (gate.enabled) collector.stats.record(.present, secondsBetween(present_start, clockIf()));
 
         // The window title stays as configured. The frame stats are in the debug overlay (F3).
         last_draw_calls = session.world_batch.draw_calls + session.screen_batch.draw_calls;

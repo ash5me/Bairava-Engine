@@ -49,6 +49,10 @@ pub const atlas_index_path = "assets/atlas.txt";
 
 /// The tile map the game loads at startup, relative to the executable's folder.
 pub const level_path = "assets/maps/level1.txt";
+/// Game-specific spawn metadata for the level.
+pub const level_spawn_path = "assets/maps/level1.spawn";
+/// Versioned, validated sprite animation definitions.
+pub const animation_path = "assets/animations/warrior.anim";
 
 /// Looping ambience, relative to the executable's folder.
 pub const ambient_sound_path = "assets/wind1.wav";

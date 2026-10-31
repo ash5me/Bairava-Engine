@@ -16,10 +16,20 @@ test {
     _ = @import("engine/renderer/renderer.zig");
     _ = @import("engine/memory/string.zig");
     _ = @import("engine/profiling/frame_history.zig");
+    _ = @import("engine/diagnostics/text.zig");
+    _ = @import("engine/diagnostics/debug_draw.zig");
+    _ = @import("engine/diagnostics/frame_stats.zig");
+    _ = @import("engine/diagnostics/collector.zig");
+    _ = @import("engine/diagnostics/console.zig");
+    _ = @import("engine/animation/data.zig");
+    _ = @import("game/level_data.zig");
+    _ = @import("engine/renderer/debug_geometry.zig");
     _ = @import("engine/memory/hash_map.zig");
     _ = @import("engine/assets/registry.zig");
     _ = @import("engine/assets/handle.zig");
     _ = @import("engine/assets/cache.zig");
+    _ = @import("engine/assets/validate.zig");
+    _ = @import("engine/assets/hot_reload.zig");
     _ = @import("engine/audio/voices.zig");
     _ = @import("engine/audio/audio.zig");
     _ = @import("engine/audio/ima.zig");
@@ -44,6 +54,7 @@ test {
     _ = @import("engine/platform/sdl/clock.zig");
     _ = @import("engine/platform/sdl/files.zig");
     _ = @import("engine/logging/log.zig");
+    _ = @import("engine/core/startup.zig");
     _ = @import("engine/platform/sdl/window.zig");
     _ = @import("engine/physics/shapes.zig");
     _ = @import("engine/physics/collision.zig");
@@ -386,11 +397,10 @@ test "a texture with no upload is ready at once" {
 // ---- Tile maps (engine/scene/tilemap.zig) ----
 
 /// A 6x6 room. Walls form the border, plus one wall at column 3, row 2. Open floor is columns 1 to 4
-/// in rows 1 to 4, so the spawn cell (1, 1) is open.
+/// in rows 1 to 4, so cell (1, 1) is open.
 const room_text =
     \\size 6 6
     \\solid 1
-    \\spawn 1 1
     \\layer ground
     \\1 1 1 1 1 1
     \\1 0 0 0 0 1
@@ -406,8 +416,6 @@ test "parse reads the header and the tile IDs row by row" {
     defer map.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 6), map.cols);
     try std.testing.expectEqual(@as(u32, 6), map.rows);
-    try std.testing.expectEqual(@as(u32, 1), map.spawn.col);
-    try std.testing.expectEqual(@as(u32, 1), map.spawn.row);
     try std.testing.expect(map.solid[1]);
     try std.testing.expect(!map.solid[0]);
     try std.testing.expectEqual(@as(?u8, 1), map.idAt(.ground, 3, 2));
@@ -417,19 +425,42 @@ test "parse reads the header and the tile IDs row by row" {
 
 test "parse skips comments and blank lines and accepts CRLF line endings" {
     const allocator = std.testing.allocator;
-    const text = "# a comment\r\n\r\nsize 1 2\r\nsolid 1\r\n# spawn comes next\r\nspawn 0 1\r\nlayer ground\r\n0\r\n1\r\n";
+    const text = "# a comment\r\n\r\nsize 1 2\r\nsolid 1\r\nlayer ground\r\n0\r\n1\r\n";
     const map = try tilemap.TileMap.parse(allocator, text);
     defer map.deinit(allocator);
     try std.testing.expectEqual(@as(?u8, 0), map.idAt(.ground, 0, 0));
     try std.testing.expectEqual(@as(?u8, 1), map.idAt(.ground, 0, 1));
-    try std.testing.expectEqual(@as(u32, 1), map.spawn.row);
+}
+
+test "versioned maps validate tile IDs against the declared tileset" {
+    const allocator = std.testing.allocator;
+    const text = "version 1\nsize 1 1\ntileset 2\nsolid 1\nlayer ground\n1\n";
+    const map = try tilemap.TileMap.parse(allocator, text);
+    defer map.deinit(allocator);
+    try std.testing.expectEqual(@as(?u32, 2), map.tileset_count);
+
+    try std.testing.expectError(
+        error.TileOutsideTileset,
+        tilemap.TileMap.parse(allocator, "version 1\nsize 1 1\ntileset 1\nsolid 1\nlayer ground\n0\n"),
+    );
+    try std.testing.expectError(
+        error.UnsupportedVersion,
+        tilemap.TileMap.parse(allocator, "version 2\nsize 1 1\nlayer ground\n0\n"),
+    );
+    try std.testing.expectError(
+        error.BadHeader,
+        tilemap.TileMap.parse(allocator, "size 1 1\nsize 1 1\nlayer ground\n0\n"),
+    );
+    try std.testing.expectError(
+        error.InvalidDimensions,
+        tilemap.TileMap.parse(allocator, "size 4294967295 4294967295\nlayer ground\n"),
+    );
 }
 
 test "each layer keeps its own tiles, in any order, and a dot is an empty cell" {
     const allocator = std.testing.allocator;
     const text =
         \\size 2 1
-        \\spawn 0 0
         \\layer decoration
         \\. 5
         \\layer ground
@@ -449,7 +480,6 @@ test "a solid tile on any layer blocks its cell" {
     const text =
         \\size 3 1
         \\solid 7
-        \\spawn 0 0
         \\layer ground
         \\0 0 0
         \\layer decoration
@@ -467,24 +497,22 @@ test "parse rejects malformed maps, and frees what it had allocated" {
     // first `layer` line must free the tile storage.
     const allocator = std.testing.allocator;
     const expectErr = std.testing.expectError;
-    try expectErr(error.MissingSize, tilemap.TileMap.parse(allocator, "spawn 0 0\nlayer ground\n0\n"));
-    try expectErr(error.MissingSpawn, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\n0\n"));
-    try expectErr(error.MissingLayer, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\n"));
-    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\nx\n"));
-    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n256\n"));
-    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n255\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 2 1\nspawn 0 0\nlayer ground\n0\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n0 0\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 2\nspawn 0 0\nlayer ground\n0\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n0\n0\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\nlayer decoration\n0\n"));
-    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n0\nlayer decoration\n"));
-    try expectErr(error.SpawnOutside, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 1 0\nlayer ground\n0\n"));
-    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlevel 3\nlayer ground\n0\n"));
-    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\n0\nlayer ground\n0\n"));
-    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 0 1\nspawn 0 0\nlayer ground\n"));
-    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer sky\n0\n"));
-    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nspawn 0 0\nlayer ground\n0\nlayer ground\n0\n"));
+    try expectErr(error.MissingSize, tilemap.TileMap.parse(allocator, "layer ground\n0\n"));
+    try expectErr(error.MissingLayer, tilemap.TileMap.parse(allocator, "size 1 1\n"));
+    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\nx\n"));
+    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\n256\n"));
+    try expectErr(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\n255\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 2 1\nlayer ground\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\n0 0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 2\nlayer ground\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\n0\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\nlayer decoration\n0\n"));
+    try expectErr(error.BadRow, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\n0\nlayer decoration\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nlevel 3\nlayer ground\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\n0\nlayer ground\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 0 1\nlayer ground\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nlayer sky\n0\n"));
+    try expectErr(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nlayer ground\n0\nlayer ground\n0\n"));
 }
 
 test "cells outside the map are solid, so the map's edge is a wall" {
@@ -505,7 +533,7 @@ test "largestId reports the highest tile ID in the map, and ignores empty cells"
     defer map.deinit(allocator);
     try std.testing.expectEqual(@as(u8, 1), map.largestId());
 
-    const sparse = try tilemap.TileMap.parse(allocator, "size 2 1\nspawn 0 0\nlayer foreground\n. 3\n");
+    const sparse = try tilemap.TileMap.parse(allocator, "size 2 1\nlayer foreground\n. 3\n");
     defer sparse.deinit(allocator);
     try std.testing.expectEqual(@as(u8, 3), sparse.largestId());
 }

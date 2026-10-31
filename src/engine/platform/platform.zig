@@ -79,6 +79,12 @@ pub const files = struct {
     pub fn absolutePath(location: Location, path: []const u8, buf: []u8) FileError![:0]const u8 {
         return sdl_files.absolutePath(location, path, buf);
     }
+
+    /// The last modification time of a file, in nanoseconds since the Unix epoch, or null when the file
+    /// can't be examined. Hot reload compares these to notice a change.
+    pub fn modifiedNs(location: Location, path: []const u8) ?i64 {
+        return sdl_files.modifiedNs(location, path);
+    }
 };
 
 /// Platform events and held keys, as the engine uses them.
@@ -110,6 +116,16 @@ pub const window = struct {
     /// Switches the window between windowed and full screen.
     pub fn toggleFullscreen(win: *Window) void {
         window_backend.toggleFullscreen(win);
+    }
+
+    /// Starts SDL text input for an in-game development console.
+    pub fn startTextInput(win: *Window) bool {
+        return window_backend.startTextInput(win);
+    }
+
+    /// Stops SDL text input when the development console closes.
+    pub fn stopTextInput(win: *Window) bool {
+        return window_backend.stopTextInput(win);
     }
 
     /// The window's size in pixels. On high-DPI displays this is larger than its size in points.

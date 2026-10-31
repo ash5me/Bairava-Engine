@@ -200,12 +200,20 @@ test "a bind line replaces one action's bindings, and the others keep their defa
 }
 
 test "a bind line with no valid names keeps the defaults" {
+    const saved_level = logging.min_level;
+    defer logging.min_level = saved_level;
+    logging.min_level = .err;
+
     const map = load(TestAction, test_defaults, "bind jump = bogus, nothing\n");
     try std.testing.expectEqual(@as(usize, 2), map.bindingsOf(.jump).len);
     try std.testing.expectEqual(Binding{ .key = .w }, map.bindingsOf(.jump)[0]);
 }
 
 test "lines that are not actions, window settings, and comments do not change the bindings" {
+    const saved_level = logging.min_level;
+    defer logging.min_level = saved_level;
+    logging.min_level = .err;
+
     const text =
         \\# a comment
         \\resolution = 960x540

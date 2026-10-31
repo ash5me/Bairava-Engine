@@ -66,6 +66,20 @@ pub fn write(location: Location, path: []const u8, bytes: []const u8) FileError!
     }
 }
 
+/// The last modification time of a file in nanoseconds since the Unix epoch, or null when the path can't be
+/// examined. SDL reports a missing file the same way, so both give null.
+pub fn modifiedNs(location: Location, path: []const u8) ?i64 {
+    var buf: [max_full_path]u8 = undefined;
+    const full = absolutePath(location, path, &buf) catch return null;
+    var info: c.SDL_PathInfo = undefined;
+    if (!c.SDL_GetPathInfo(full.ptr, &info)) return null;
+    return @as(i64, @intCast(info.modify_time));
+}
+
+test "a missing file has no modification time" {
+    try std.testing.expectEqual(@as(?i64, null), modifiedNs(.packaged, "no-such-file-for-the-test.txt"));
+}
+
 test "packaged files are read only" {
     try std.testing.expectError(error.ReadOnlyLocation, write(.packaged, "step6_never_written.tmp", "x"));
 }

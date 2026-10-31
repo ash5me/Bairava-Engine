@@ -108,9 +108,12 @@ pub fn keyFor(code: Scancode) ?Key {
         .e => .e,
         .f => .f,
         .r => .r,
+        .backspace => null,
         .f5 => .f5,
         .f9 => .f9,
+        .f2 => null,
         .f3 => null,
+        .f4 => null,
         .f11 => null,
     };
 }
@@ -176,6 +179,24 @@ pub const Input = struct {
         return self.released[@intFromEnum(key)];
     }
 
+    /// How many keys are held, as of the latest event pump. The diagnostics overlay shows it.
+    pub fn heldCount(self: *const Input) u32 {
+        var count: u32 = 0;
+        for (self.held_keys) |down| {
+            if (down) count += 1;
+        }
+        return count;
+    }
+
+    /// How many keys were pressed in the update step that is running. The diagnostics overlay shows it.
+    pub fn pressedCount(self: *const Input) u32 {
+        var count: u32 = 0;
+        for (self.pressed) |down| {
+            if (down) count += 1;
+        }
+        return count;
+    }
+
     /// Sets whether a key is held. `sampleHeld` calls this once per frame.
     pub fn setHeld(self: *Input, key: Key, down: bool) void {
         self.held_keys[@intFromEnum(key)] = down;
@@ -235,6 +256,7 @@ pub const Input = struct {
             .gamepad_button_down => |button| self.gamepadButton(button.id, button.button, true),
             .gamepad_button_up => |button| self.gamepadButton(button.id, button.button, false),
             .gamepad_axis => |axis| self.gamepadAxis(axis.id, axis.axis, axis.value),
+            .text_input => {},
         }
     }
 
@@ -417,7 +439,8 @@ test "every engine key has a scancode, and that scancode maps back to it" {
 test "F3 and F11 are read as commands, not as keys" {
     try std.testing.expectEqual(@as(?Key, null), keyFor(.f3));
     try std.testing.expectEqual(@as(?Key, null), keyFor(.f11));
-    try std.testing.expectEqual(@as(usize, 26), std.enums.values(Scancode).len);
+    try std.testing.expectEqual(@as(?Key, null), keyFor(.f4));
+    try std.testing.expectEqual(@as(usize, 29), std.enums.values(Scancode).len);
     try std.testing.expectEqual(@as(usize, 24), key_count);
 }
 

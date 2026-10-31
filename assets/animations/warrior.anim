@@ -1,0 +1,35 @@
+# Frame rectangles are relative to the warrior sprite region, in texels.
+# Each frame duration is in seconds; "once" clips hold their last frame.
+animation 1
+clip idle_down loop
+frame 0 0 16 32 0.12
+clip walk_down loop
+frame 0 0 16 32 0.12
+frame 16 0 16 32 0.12
+frame 32 0 16 32 0.12
+frame 48 0 16 32 0.12
+frame 64 0 16 32 0.12
+clip idle_up loop
+frame 0 32 16 32 0.12
+clip walk_up loop
+frame 0 32 16 32 0.12
+frame 16 32 16 32 0.12
+frame 32 32 16 32 0.12
+frame 48 32 16 32 0.12
+frame 64 32 16 32 0.12
+clip idle_left loop
+frame 0 64 16 32 0.12
+clip walk_left loop
+frame 0 64 16 32 0.12
+frame 16 64 16 32 0.12
+frame 32 64 16 32 0.12
+frame 48 64 16 32 0.12
+frame 64 64 16 32 0.12
+clip idle_right loop
+frame 0 96 16 32 0.12
+clip walk_right loop
+frame 0 96 16 32 0.12
+frame 16 96 16 32 0.12
+frame 32 96 16 32 0.12
+frame 48 96 16 32 0.12
+frame 64 96 16 32 0.12

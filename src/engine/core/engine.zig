@@ -61,6 +61,10 @@ pub const strings = @import("../memory/string.zig");
 pub const hash_map = @import("../memory/hash_map.zig");
 /// Asset names, ids, and validated paths.
 pub const assets = @import("../assets/registry.zig");
+/// Asset validation rules: manifests, sprite lists, atlas indexes. See docs/asset-validation.md.
+pub const validate = @import("../assets/validate.zig");
+/// Development hot reload: which watched files changed. See docs/asset-validation.md.
+pub const hot_reload = @import("../assets/hot_reload.zig");
 /// Texture atlas index: the rectangle of each sprite inside the atlas image.
 pub const atlas = @import("../assets/loaders/atlas.zig");
 /// Custom struct vectors in an array-of-structs or structure-of-arrays layout.
@@ -77,6 +81,12 @@ pub const animation = @import("../animation/animation.zig");
 pub const audio = @import("../audio/audio.zig");
 /// The settings file: `name = value` lines, and the window settings the engine reads from them.
 pub const settings = @import("settings.zig");
+/// Diagnostics: the text lines and debug shapes a game adds, and the frame snapshot. See docs/diagnostics.md.
+pub const diagnostics = @import("../diagnostics/diagnostics.zig");
+/// Bounded, development-only command registry and parser. See docs/developer-console.md.
+pub const console = @import("../diagnostics/console.zig");
+/// Debug geometry for the world: the tile grid, solid cells, and the camera bounds.
+pub const debug_geometry = @import("../renderer/debug_geometry.zig");
 /// Text and widgets: fonts baked with stb_truetype, and the IMGUI widgets in src/engine/ui/.
 pub const ui = @import("../ui/ui.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.

@@ -21,6 +21,11 @@ const texture_renderer = @import("../renderer/texture.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 const font = @import("../text/font.zig");
 const Input = @import("../input/input.zig").Input;
+const collector = @import("../diagnostics/collector.zig");
+const debug_draw = @import("../diagnostics/debug_draw.zig");
+const hot_reload = @import("../assets/hot_reload.zig");
+const validate = @import("../assets/validate.zig");
+const gate = @import("../diagnostics/gate.zig");
 
 const ScaleMode = view.ScaleMode;
 const elog = logging.scoped("engine");
@@ -32,6 +37,7 @@ pub const AssetError = error{
     ReadFailed,
     DecodeFailed,
     InvalidAtlas,
+    InvalidAnimation,
     InvalidLevel,
     AtlasMismatch,
     FontLoadFailed,
@@ -84,6 +90,13 @@ pub const Context = struct {
     audio: *audio.Audio,
     /// Textures registered by name and loaded on first use. The texture functions below use it.
     textures: *TextureStore,
+    /// The diagnostics collector. Game code may add its own counters to it in development builds. See
+    /// docs/diagnostics.md.
+    diagnostics: *collector.Collector,
+    /// Whether development-only collectors and commands are enabled in this build.
+    diagnostics_enabled: bool = gate.enabled,
+    /// Files watched for hot reload. Only development builds check them. See assets/hot_reload.zig.
+    reloads: *hot_reload.Watcher,
     /// Text of the settings file, read at startup. Empty when there is no file. The game reads its
     /// key bindings from it in `init`.
     settings_text: []const u8 = "",
@@ -211,6 +224,24 @@ pub const Context = struct {
         };
     }
 
+    /// Registers a file to watch for changes, so `takeChanged` reports it. Only development builds watch, so a
+    /// release build accepts the call and watches nothing. The path is relative to the executable's folder.
+    pub fn watchAsset(self: *const Context, path: []const u8, kind: hot_reload.Kind) hot_reload.WatchError!void {
+        if (!gate.enabled) return;
+        try self.reloads.watch(path, kind);
+    }
+
+    /// True once after a watched file has changed. Call it in `update`, the safe point for reloading.
+    pub fn takeChanged(self: *const Context, path: []const u8) bool {
+        return self.reloads.take(path);
+    }
+
+    /// Waits until the GPU has finished the frames it was given. Call it before releasing a resource the GPU
+    /// may still read, such as an atlas that a reload replaces.
+    pub fn waitGpuIdle(self: *const Context) void {
+        platform.gpu.waitIdle(contextGpuDevice(self));
+    }
+
     /// Loads a UI font. Missing or malformed font assets return an error instead of crashing startup.
     pub fn loadFont(self: *const Context, relative: []const u8, pixel_height: f32) AssetError!ui.Font {
         var prebaked_buf: [max_full_path]u8 = undefined;
@@ -219,7 +250,11 @@ pub const Context = struct {
         };
         const prebaked = self.readFile(self.allocators.asset, prebaked_path) catch null;
         defer if (prebaked) |bytes| self.allocators.asset.free(bytes);
-        const ttf_file = self.readFile(self.allocators.asset, relative) catch null;
+        const ttf_file = self.readFile(self.allocators.asset, relative) catch |err| blk: {
+            // A missing font is reported below, as FileNotFound. Any other read failure is logged here, so it is not lost.
+            if (err != error.FileNotFound) logging.recovered("engine", "reading the font", relative, err, "the font is not loaded");
+            break :blk null;
+        };
         defer if (ttf_file) |bytes| self.allocators.asset.free(bytes);
         if (prebaked == null and ttf_file == null) {
             return error.FileNotFound;
@@ -244,11 +279,13 @@ pub const Context = struct {
         };
         defer self.allocators.asset.free(text);
         const index = atlas.Atlas.parse(self.allocators.asset, text) catch |err| {
+            logAtlasIssues(index_path, text);
             elog.warn("atlas index '{s}' is invalid: {s}", .{ index_path, @errorName(err) });
             return error.InvalidAtlas;
         };
         const texture = try self.loadTexture(image_path);
         if (index.width != texture.width or index.height != texture.height) {
+            elog.warn("atlas index '{s}' describes {d}x{d}, but image '{s}' is {d}x{d}", .{ index_path, index.width, index.height, image_path, texture.width, texture.height });
             var mutable_texture = texture;
             mutable_texture.deinit();
             var mutable_index = index;
@@ -306,6 +343,20 @@ fn contextGpuDevice(ctx: *const Context) *platform.gpu.Device {
     return @ptrCast(ctx.gpu_state);
 }
 
+/// Logs every problem the validator finds in an atlas index, with its line. The parser reports only that the
+/// index is invalid, so this gives the reader the exact line and reason.
+fn logAtlasIssues(path: []const u8, text: []const u8) void {
+    var report = validate.Report{};
+    validate.checkAtlasIndex(path, text, null, &report);
+    for (report.slice()) |issue| {
+        if (issue.line == 0) {
+            elog.err("{s}: {s}", .{ issue.path, issue.message });
+        } else {
+            elog.err("{s}:{d}: {s}", .{ issue.path, issue.line, issue.message });
+        }
+    }
+}
+
 
 /// Chooses a prebuilt GPU-native image variant only when SDL says the active device can sample it.
 /// A missing variant, or one that doesn't parse, falls through to the next format and ultimately the
@@ -325,7 +376,11 @@ fn loadCompressedVariant(
         else => return err,
     };
     defer ctx.allocators.asset.free(bytes);
-    var compressed = image.parseCompressed(ctx.allocators.asset, bytes, compression) catch return null;
+    var compressed = image.parseCompressed(ctx.allocators.asset, bytes, compression) catch |err| {
+        // An unusable variant is expected for some builds, so the next format is tried. The reason is kept for debugging.
+        elog.debug("texture variant '{s}' is unusable ({s}), so the next format is tried", .{ name, @errorName(err) });
+        return null;
+    };
     defer compressed.deinit();
     elog.debug("using {s} texture variant {s} ({d}x{d})", .{ @tagName(compression), name, compressed.width, compressed.height });
     if (compression == .rgba8) return texture_renderer.createRgba8(ctx.allocators.asset, device, compressed.width, compressed.height, compressed.blocks);
@@ -363,4 +418,11 @@ pub const DrawContext = struct {
     /// Seconds since the previous frame, capped like the update loop's frame time. Smoothing that
     /// should not depend on the frame rate uses it.
     dt: f32,
+    /// Debug shapes in view pixels. Queue them only while the matching `show` switch is on, so release
+    /// builds and idle development builds do no work.
+    debug: *debug_draw.Draw,
+    /// Which debug geometry is on. Set by the F4 key and the console.
+    show: collector.Geometry,
+    /// Which game-owned tile layers are visible. Development commands may change these switches.
+    layers: collector.Layers,
 };

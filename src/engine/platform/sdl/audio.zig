@@ -222,6 +222,10 @@ test "WAV decodes from bytes without an audio device" {
 }
 
 test "WAV decoding rejects bytes that are not a WAV file" {
+    const saved_level = logging.min_level;
+    defer logging.min_level = saved_level;
+    logging.min_level = .err;
+
     try std.testing.expectError(error.DecodeFailed, decodeWav(std.testing.allocator, "this is not a wav file"));
     try std.testing.expectError(error.DecodeFailed, decodeWav(std.testing.allocator, ""));
 }

@@ -1,6 +1,8 @@
-//! Frame animation for sprite sheets: clips that name a row of frames, and an animator that plays
+//! Frame animation for sprite sheets, with validated explicit-frame data and playback.
 //! one clip at a time. This is pure code with no SDL, so `zig build test` covers it without a window.
 //! The engine knows nothing about characters. The game defines its clips and decides when to play them.
+
+const std = @import("std");
 
 /// One animation: a row of frames on a sprite sheet, played left to right.
 pub const Clip = struct {
@@ -69,3 +71,63 @@ pub const Animator = struct {
         return @min(index, self.clip.frame_count - 1);
     }
 };
+
+pub const data = @import("data.zig");
+pub const Library = data.Library;
+pub const Frame = data.Frame;
+pub const DataClip = data.Clip;
+
+/// Plays a validated variable-duration clip using fixed engine update steps.
+pub const Timeline = struct {
+    clip: *const DataClip,
+    time: f32 = 0,
+
+    pub fn init(clip: *const DataClip) Timeline {
+        return .{ .clip = clip };
+    }
+
+    pub fn play(self: *Timeline, clip: *const DataClip) void {
+        if (self.clip == clip) return;
+        self.clip = clip;
+        self.time = 0;
+    }
+
+    pub fn update(self: *Timeline, dt: f32) void {
+        if (!std.math.isFinite(dt) or dt <= 0) return;
+        const duration = self.clip.duration();
+        if (self.clip.looping) {
+            self.time = @mod(self.time + dt, duration);
+        } else {
+            self.time = @min(self.time + dt, duration);
+        }
+    }
+
+    pub fn frameIndex(self: *const Timeline) usize {
+        var elapsed = self.time;
+        for (self.clip.frames, 0..) |frame_value, index| {
+            if (elapsed < frame_value.duration or index + 1 == self.clip.frames.len) return index;
+            elapsed -= frame_value.duration;
+        }
+        return 0;
+    }
+
+    pub fn frame(self: *const Timeline) *const Frame {
+        return &self.clip.frames[self.frameIndex()];
+    }
+
+    pub fn finished(self: *const Timeline) bool {
+        return !self.clip.looping and self.time >= self.clip.duration();
+    }
+};
+
+test "variable-duration timeline advances deterministically and holds the last non-looping frame" {
+    const source = "animation 1\nclip once once\nframe 0 0 1 1 0.1\nframe 1 0 1 1 0.2\n";
+    var library = try data.Library.parse(std.testing.allocator, source, 2, 1);
+    defer library.deinit();
+    var timeline = Timeline.init(library.find("once").?);
+    timeline.update(0.1);
+    try std.testing.expectEqual(@as(usize, 1), timeline.frameIndex());
+    timeline.update(0.5);
+    try std.testing.expect(timeline.finished());
+    try std.testing.expectEqual(@as(usize, 1), timeline.frameIndex());
+}
