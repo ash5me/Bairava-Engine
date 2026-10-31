@@ -33,6 +33,9 @@ test {
     _ = @import("engine/input/input.zig");
     _ = @import("engine/platform/sdl/input.zig");
     _ = @import("engine/platform/sdl/audio.zig");
+    _ = @import("engine/platform/sdl/init.zig");
+    _ = @import("engine/platform/sdl/clock.zig");
+    _ = @import("engine/logging/log.zig");
     _ = @import("engine/platform/sdl/window.zig");
     _ = @import("engine/physics/shapes.zig");
     _ = @import("engine/assets/manager.zig");
@@ -797,4 +800,16 @@ test "a looping animator keeps its time inside one play-through" {
     var i: u32 = 0;
     while (i < 1000) : (i += 1) anim.update(0.1);
     try std.testing.expect(anim.time >= 0 and anim.time < walk_clip.duration());
+}
+
+test "log timestamps follow the platform clock after injection" {
+    const logging = @import("engine/logging/log.zig");
+    const platform = @import("engine/platform/platform.zig");
+    logging.setClock(platform.clock.nowNs);
+    defer logging.setClock(null);
+    // The logger and the frame loop read the same clock, so a read between two logger reads falls between them.
+    const before = logging.timestampMs();
+    const runtime_ms = platform.clock.nowNs() / 1_000_000;
+    const after = logging.timestampMs();
+    try std.testing.expect(before <= runtime_ms and runtime_ms <= after);
 }

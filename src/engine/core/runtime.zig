@@ -36,6 +36,10 @@ const black = c.SDL_FColor{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
 pub fn run(comptime Game: type, config: Config) void {
+    // The logger reads the platform clock, so it is set before the first log line. Its timestamps
+    // then share a clock with the frame timing below.
+    logging.setClock(platform.clock.nowNs);
+
     // The executable's folder comes first, so the log file can sit beside the executable. SDL3 owns
     // the returned string until SDL_Quit, so it stays valid for the run.
     const base_c = c.SDL_GetBasePath();
@@ -71,7 +75,7 @@ pub fn run(comptime Game: type, config: Config) void {
     };
 
     var last_mode = ctx.scale_mode;
-    var last_ns = c.SDL_GetTicksNS();
+    var last_ns = platform.clock.nowNs();
     var accumulator: f32 = 0;
     var total_frames: u64 = 0;
     var last_draw_calls: u32 = 0;
@@ -83,7 +87,7 @@ pub fn run(comptime Game: type, config: Config) void {
         defer frame_zone.End();
 
         // Frame timing: seconds since the last frame, capped at max_dt.
-        const now_ns = c.SDL_GetTicksNS();
+        const now_ns = platform.clock.nowNs();
         // The overlay graphs the raw time, so a long stall shows in full. The update loop uses the capped time.
         const frame_seconds = @as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0;
         const frame_dt = @min(frame_seconds, max_dt);
@@ -139,7 +143,7 @@ pub fn run(comptime Game: type, config: Config) void {
         if (px.w <= 0 or px.h <= 0) {
             // Minimized: there is nothing to draw into, so sleep rather than spin. Events stay
             // queued in SDL until the next pump.
-            c.SDL_Delay(idle_sleep_ms);
+            platform.clock.sleepMs(idle_sleep_ms);
             continue;
         }
         const win_wf: f32 = @floatFromInt(px.w);
@@ -175,7 +179,7 @@ pub fn run(comptime Game: type, config: Config) void {
         // Acquire the frame after the layout is known. A minimized window can report a nonzero size
         // yet get no swapchain, so this path idles too.
         const frame = session.gpu.beginFrame() orelse {
-            c.SDL_Delay(idle_sleep_ms);
+            platform.clock.sleepMs(idle_sleep_ms);
             continue;
         };
 

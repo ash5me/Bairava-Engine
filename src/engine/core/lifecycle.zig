@@ -41,7 +41,9 @@ pub const Session = struct {
     cam: Camera = undefined,
     ctx: Context = undefined,
 
-    /// Opens everything, in dependency order. Panics on failures that leave the game unable to run.
+    /// Opens everything, in dependency order: settings are read, then the platform starts, then the
+    /// window, the GPU device, and the audio device. Panics on failures that leave the game unable
+    /// to run. Missing audio does not panic; the game runs silent.
     pub fn start(self: *Session, config: Config) void {
         self.settings_bytes = readSettings(self.base_path, config.settings_file);
         const settings_text: []const u8 = self.settings_bytes orelse "";
@@ -52,9 +54,7 @@ pub const Session = struct {
             .vsync = config.vsync,
         });
 
-        if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
-            std.debug.panic("SDL_Init failed: {s}", .{c.SDL_GetError()});
-        }
+        platform.init();
         self.window = platform.window.create(config.title, window_settings.width, window_settings.height, window_settings.fullscreen);
         elog.info("window {d}x{d}, native view {d}x{d}, {d} update steps per second", .{
             window_settings.width, window_settings.height, config.native_w, config.native_h, config.update_hz,
@@ -93,7 +93,8 @@ pub const Session = struct {
         };
     }
 
-    /// Releases everything `start` opened, in reverse order. The game must be released first.
+    /// Releases everything `start` opened, in reverse order: the audio device, the batches, the
+    /// target, the GPU, the window, and then the platform. The game must be released first.
     pub fn stop(self: *Session) void {
         self.audio.deinit();
         self.screen_batch.deinit();
@@ -102,7 +103,7 @@ pub const Session = struct {
         // The device must go before the window, because it is still claimed for that window.
         self.gpu.deinit();
         platform.window.destroy(self.window);
-        c.SDL_Quit();
+        platform.shutdown();
         if (self.settings_bytes) |bytes| std.heap.page_allocator.free(bytes);
     }
 };
