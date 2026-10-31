@@ -33,6 +33,7 @@ test {
     _ = @import("engine/input/input.zig");
     _ = @import("engine/platform/sdl/input.zig");
     _ = @import("engine/platform/sdl/audio.zig");
+    _ = @import("engine/platform/sdl/window.zig");
     _ = @import("engine/physics/shapes.zig");
     _ = @import("engine/assets/manager.zig");
 }

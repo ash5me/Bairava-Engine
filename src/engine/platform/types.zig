@@ -46,3 +46,11 @@ pub const Event = union(enum) {
     mouse_button_down: MouseButton,
     mouse_button_up: MouseButton,
 };
+
+/// An application window. The engine holds and passes pointers to it. Only the platform backend knows
+/// what is behind one, so the type has no fields.
+pub const Window = opaque {};
+
+/// A window size in pixels. This is the swapchain size, which on high-DPI displays is larger than the
+/// window's size in points.
+pub const PixelSize = struct { w: c_int, h: c_int };
