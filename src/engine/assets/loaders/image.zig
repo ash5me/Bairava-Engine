@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const c = @import("../../platform/sdl/sdl.zig").c;
-
 // Declarations only. The implementation is compiled from vendor/stb_image_impl.c.
 const stb = @cImport({
     @cInclude("stb_image.h");
@@ -32,17 +30,6 @@ pub const CompressedImage = struct {
         self.allocator.free(self.blocks);
     }
 };
-
-/// Loads a builder-generated compressed texture variant. The 16-byte header keeps dimensions and
-/// compression metadata alongside the tightly packed GPU blocks.
-pub fn loadCompressed(path: [*:0]const u8, expected: Compression) !CompressedImage {
-    var size: usize = 0;
-    const file = c.SDL_LoadFile(path, &size) orelse return error.FileNotFound;
-    defer c.SDL_free(file);
-    if (size < 16) return error.InvalidCompressedImage;
-    const bytes: [*]const u8 = @ptrCast(file);
-    return parseCompressed(std.heap.page_allocator, bytes[0..size], expected);
-}
 
 /// Validates a BRTX variant and copies its payload. Kept separate from file I/O so format and
 /// length validation can be tested without opening SDL or a GPU device.
@@ -140,28 +127,6 @@ pub fn decodeRgba8(bytes: []const u8) !Image {
     return .{
         .width = @intCast(width),
         .height = @intCast(height),
-        .pixels = ptr[0..len],
-    };
-}
-
-/// Loads a PNG (or any format stb_image supports) and converts it to RGBA8.
-/// `path` is relative to the project root, where `zig build run` runs.
-pub fn loadRgba8(path: [*:0]const u8) !Image {
-    var size: usize = 0;
-    const file = c.SDL_LoadFile(path, &size) orelse return error.FileNotFound;
-    defer c.SDL_free(file);
-
-    var w: c_int = 0;
-    var h: c_int = 0;
-    var channels: c_int = 0;
-    const data = stb.stbi_load_from_memory(@ptrCast(file), @intCast(size), &w, &h, &channels, 4);
-    if (data == null) return error.DecodeFailed;
-
-    const len = @as(usize, @intCast(w)) * @as(usize, @intCast(h)) * 4;
-    const ptr: [*]u8 = @ptrCast(data);
-    return .{
-        .width = @intCast(w),
-        .height = @intCast(h),
         .pixels = ptr[0..len],
     };
 }

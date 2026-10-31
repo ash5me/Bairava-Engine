@@ -7,6 +7,7 @@ const types = @import("types.zig");
 const sdl_audio = @import("sdl/audio.zig");
 const sdl_clock = @import("sdl/clock.zig");
 const sdl_files = @import("sdl/files.zig");
+const sdl_gpu = @import("sdl/gpu.zig");
 const sdl_init = @import("sdl/init.zig");
 const sdl_input = @import("sdl/input.zig");
 const window_backend = @import("sdl/window.zig");
@@ -184,6 +185,14 @@ pub const audio = struct {
     }
 };
 
-// Still re-exported from the SDL backend until the GPU step (8) moves it behind this file. The SDL C
-// namespace is not exported, so the engine cannot name SDL types here.
-pub const gpu = @import("sdl/gpu.zig");
+/// GPU device and frame operations. The underlying SDL types are confined to the backend and renderer.
+pub const gpu = struct {
+    pub const Device = sdl_gpu.Device;
+    pub const TextureFormat = sdl_gpu.TextureFormat;
+    pub const Gpu = sdl_gpu.Gpu;
+    pub const Frame = sdl_gpu.Frame;
+
+    pub fn waitIdle(device: *Device) void {
+        sdl_gpu.waitIdle(device);
+    }
+};

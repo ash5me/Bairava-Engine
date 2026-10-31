@@ -1,9 +1,9 @@
 # Bairava SDL Platform Boundary Migration Plan
 
-**Status:** Revised proposal. Supersedes the earlier `migration.md`.  
-**Scope:** SDL3 platform-boundary migration only.  
-**Baseline:** Bairava-Engine snapshot targeting Zig `0.16.0-dev` and SDL `3.4.2`.  
-**Verification:** This is a plan, not a claim that the repository currently builds. Confirm paths, imports, and behavior against the active branch before implementation. Facts marked *(snapshot)* were checked against the extracted snapshot during revision.
+**Status:** Steps 8 and 9 implemented locally. Supersedes the earlier `migration.md`.
+**Scope:** SDL3 platform-boundary migration only.
+**Baseline:** Bairava-Engine snapshot targeting Zig `0.16.0-dev` and SDL `3.4.2`.
+**Verification:** Local `zig build`, `zig build test`, and the SDL boundary scanner pass. The scanner's negative check rejects an SDL import in reachable core code. Hosted Linux, macOS, and Windows CI results remain unverified.
 
 ---
 
@@ -117,16 +117,16 @@ Engine audio owns `Sound`, voices, and playback policy. `Sound` stores the alloc
 ### D9. GPU boundary and allowlist
 Core does not import SDL because the renderer uses SDL_GPU.
 
-Core may name exactly three GPU items: `platform.gpu.Device`, `platform.gpu.TextureFormat`, and `platform.gpu.waitIdle`. These are aliases and one function, exported from `platform/sdl/gpu.zig`, and they name no SDL identifier in core. The renderer owns `renderer.Color`, GPU format mapping (compression to GPU format), and support checks. SDL clear-color construction moves into the renderer.
+Core uses `platform.gpu.Device`, `platform.gpu.TextureFormat`, and `platform.gpu.waitIdle`, plus the existing `platform.gpu.Gpu` and `platform.gpu.Frame` lifecycle surface. The GPU aliases and wait function are explicitly forwarded from `platform/sdl/gpu.zig`; core names no SDL identifiers. The renderer owns `renderer.Color`, GPU format mapping (compression to GPU format), and support checks. SDL clear-color construction moves into the renderer.
 
 The allowlist is file-specific, and every entry carries a reason:
 - `platform/sdl/**`: the SDL implementation.
+- `platform/platform.zig`: explicit forwarders from the engine contract to the SDL backend.
 - `renderer/renderer.zig`: render passes and command-buffer calls use SDL_GPU types.
 - `renderer/shader.zig`: SDL_GPU shader creation and format flags.
 - `renderer/sprite.zig`: SDL_GPU pipelines, buffers, and draws.
 - `renderer/texture.zig`: SDL_GPU textures, samplers, and transfer buffers.
-- `text/font.zig`: a candidate for removal once its signatures use `platform.gpu.Device`.
-- `tests.zig`: a candidate for removal once the `colorTargetInfo` test moves into `renderer/renderer.zig`.
+- `tests.zig`: imports SDL backend modules so their platform tests are included; it names no SDL C types.
 
 Do not allow all of `renderer/` or `text/` by default. The four renderer backend files account for most remaining SDL names. Moving them under `platform/sdl/` would shrink the allowlist to one directory, but it is a structural change, so it stays out of this plan.
 
@@ -285,15 +285,15 @@ Confirm that `decodeWav` works without an initialized audio device. If it needs 
 5. `core/lifecycle.zig` types the swapchain format as `platform.gpu.TextureFormat`, and passes it to renderer constructors.
 6. Inspect lifecycle, runtime, and context for SDL identifiers, imports, and `c.` references, not only direct imports.
 
-**Done when:** no file under `core/` imports SDL or names an SDL or C identifier, and rendering still works.
+**Done when:** no file under `core/` imports SDL, names an SDL identifier, or uses SDL C bindings, and rendering still works.
 
 ### Step 9: Enforce the boundary and document it
 
 1. Turn the warning-only scanner into a failing CI check.
-2. Use the file-specific allowlist from D9. Every exception has a documented reason. Remove `text/font.zig` and `tests.zig` from the list once they no longer need SDL names.
-3. The scanner checks SDL names, constants, types, direct C imports, and `c.` namespace references.
+2. Use the file-specific allowlist from D9. Every exception has a documented reason. `text/font.zig` uses the platform GPU device type and is no longer an exception; `tests.zig` is allowed only to import backend modules for their test declarations.
+3. The scanner checks SDL names, constants, types, direct SDL C imports, backend imports, and SDL C namespace aliases. Unrelated C integrations such as cglm and Parson are not SDL boundary violations.
 4. Add a negative test. On a temporary branch, add a forbidden SDL reference to a `core/` file, confirm CI fails, then remove it.
-5. Update the README architecture rules, source tree, platform and audio descriptions, and test documentation. The README currently says that only `platform/sdl/` imports SDL, which is false until this step is done.
+5. Update the README architecture rules, source tree, platform and audio descriptions, and test documentation.
 6. Update the build and test comments that describe SDL linking and initialization, in `build.zig` and `tests.zig`.
 7. Make sure the documentation describes what CI actually enforces.
 

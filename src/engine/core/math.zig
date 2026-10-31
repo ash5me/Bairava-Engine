@@ -6,7 +6,7 @@
 //! is cglm's versor layout. Angles are in radians.
 //!
 //! Projections are right-handed: a camera looks down -Z. Depth runs from 0 at the near plane to 1
-//! at the far plane. That is the clip space SDL_GPU uses on every backend, and it is set by
+//! at the far plane. That is the GPU clip space on every backend, and it is set by
 //! CGLM_FORCE_DEPTH_ZERO_TO_ONE below. If build.zig compiles cglm's C sources, give them the same
 //! define, so cglm's exported `glmc_` functions use the same depth range as the translated headers.
 //!
@@ -29,7 +29,7 @@ const c = @cImport({
     @cUndef("__ARM_NEON__");
     @cUndef("__wasm_simd128__");
     @cDefine("CGLM_ALL_UNALIGNED", "1");
-    // Depth from 0 (near) to 1 (far), as SDL_GPU expects. Affects perspective and ortho depth only.
+    // Depth from 0 (near) to 1 (far). Affects perspective and ortho depth only.
     @cDefine("CGLM_FORCE_DEPTH_ZERO_TO_ONE", "1");
     @cInclude("cglm/cglm.h");
     // The exported (non-inline) versions, compiled by build.zig. Used only by a test that checks

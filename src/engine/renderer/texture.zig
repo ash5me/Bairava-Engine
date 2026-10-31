@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const c = @import("../platform/sdl/sdl.zig").c;
+const image = @import("../assets/loaders/image.zig");
 const logging = @import("../logging/log.zig");
 const profile = @import("../profiling/profile.zig");
 
@@ -33,9 +34,15 @@ pub const Texture = struct {
         return upload(device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height, true);
     }
 
-    /// Uploads tightly packed BC1, BC3, or ASTC 4x4 blocks. The caller checks that the active GPU
-    /// supports `format` for sampled 2D textures before selecting this path.
-    pub fn initCompressed(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, blocks: []const u8) Texture {
+    /// Whether the active GPU can sample this precompressed format.
+    pub fn supportsCompression(device: *c.SDL_GPUDevice, compression: image.Compression) bool {
+        const format = gpuFormat(compression) orelse return true;
+        return c.SDL_GPUTextureSupportsFormat(device, format, c.SDL_GPU_TEXTURETYPE_2D, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
+    }
+
+    /// Uploads tightly packed BC1, BC3, or ASTC 4x4 blocks.
+    pub fn initCompressed(device: *c.SDL_GPUDevice, width: u32, height: u32, compression: image.Compression, blocks: []const u8) Texture {
+        const format = gpuFormat(compression) orelse unreachable;
         return upload(device, width, height, format, blocks, 0, 0, false);
     }
 
@@ -129,6 +136,15 @@ pub const Texture = struct {
         c.SDL_ReleaseGPUTexture(self.device, self.texture);
     }
 };
+
+fn gpuFormat(compression: image.Compression) ?c.SDL_GPUTextureFormat {
+    return switch (compression) {
+        .rgba8 => null,
+        .bc1 => c.SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM,
+        .bc3 => c.SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM,
+        .astc_4x4 => c.SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM,
+    };
+}
 
 fn createTexture(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, usage: u32) *c.SDL_GPUTexture {
     var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);

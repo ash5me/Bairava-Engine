@@ -5,7 +5,6 @@
 
 const std = @import("std");
 const build_options = @import("build_options");
-const c = @import("../platform/sdl/sdl.zig").c;
 const platform = @import("../platform/platform.zig");
 const audio = @import("../audio/audio.zig");
 const logging = @import("../logging/log.zig");
@@ -29,7 +28,7 @@ pub const Session = struct {
     window: *platform.Window = undefined,
     gpu: platform.gpu.Gpu = undefined,
     /// The swapchain format. Targets and pipelines use it so they can be drawn into the window.
-    format: c.SDL_GPUTextureFormat = undefined,
+    format: platform.gpu.TextureFormat = undefined,
     /// The world target, sized to the view. The runtime rebuilds it when the view changes.
     target: Texture = undefined,
     world_batch: SpriteBatch = undefined,

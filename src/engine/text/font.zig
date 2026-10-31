@@ -3,7 +3,7 @@
 //! `refreshTexture` uploads it again when a lazily rasterized glyph grows the atlas.
 
 const c = @import("../ui/c.zig").c;
-const sdl = @import("../platform/sdl/sdl.zig");
+const platform = @import("../platform/platform.zig");
 const profile = @import("../profiling/profile.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 
@@ -21,7 +21,7 @@ pub const Font = struct {
 
     /// Loads a build-preprocessed font when present and baked at the requested size; otherwise it
     /// bakes the supplied TTF data. Both inputs are only read during this call.
-    pub fn load(device: *sdl.c.SDL_GPUDevice, ttf: []const u8, prebaked: []const u8, pixel_height: f32) !Font {
+    pub fn load(device: *platform.gpu.Device, ttf: []const u8, prebaked: []const u8, pixel_height: f32) !Font {
         if (prebaked.len > 0) {
             var baked: c.ui_font = undefined;
             if (c.ui_font_load_prebaked(prebaked.ptr, prebaked.len, pixel_height, &baked) == 0) {
@@ -39,7 +39,7 @@ pub const Font = struct {
 
     /// Bakes TTF bytes at `pixel_height` pixels, then uploads the atlas. Use `load` when a matching
     /// build-time font asset may be available.
-    pub fn bake(device: *sdl.c.SDL_GPUDevice, ttf: []const u8, pixel_height: f32) !Font {
+    pub fn bake(device: *platform.gpu.Device, ttf: []const u8, pixel_height: f32) !Font {
         const zone = profile.zoneNamed(@src(), "bake font");
         defer zone.End();
         var baked: c.ui_font = undefined;
@@ -51,7 +51,7 @@ pub const Font = struct {
 
     /// Bakes an SDF atlas from TTF bytes for smooth text scaling. `distance_range` sets the encoded
     /// distance range in pixels; eight pixels is a useful default for UI fonts.
-    pub fn bakeSdf(device: *sdl.c.SDL_GPUDevice, ttf: []const u8, pixel_height: f32, distance_range: f32) !Font {
+    pub fn bakeSdf(device: *platform.gpu.Device, ttf: []const u8, pixel_height: f32, distance_range: f32) !Font {
         const zone = profile.zoneNamed(@src(), "bake SDF font");
         defer zone.End();
         var baked: c.ui_font = undefined;
@@ -67,7 +67,7 @@ pub const Font = struct {
         if (c.ui_font_enable_dynamic(&self.baked, ttf.ptr, ttf.len) != 0) return error.DynamicFontFailed;
     }
 
-    fn fromBaked(device: *sdl.c.SDL_GPUDevice, baked: c.ui_font) Font {
+    fn fromBaked(device: *platform.gpu.Device, baked: c.ui_font) Font {
         const w: u32 = @intCast(baked.atlas_w);
         const h: u32 = @intCast(baked.atlas_h);
         const pixels = baked.rgba[0 .. @as(usize, w) * @as(usize, h) * 4];
