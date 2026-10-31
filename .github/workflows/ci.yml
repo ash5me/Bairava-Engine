@@ -24,6 +24,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Platform boundary scan (warning only, Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: python3 scripts/boundary_scan.py
+
       - name: Install Zig from build.zig.zon
         uses: mlugg/setup-zig@v2
 
