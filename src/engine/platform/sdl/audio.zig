@@ -76,18 +76,15 @@ pub const Audio = struct {
     master_gain: f32 = 1.0,
 
     /// Opens the default playback device. This never fails: without a device the object stays
-    /// silent and logs why.
+    /// silent and logs why. The audio subsystem must already be up, since `platform.init` starts it.
     pub fn init() Audio {
         var audio: Audio = .{};
-        if (!c.SDL_InitSubSystem(c.SDL_INIT_AUDIO)) {
-            log.warn("audio subsystem unavailable, continuing silent: {s}", .{c.SDL_GetError()});
-            return audio;
-        }
+        // platform/sdl/init.zig logs why the subsystem is down, so only the silent state is left here.
+        if (c.SDL_WasInit(c.SDL_INIT_AUDIO) == 0) return audio;
 
         const device = c.SDL_OpenAudioDevice(default_playback, null);
         if (device == 0) {
             log.warn("no playback device, continuing silent: {s}", .{c.SDL_GetError()});
-            c.SDL_QuitSubSystem(c.SDL_INIT_AUDIO);
             return audio;
         }
 
@@ -95,7 +92,6 @@ pub const Audio = struct {
         if (!c.SDL_GetAudioDeviceFormat(device, &audio.format, &sample_frames)) {
             log.warn("could not read the device format, continuing silent: {s}", .{c.SDL_GetError()});
             c.SDL_CloseAudioDevice(device);
-            c.SDL_QuitSubSystem(c.SDL_INIT_AUDIO);
             return audio;
         }
 
@@ -106,8 +102,8 @@ pub const Audio = struct {
         return audio;
     }
 
-    /// Stops every voice, closes the device, and shuts down the audio subsystem. Sounds are the
-    /// caller's to free.
+    /// Stops every voice and closes the device. The audio subsystem stays up, because it belongs to
+    /// `platform.shutdown`. Sounds are the caller's to free.
     pub fn deinit(self: *Audio) void {
         if (self.device == 0) return;
         var it = self.playing.iterator();
@@ -117,7 +113,6 @@ pub const Audio = struct {
             closeStream(stream);
         }
         c.SDL_CloseAudioDevice(self.device);
-        c.SDL_QuitSubSystem(c.SDL_INIT_AUDIO);
         self.* = .{};
     }
 

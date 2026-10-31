@@ -18,7 +18,6 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const c = @import("../platform/sdl/sdl.zig").c;
 const lf = @cImport(@cInclude("log_file.h"));
 
 pub const Level = enum(u8) {
@@ -39,6 +38,22 @@ const file_line_max = 2048;
 
 /// True while the log file is open. Messages are written there only while it is.
 var file_open = false;
+
+/// Where timestamps read the time, in nanoseconds. The platform sets it with `setClock` before the
+/// first message, so this file never imports the platform layer. Until then, timestamps print as 0.
+var clock_fn: ?*const fn () u64 = null;
+
+/// Sets the clock that timestamps read. Pass null to go back to printing 0. `runtime.run` sets it
+/// before the first log line.
+pub fn setClock(source: ?*const fn () u64) void {
+    clock_fn = source;
+}
+
+/// Milliseconds on the injected clock, or 0 when no clock is set.
+pub fn timestampMs() u64 {
+    const source = clock_fn orelse return 0;
+    return source() / 1_000_000;
+}
 
 /// A logger for one scope. `scope` names the part of the code, such as "engine" or "game".
 pub fn scoped(comptime scope: []const u8) type {
@@ -103,7 +118,7 @@ pub fn fail(src: std.builtin.SourceLocation, comptime fmt: []const u8, args: any
 
 fn write(comptime level: Level, comptime scope: []const u8, comptime fmt: []const u8, args: anytype) void {
     if (@intFromEnum(level) < @intFromEnum(min_level)) return;
-    const ms = c.SDL_GetTicksNS() / 1_000_000;
+    const ms = timestampMs();
     std.debug.print("[{d:>8}ms] {s} {s}: ", .{ ms, levelName(level), scope });
     std.debug.print(fmt ++ "\n", args);
     if (!file_open) return;
@@ -119,4 +134,20 @@ fn levelName(comptime level: Level) []const u8 {
         .warn => "WARN ",
         .err => "ERROR",
     };
+}
+
+test "timestamps print as 0 before a clock is injected" {
+    setClock(null);
+    try std.testing.expectEqual(@as(u64, 0), timestampMs());
+}
+
+test "timestamps read the injected clock in milliseconds" {
+    const fake = struct {
+        fn now() u64 {
+            return 2_500_000_000;
+        }
+    };
+    setClock(&fake.now);
+    defer setClock(null);
+    try std.testing.expectEqual(@as(u64, 2500), timestampMs());
 }

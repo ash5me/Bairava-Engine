@@ -2,6 +2,8 @@
 //! under platform/sdl/ import SDL, and the rest of the engine reaches the platform through here.
 
 const types = @import("types.zig");
+const sdl_clock = @import("sdl/clock.zig");
+const sdl_init = @import("sdl/init.zig");
 const sdl_input = @import("sdl/input.zig");
 const window_backend = @import("sdl/window.zig");
 
@@ -10,6 +12,33 @@ pub const MouseButton = types.MouseButton;
 pub const Event = types.Event;
 pub const Window = types.Window;
 pub const PixelSize = types.PixelSize;
+
+/// Starts the platform: the video subsystem, which the window and GPU need, and the audio subsystem.
+/// A video failure panics. An audio failure is logged, and the game runs silent. Call it once,
+/// before any window or device is created.
+pub fn init() void {
+    sdl_init.init();
+}
+
+/// Stops the platform and everything it started. Call it once, after every window, device, and
+/// audio stream has been released.
+pub fn shutdown() void {
+    sdl_init.shutdown();
+}
+
+/// Monotonic time and delays. The frame loop and the logger's timestamps both read this clock.
+pub const clock = struct {
+    /// Nanoseconds from an arbitrary fixed point. Only differences mean anything, and the value never
+    /// goes backward.
+    pub fn nowNs() u64 {
+        return sdl_clock.nowNs();
+    }
+
+    /// Blocks the calling thread for at least `ms` milliseconds.
+    pub fn sleepMs(ms: u32) void {
+        sdl_clock.sleepMs(ms);
+    }
+};
 
 /// Platform events and held keys, as the engine uses them.
 pub const events = struct {
