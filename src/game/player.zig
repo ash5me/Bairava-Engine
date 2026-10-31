@@ -3,7 +3,11 @@
 //! clips the player plays.
 
 const std = @import("std");
+<<<<<<< HEAD
 const engine = @import("bairava");
+=======
+const engine = @import("../engine/core/engine.zig");
+>>>>>>> main
 
 /// The sprite is 16x32 pixels. The sheet is laid out in rows by facing.
 const width: f32 = 16.0;

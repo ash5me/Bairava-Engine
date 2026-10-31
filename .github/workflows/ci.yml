@@ -24,11 +24,17 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+<<<<<<< HEAD
       - name: Platform boundary self-test
         run: python scripts/boundary_scan.py --self-test
 
       - name: Platform boundary check
         run: python scripts/boundary_scan.py --fail
+=======
+      - name: Platform boundary check (Linux)
+        if: runner.os == 'Linux'
+        run: python3 scripts/boundary_scan.py --fail
+>>>>>>> main
 
       - name: Install Zig from build.zig.zon
         uses: mlugg/setup-zig@v2

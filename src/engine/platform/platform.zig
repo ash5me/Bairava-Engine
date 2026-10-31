@@ -30,10 +30,15 @@ pub const AudioError = types.AudioError;
 /// Starts the platform: the video subsystem, which the window and GPU need, and the audio subsystem.
 /// A video failure panics. An audio failure is logged, and the game runs silent. Call it once,
 /// before any window or device is created.
+<<<<<<< HEAD
 pub const InitError = sdl_init.InitError;
 
 pub fn init() InitError!void {
     try sdl_init.init();
+=======
+pub fn init() void {
+    sdl_init.init();
+>>>>>>> main
 }
 
 /// Stops the platform and everything it started. Call it once, after every window, device, and
@@ -97,8 +102,13 @@ pub const events = struct {
 /// The game window. The engine holds a `*Window` and never sees the SDL type behind it.
 pub const window = struct {
     /// Creates the game window. Panics if the platform cannot create one.
+<<<<<<< HEAD
     pub fn create(title: [:0]const u8, width: c_int, height: c_int, fullscreen: bool) window_backend.CreateError!*Window {
         return try window_backend.create(title, width, height, fullscreen);
+=======
+    pub fn create(title: [:0]const u8, width: c_int, height: c_int, fullscreen: bool) *Window {
+        return window_backend.create(title, width, height, fullscreen);
+>>>>>>> main
     }
 
     /// Destroys a window made by `create`.

@@ -4,8 +4,12 @@ const c = @import("../platform/sdl/sdl.zig").c;
 const math = @import("../core/math.zig");
 const shader = @import("shader.zig");
 const embedded = @import("embedded_shaders");
+<<<<<<< HEAD
 const texture_renderer = @import("texture.zig");
 const Texture = texture_renderer.Texture;
+=======
+const Texture = @import("texture.zig").Texture;
+>>>>>>> main
 const profile = @import("../profiling/profile.zig");
 
 /// Vertex layout for sprite quads. Positions are in normalized device coordinates. Color is RGBA:

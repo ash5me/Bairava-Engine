@@ -2,20 +2,28 @@
 //! re-exported here, so the modules under src/engine/ can move without changing game code.
 //!
 //! Engine code never names a game type. A game plugs in by passing a type with `init`, `update`,
+<<<<<<< HEAD
 //! `draw`, and `deinit` to `run`. `init` runs once; then `update` and `draw` repeat until shutdown;
 //! after successful initialization, `deinit` runs once. The game owns resources it loads and must
 //! release them in `deinit` before the engine tears down the GPU and platform. Game `init` may
 //! return a recoverable error; the runtime logs it and unwinds the session without entering the
 //! frame loop. Truly fatal programmer errors and broken invariants still panic.
+=======
+//! `draw`, and `deinit` to `run`.
+>>>>>>> main
 //!
 //! Timing: `update` runs at a fixed rate, so game logic doesn't depend on the display. `draw`
 //! runs once per frame and gets `alpha` to blend between the last two updates.
 
 pub const Config = @import("application.zig").Config;
 pub const Context = @import("context.zig").Context;
+<<<<<<< HEAD
 pub const AssetError = @import("context.zig").AssetError;
 pub const DrawContext = @import("context.zig").DrawContext;
 pub const Allocators = @import("allocators.zig").ContextAllocators;
+=======
+pub const DrawContext = @import("context.zig").DrawContext;
+>>>>>>> main
 pub const run = @import("runtime.zig").run;
 
 /// How the native view is fitted to the window. See `view.chooseFit`.

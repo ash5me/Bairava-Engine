@@ -5,7 +5,11 @@
 
 const std = @import("std");
 
+<<<<<<< HEAD
 const engine = @import("bairava");
+=======
+const engine = @import("../engine/core/engine.zig");
+>>>>>>> main
 
 const log = engine.log.scoped("controls");
 

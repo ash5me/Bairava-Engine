@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 //! Engine startup configuration passed to `run`: allocation, window, reference view, fixed timing,
 //! engine presentation defaults, debug output, and engine settings-file paths.
 //!
@@ -5,11 +6,17 @@
 //! defaults; a game supplies explicit values only for presentation or behavior it owns.
 
 const std = @import("std");
+=======
+//! What the game passes to `run` at startup: the window, the native view, the timing, the zoom
+//! limits, and the files the engine reads.
+
+>>>>>>> main
 const view = @import("../renderer/view.zig");
 const ScaleMode = view.ScaleMode;
 
 /// Settings the game passes to `run`.
 pub const Config = struct {
+<<<<<<< HEAD
     /// Parent allocator for all memory owned during this run. The runtime creates narrower
     /// engine, game, asset, and frame arenas from it. Defaults to the process page allocator.
     allocator: std.mem.Allocator = std.heap.page_allocator,
@@ -26,10 +33,26 @@ pub const Config = struct {
     clear_rgb: [3]f32 = .{ 0.1, 0.1, 0.1 },
     /// Game `update` steps per second.
     update_hz: u32 = 60,
+=======
+    /// Window title.
+    title: [:0]const u8,
+    window_w: c_int,
+    window_h: c_int,
+    /// The reference view size, in native pixels. At zoom 1 the view fits the window on its
+    /// limiting axis, so the view is exactly this size on that axis. The other axis shows more of
+    /// the world when the window's shape differs.
+    native_w: u32,
+    native_h: u32,
+    /// Background color behind the world, as RGB from 0 to 1.
+    clear_rgb: [3]f32,
+    /// Game `update` steps per second.
+    update_hz: u32,
+>>>>>>> main
     /// Scale mode at startup. The game can change it later through `Context`.
     scale_mode: ScaleMode = .fit,
     /// Smallest and largest zoom the game may ask for. 1 is the normal view, so the bounds must
     /// include it. Below 1 the view shows more of the world, and above 1 it shows less, larger.
+<<<<<<< HEAD
     zoom_min: f32 = 0.5,
     zoom_max: f32 = 4.0,
     /// How fast the camera eases to a new zoom, per second. Zero snaps.
@@ -38,6 +61,16 @@ pub const Config = struct {
     /// height in native pixels.
     debug_font_path: []const u8 = "assets/font.ttf",
     debug_font_px: f32 = 10.0,
+=======
+    zoom_min: f32,
+    zoom_max: f32,
+    /// How fast the camera eases to a new zoom, per second. Zero snaps.
+    zoom_rate: f32,
+    /// Font for the debug overlay: a TrueType file relative to the executable's folder, and its
+    /// height in native pixels.
+    debug_font_path: []const u8,
+    debug_font_px: f32,
+>>>>>>> main
     /// Name of the log file, written beside the executable. Each run replaces the file from the
     /// last run. Null logs to the terminal only.
     log_file: ?[:0]const u8 = null,
@@ -48,6 +81,7 @@ pub const Config = struct {
     fullscreen: bool = false,
     /// Wait for vsync, unless the settings file says otherwise.
     vsync: bool = true,
+<<<<<<< HEAD
 
     pub const ValidationError = error{
         EmptyTitle,
@@ -123,3 +157,6 @@ test "Config validation rejects invalid startup values" {
     var clear = Config{ .clear_rgb = .{ 0.0, 1.1, 0.0 } };
     try std.testing.expectError(error.InvalidClearColor, clear.validate());
 }
+=======
+};
+>>>>>>> main

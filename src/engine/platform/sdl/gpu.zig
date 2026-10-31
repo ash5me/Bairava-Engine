@@ -11,8 +11,11 @@ const window_backend = @import("window.zig");
 pub const Device = c.SDL_GPUDevice;
 pub const TextureFormat = c.SDL_GPUTextureFormat;
 
+<<<<<<< HEAD
 pub const GpuInitError = error{CreateGpuFailed, ClaimWindowFailed};
 
+=======
+>>>>>>> main
 pub fn waitIdle(device: *Device) void {
     _ = c.SDL_WaitForGPUIdle(device);
 }
@@ -35,7 +38,11 @@ pub const Gpu = struct {
 
     /// Creates the GPU device and claims the window for it.
     /// `window` must outlive the returned Gpu.
+<<<<<<< HEAD
     pub fn init(window: *types.Window, gpu_debug: bool) GpuInitError!Gpu {
+=======
+    pub fn init(window: *types.Window, gpu_debug: bool) Gpu {
+>>>>>>> main
         const sdl_window = window_backend.toSdl(window);
         // Request Vulkan 1.2 so the device accepts SPIR-V 1.5, which Slang emits by default.
         // Version 1.2.0 is (1 << 22) | (2 << 12); Zig can't translate VK_MAKE_API_VERSION.
@@ -67,8 +74,12 @@ pub const Gpu = struct {
         };
 
         if (!c.SDL_ClaimWindowForGPUDevice(device, sdl_window)) {
+<<<<<<< HEAD
             c.SDL_DestroyGPUDevice(device);
             return error.ClaimWindowFailed;
+=======
+            std.debug.panic("SDL_ClaimWindowForGPUDevice failed: {s}", .{c.SDL_GetError()});
+>>>>>>> main
         }
 
         return .{ .window = sdl_window, .device = device };

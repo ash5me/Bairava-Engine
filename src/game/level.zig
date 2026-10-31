@@ -2,7 +2,11 @@
 //! (engine/renderer/tilemap_draw.zig), and game.zig decides which layer is drawn when.
 
 const std = @import("std");
+<<<<<<< HEAD
 const engine = @import("bairava");
+=======
+const engine = @import("../engine/core/engine.zig");
+>>>>>>> main
 
 /// Side length of one tile, in native pixels.
 pub const tile_px = engine.tilemap.tile_px;
