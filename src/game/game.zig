@@ -1,19 +1,11 @@
 //! Gameplay: the level, the player, the demo panel, and how actions drive them. The engine calls
 //! into this file through `init`, `update`, `draw`, and `deinit`, and never looks inside it. Game
-<<<<<<< HEAD
 //! code imports only the named `bairava` module, so everything the game needs from the platform goes through
-=======
-//! code imports only engine/core/engine.zig, so everything the game needs from the platform goes through
->>>>>>> main
 //! the engine's `Context`.
 
 const std = @import("std");
 
-<<<<<<< HEAD
 const engine = @import("bairava");
-=======
-const engine = @import("../engine/core/engine.zig");
->>>>>>> main
 const config = @import("config.zig");
 const controls = @import("controls.zig");
 const Level = @import("level.zig").Level;

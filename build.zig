@@ -270,29 +270,7 @@ pub fn build(b: *std.Build) void {
 
     // Parson belongs to the game save module, not to the Bairava engine module.
     exe.root_module.addIncludePath(b.path("vendor"));
-<<<<<<< HEAD
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
-=======
-    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
-
-    // Text and UI: stb_truetype and FreeType bake fonts from vendor/, and the C widget code in
-    // src/engine/ui/ builds the quads that src/engine/ui/ui.zig draws. None of it touches SDL or the GPU.
-    exe.root_module.addIncludePath(b.path("src/engine/ui"));
-    exe.root_module.addIncludePath(b.path("src/engine/text"));
-    addFreeType(b, exe.root_module);
-    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
-
-    // Log file output: log.c (vendor/) delivers each message to log_file.c, which writes it to the file.
-    exe.root_module.addIncludePath(b.path("src/engine/logging"));
-    exe.root_module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/logging/log_file.c") });
-
-    // cglm: vector and matrix math. See addCglm above.
-    addCglm(b, exe.root_module);
->>>>>>> main
 
     b.installArtifact(exe);
 
@@ -461,7 +439,6 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{ .root_module = test_module });
     const run_tests = b.addRunArtifact(tests);
     run_tests.setCwd(b.path("."));
-<<<<<<< HEAD
 
     const api_test_module = b.createModule(.{
         .root_source_file = b.path("src/engine_api_test.zig"),
@@ -477,7 +454,4 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests (no GPU device or window; links SDL and needs slangc)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_api_tests.step);
-=======
-    b.step("test", "Run unit tests (no GPU device or window; links SDL and needs slangc)").dependOn(&run_tests.step);
->>>>>>> main
 }

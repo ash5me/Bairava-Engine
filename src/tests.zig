@@ -4,21 +4,12 @@
 
 const std = @import("std");
 
-<<<<<<< HEAD
 const animation = @import("engine/animation/animation.zig");
 const math = @import("engine/core/math.zig");
 const camera = @import("engine/renderer/camera.zig");
 const sprite = @import("engine/renderer/sprite.zig");
 const Texture = @import("engine/renderer/texture.zig").Texture;
 const tilemap = @import("engine/scene/tilemap.zig");
-=======
-const sprite = @import("engine/renderer/sprite.zig");
-const math = @import("engine/core/math.zig");
-const Texture = @import("engine/renderer/texture.zig").Texture;
-const tilemap = @import("engine/scene/tilemap.zig");
-const camera = @import("engine/renderer/camera.zig");
-const animation = @import("engine/animation/animation.zig");
->>>>>>> main
 
 test {
     _ = @import("engine/renderer/renderer.zig");
@@ -35,10 +26,7 @@ test {
     _ = @import("engine/memory/vector.zig");
     _ = @import("engine/ecs/entity.zig");
     _ = @import("engine/core/math.zig");
-<<<<<<< HEAD
     _ = @import("engine/core/allocators.zig");
-=======
->>>>>>> main
     _ = @import("engine/renderer/view.zig");
     _ = @import("engine/core/settings.zig");
     _ = @import("engine/renderer/shader.zig");

@@ -1,11 +1,7 @@
 //! Game settings: title, window and native view sizes, level path, background color, update
 //! rate, and scale mode. Read once at startup. The engine knows nothing else about the game.
 
-<<<<<<< HEAD
 const engine = @import("bairava");
-=======
-const engine = @import("../engine/core/engine.zig");
->>>>>>> main
 
 /// Window title. The engine appends play stats to it.
 pub const title: [:0]const u8 = "Semkootru";
