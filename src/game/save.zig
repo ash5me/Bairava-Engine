@@ -50,10 +50,10 @@ pub fn serialize(allocator: std.mem.Allocator, state: State) ![]u8 {
 /// Decode a save over the current defaults. Missing or malformed component values keep their
 /// defaults, which lets older saves omit fields added by later versions. Unknown future versions
 /// are rejected so they are not accidentally interpreted as an older format.
-pub fn deserialize(text: []const u8, defaults: State) !State {
+pub fn deserialize(allocator: std.mem.Allocator, text: []const u8, defaults: State) !State {
     if (std.mem.indexOfScalar(u8, text, 0) != null) return error.InvalidSave;
-    const ztext = try std.heap.page_allocator.dupeZ(u8, text);
-    defer std.heap.page_allocator.free(ztext);
+    const ztext = try allocator.dupeZ(u8, text);
+    defer allocator.free(ztext);
     const root_value = parson.json_parse_string(ztext.ptr) orelse return error.InvalidSave;
     defer parson.json_value_free(root_value);
     if (parson.json_value_get_type(root_value) != parson.JSONObject) return error.InvalidSave;

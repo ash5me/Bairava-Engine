@@ -4,12 +4,21 @@
 
 const std = @import("std");
 
+<<<<<<< HEAD
+const animation = @import("engine/animation/animation.zig");
+const math = @import("engine/core/math.zig");
+const camera = @import("engine/renderer/camera.zig");
+const sprite = @import("engine/renderer/sprite.zig");
+const Texture = @import("engine/renderer/texture.zig").Texture;
+const tilemap = @import("engine/scene/tilemap.zig");
+=======
 const sprite = @import("engine/renderer/sprite.zig");
 const math = @import("engine/core/math.zig");
 const Texture = @import("engine/renderer/texture.zig").Texture;
 const tilemap = @import("engine/scene/tilemap.zig");
 const camera = @import("engine/renderer/camera.zig");
 const animation = @import("engine/animation/animation.zig");
+>>>>>>> main
 
 test {
     _ = @import("engine/renderer/renderer.zig");
@@ -26,6 +35,10 @@ test {
     _ = @import("engine/memory/vector.zig");
     _ = @import("engine/ecs/entity.zig");
     _ = @import("engine/core/math.zig");
+<<<<<<< HEAD
+    _ = @import("engine/core/allocators.zig");
+=======
+>>>>>>> main
     _ = @import("engine/renderer/view.zig");
     _ = @import("engine/core/settings.zig");
     _ = @import("engine/renderer/shader.zig");
@@ -44,18 +57,15 @@ test {
 /// A texture for the sprite tests. Sprites read only its size, so the GPU handles stay undefined and
 /// are never used.
 fn testTexture(width: u32, height: u32) Texture {
-    return .{ .device = undefined, .texture = undefined, .sampler = undefined, .width = width, .height = height };
+    return .{ .gpu_state = undefined, .width = width, .height = height, .has_upload_fence = false };
 }
 
 /// A sprite batch with no GPU objects. `begin` and `drawSprite` use only the CPU-side fields, so the
 /// tests can fill it without a device. Its storage starts empty and grows on the heap.
 fn testBatch(no_vertices: *[0]sprite.Vertex, no_batches: *[0]sprite.Batch) sprite.SpriteBatch {
     return .{
-        .device = undefined,
-        .pipeline = undefined,
-        .vertex_buffer = undefined,
-        .vb_binding = undefined,
-        .upload_buffer = undefined,
+        .gpu_state = undefined,
+        .allocator = std.testing.allocator,
         .vertices = no_vertices,
         .batches = no_batches,
     };
@@ -64,9 +74,9 @@ fn testBatch(no_vertices: *[0]sprite.Vertex, no_batches: *[0]sprite.Batch) sprit
 /// Frees the storage a test batch grew into. A batch that never grew still points at the empty
 /// arrays on the test's stack, which have length 0, so they are skipped.
 fn freeTestBatch(batch: *sprite.SpriteBatch) void {
-    if (batch.vertices.len != 0) std.heap.page_allocator.free(batch.vertices);
-    if (batch.batches.len != 0) std.heap.page_allocator.free(batch.batches);
-    if (batch.quads.len != 0) std.heap.page_allocator.free(batch.quads);
+    if (batch.vertices.len != 0) std.testing.allocator.free(batch.vertices);
+    if (batch.batches.len != 0) std.testing.allocator.free(batch.batches);
+    if (batch.quads.len != 0) std.testing.allocator.free(batch.quads);
 }
 
 test "drawSprite keeps every sprite of a frame, past the old 8192 limit" {
@@ -128,7 +138,7 @@ fn expectQuadUvs(batch: *const sprite.SpriteBatch, q: usize, src: sprite.Rect, t
     const v_bottom = (src.y + src.h) / tex_h;
     // Top-left, bottom-left, bottom-right, then top-left, bottom-right, top-right.
     const expected = [6][2]f32{
-        .{ u_left, v_top }, .{ u_left, v_bottom }, .{ u_right, v_bottom },
+        .{ u_left, v_top }, .{ u_left, v_bottom },  .{ u_right, v_bottom },
         .{ u_left, v_top }, .{ u_right, v_bottom }, .{ u_right, v_top },
     };
     for (expected, 0..) |uv, k| {

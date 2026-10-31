@@ -1,11 +1,19 @@
 //! Gameplay: the level, the player, the demo panel, and how actions drive them. The engine calls
 //! into this file through `init`, `update`, `draw`, and `deinit`, and never looks inside it. Game
+<<<<<<< HEAD
+//! code imports only the named `bairava` module, so everything the game needs from the platform goes through
+=======
 //! code imports only engine/core/engine.zig, so everything the game needs from the platform goes through
+>>>>>>> main
 //! the engine's `Context`.
 
 const std = @import("std");
 
+<<<<<<< HEAD
+const engine = @import("bairava");
+=======
 const engine = @import("../engine/core/engine.zig");
+>>>>>>> main
 const config = @import("config.zig");
 const controls = @import("controls.zig");
 const Level = @import("level.zig").Level;
@@ -38,22 +46,34 @@ pub const Game = struct {
     /// Key bindings from the settings file, with the defaults for anything it leaves out.
     bindings: controls.Bindings,
 
-    pub fn init(ctx: *engine.Context) Game {
+    pub fn init(ctx: *engine.Context) engine.AssetError!Game {
         const zone = engine.profile.zoneNamed(@src(), "game init");
         defer zone.End();
-        const atlas = ctx.loadAtlas(config.atlas_image_path, config.atlas_index_path);
+        var atlas = ctx.loadAtlas(config.atlas_image_path, config.atlas_index_path) catch |err| {
+            log.err("required atlas '{s}'/ '{s}' failed to load: {s}", .{ config.atlas_image_path, config.atlas_index_path, @errorName(err) });
+            return err;
+        };
+        errdefer atlas.deinit();
         log.info("atlas {d}x{d} with {d} sprites", .{ atlas.texture.width, atlas.texture.height, atlas.index.len });
 
         const tile = atlas.region("tile");
         const warrior = atlas.region("warrior");
-        const level = Level.load(ctx, config.level_path);
+        var level = Level.load(ctx, config.level_path) catch |err| {
+            log.err("required level '{s}' failed to load: {s}", .{ config.level_path, @errorName(err) });
+            return err;
+        };
+        errdefer level.deinit();
         checkTileset(&level, tile);
 
         const spawn = level.map.spawn;
         const player = Player.standingOn(spawn.col, spawn.row);
         log.info("map {d}x{d} tiles, player starts on tile ({d}, {d})", .{ level.map.cols, level.map.rows, spawn.col, spawn.row });
 
-        const ui = engine.ui.Ui.init(ctx.loadFont(config.ui_font_path, config.ui_font_px));
+        const ui_font = ctx.loadFont(config.ui_font_path, config.ui_font_px) catch |err| {
+            log.err("required UI font '{s}' failed to load: {s}", .{ config.ui_font_path, @errorName(err) });
+            return err;
+        };
+        const ui = engine.ui.Ui.init(ctx.allocators.game, ui_font);
         const bindings = controls.Bindings.load(ctx.settings_text);
         const ambient_sound: ?engine.audio.Sound = ctx.loadSound(config.ambient_sound_path) catch |err| blk: {
             if (err != error.NoDevice) log.warn("ambient sound could not be loaded: {s}", .{@errorName(err)});
@@ -142,11 +162,11 @@ pub const Game = struct {
             .scale_mode = if (ctx.scale_mode == .integer) .integer else .fit,
             .zoom_target = ctx.zoom_target,
         };
-        const json = save_store.serialize(std.heap.page_allocator, state) catch |err| {
+        const json = save_store.serialize(ctx.allocators.frame, state) catch |err| {
             log.err("save serialization failed: {s}", .{@errorName(err)});
             return;
         };
-        defer std.heap.page_allocator.free(json);
+        defer ctx.allocators.frame.free(json);
 
         // writeFile logs the reason when the write fails, so there is nothing more to say here.
         ctx.writeFile(config.save_file_name, json) catch return;
@@ -154,11 +174,11 @@ pub const Game = struct {
     }
 
     fn loadSave(self: *Game, ctx: *engine.Context) void {
-        const text = ctx.readFile(config.save_file_name) catch |err| {
+        const text = ctx.readFile(ctx.allocators.frame, config.save_file_name) catch |err| {
             if (err != error.FileNotFound) log.warn("save '{s}' could not be read: {s}", .{ config.save_file_name, @errorName(err) });
             return;
         };
-        defer std.heap.page_allocator.free(text);
+        defer ctx.allocators.frame.free(text);
 
         const defaults = save_store.State{
             .player_x = self.player.x,
@@ -169,7 +189,7 @@ pub const Game = struct {
             .scale_mode = if (ctx.scale_mode == .integer) .integer else .fit,
             .zoom_target = ctx.zoom_target,
         };
-        const state = save_store.deserialize(text, defaults) catch |err| {
+        const state = save_store.deserialize(ctx.allocators.frame, text, defaults) catch |err| {
             log.warn("save '{s}' was ignored: {s}", .{ config.save_file_name, @errorName(err) });
             return;
         };

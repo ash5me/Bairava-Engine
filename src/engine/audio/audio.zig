@@ -93,6 +93,39 @@ pub const Audio = struct {
     /// Loads a sound from the packaged assets and converts it to the device's format once, here. When a
     /// build-encoded IMA sidecar (`<relative>.ima`) exists, it is used. Otherwise the WAV at `relative`
     /// is used. The caller frees the result with `Sound.deinit`.
+<<<<<<< HEAD
+    pub fn loadSound(self: *const Audio, allocator: std.mem.Allocator, relative: []const u8) Error!Sound {
+        if (self.device == null) return error.NoDevice;
+        if (try self.loadImaSidecar(allocator, relative)) |sound| return sound;
+
+        const wav = platform.files.read(allocator, .packaged, relative) catch |err| {
+            log.warn("could not read '{s}': {s}", .{ relative, @errorName(err) });
+            return error.LoadFailed;
+        };
+        defer allocator.free(wav);
+        const decoded = platform.audio.decodeWav(allocator, wav) catch |err| {
+            log.warn("could not decode '{s}': {s}", .{ relative, @errorName(err) });
+            return error.LoadFailed;
+        };
+        defer allocator.free(decoded.samples);
+        const converted = platform.audio.convert(allocator, decoded.format, decoded.samples, self.format) catch {
+            log.warn("could not convert '{s}' to the device format", .{relative});
+            return error.ConvertFailed;
+        };
+        return .{ .allocator = allocator, .samples = converted };
+    }
+
+    fn loadImaSidecar(self: *const Audio, allocator: std.mem.Allocator, relative: []const u8) Error!?Sound {
+        var name_buf: [platform.max_full_path]u8 = undefined;
+        const name = std.fmt.bufPrint(&name_buf, "{s}.ima", .{relative}) catch return null;
+        const bytes = platform.files.read(allocator, .packaged, name) catch |err| {
+            if (err != error.NotFound) log.warn("could not read audio sidecar '{s}': {s}; trying WAV source", .{ name, @errorName(err) });
+            return null;
+        };
+        defer allocator.free(bytes);
+
+        var decoded = ima.decode(allocator, bytes) catch |err| {
+=======
     pub fn loadSound(self: *const Audio, relative: []const u8) Error!Sound {
         if (self.device == null) return error.NoDevice;
         if (try self.loadImaSidecar(relative)) |sound| return sound;
@@ -126,6 +159,7 @@ pub const Audio = struct {
         defer page.free(bytes);
 
         var decoded = ima.decode(page, bytes) catch |err| {
+>>>>>>> main
             log.warn("could not decode audio sidecar '{s}': {s}; trying WAV source", .{ name, @errorName(err) });
             return null;
         };
@@ -137,12 +171,20 @@ pub const Audio = struct {
             .channels = decoded.channels,
             .kind = .int16,
         };
+<<<<<<< HEAD
+        const converted = platform.audio.convert(allocator, source, std.mem.sliceAsBytes(decoded.samples), self.format) catch {
+=======
         const converted = platform.audio.convert(page, source, std.mem.sliceAsBytes(decoded.samples), self.format) catch {
+>>>>>>> main
             log.warn("could not convert audio sidecar '{s}' to the device format", .{name});
             return error.ConvertFailed;
         };
         log.debug("loaded compact audio {s} ({d} Hz, {d} channels)", .{ name, decoded.sample_rate, decoded.channels });
+<<<<<<< HEAD
+        return Sound{ .allocator = allocator, .samples = converted };
+=======
         return Sound{ .allocator = page, .samples = converted };
+>>>>>>> main
     }
 
     /// Starts `sound` on a free voice and returns its handle. The voice ends by itself when a
@@ -228,7 +270,11 @@ test "a silent Audio refuses to play and ignores the other calls" {
 
     const sound = Sound{ .allocator = std.testing.allocator, .samples = &.{} };
     try std.testing.expectError(error.NoDevice, audio.play(&sound, .{}));
+<<<<<<< HEAD
+    try std.testing.expectError(error.NoDevice, audio.loadSound(std.testing.allocator, "assets/wind1.wav"));
+=======
     try std.testing.expectError(error.NoDevice, audio.loadSound("assets/wind1.wav"));
+>>>>>>> main
 
     const never = Handle{ .index = 0, .generation = 0 };
     try std.testing.expect(!audio.isPlaying(never));

@@ -4,7 +4,12 @@ const c = @import("../platform/sdl/sdl.zig").c;
 const math = @import("../core/math.zig");
 const shader = @import("shader.zig");
 const embedded = @import("embedded_shaders");
+<<<<<<< HEAD
+const texture_renderer = @import("texture.zig");
+const Texture = texture_renderer.Texture;
+=======
 const Texture = @import("texture.zig").Texture;
+>>>>>>> main
 const profile = @import("../profiling/profile.zig");
 
 /// Vertex layout for sprite quads. Positions are in normalized device coordinates. Color is RGBA:
@@ -105,20 +110,24 @@ pub const Batch = struct {
     vertex_count: u32,
 };
 
-pub const SpriteBatch = struct {
+const SpriteBatchHandle = opaque {};
+
+const SpriteGpuState = struct {
     device: *c.SDL_GPUDevice,
     pipeline: *c.SDL_GPUGraphicsPipeline,
     vertex_buffer: *c.SDL_GPUBuffer,
     vb_binding: c.SDL_GPUBufferBinding,
     upload_buffer: *c.SDL_GPUTransferBuffer,
-    /// Holds one index per quad corner, sized to the GPU vertex capacity. It is written once per
-    /// creation, before the first draw that uses it (see `index_filled`).
-    index_buffer: *c.SDL_GPUBuffer = undefined,
-    ib_binding: c.SDL_GPUBufferBinding = undefined,
+    index_buffer: *c.SDL_GPUBuffer,
+    ib_binding: c.SDL_GPUBufferBinding,
     index_filled: bool = false,
-    /// Upload copy source for the index buffer. Kept until the index buffer is replaced, so the
-    /// copy that reads it is never raced by a release.
     index_staging: ?*c.SDL_GPUTransferBuffer = null,
+    gpu_vertex_capacity: usize,
+};
+
+pub const SpriteBatch = struct {
+    gpu_state: *SpriteBatchHandle,
+    allocator: std.mem.Allocator,
 
     /// Sprites queued this frame, in the order they were added. `prepare` sorts them by z in place.
     /// Heap-allocated, and doubled when a frame needs more.
@@ -132,8 +141,6 @@ pub const SpriteBatch = struct {
     /// Runs of sprites that share a texture, in draw order. `prepare` fills them.
     batches: []Batch,
     batch_count: u32 = 0,
-    /// How many vertices the GPU vertex and upload buffers hold. They are replaced when a frame needs more.
-    gpu_vertex_capacity: usize = 0,
     /// Draw calls issued by draw() this frame. Shows whether batching is working.
     draw_calls: u32 = 0,
     /// Maps pixel coordinates in the viewport to normalized device coordinates. Set by `begin`.
@@ -141,7 +148,7 @@ pub const SpriteBatch = struct {
 
     /// Builds the pipeline and GPU buffers. `color_format` is the swapchain format
     /// the sprites render into.
-    pub fn init(device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat) SpriteBatch {
+    fn init(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat) SpriteBatch {
         const format = shader.pickFormat(device);
         const vert = shader.load(device, format, vertex_source);
         defer c.SDL_ReleaseGPUShader(device, vert);
@@ -196,8 +203,8 @@ pub const SpriteBatch = struct {
         const vertex_buffer = createVertexBuffer(device, gpu_vertex_capacity);
         const upload_buffer = createUploadBuffer(device, gpu_vertex_capacity);
         const index_buffer = createIndexBuffer(device, gpu_vertex_capacity / vertices_per_quad);
-
-        return .{
+        const gpu_state = allocator.create(SpriteGpuState) catch @panic("out of memory");
+        gpu_state.* = .{
             .device = device,
             .pipeline = pipeline,
             .vertex_buffer = vertex_buffer,
@@ -205,10 +212,15 @@ pub const SpriteBatch = struct {
             .upload_buffer = upload_buffer,
             .index_buffer = index_buffer,
             .ib_binding = .{ .buffer = index_buffer, .offset = 0 },
-            .quads = allocQuads(initial_sprites),
-            .vertices = allocVertices(gpu_vertex_capacity),
-            .batches = allocBatches(initial_batches),
             .gpu_vertex_capacity = gpu_vertex_capacity,
+        };
+
+        return .{
+            .gpu_state = @ptrCast(gpu_state),
+            .allocator = allocator,
+            .quads = allocQuads(allocator, initial_sprites),
+            .vertices = allocVertices(allocator, gpu_vertex_capacity),
+            .batches = allocBatches(allocator, initial_batches),
             .projection = math.ortho2d(1.0, 1.0),
         };
     }
@@ -272,45 +284,47 @@ pub const SpriteBatch = struct {
 
     /// Copies this frame's vertices to the GPU. Call before beginPass, since the copy
     /// has to happen outside a render pass.
-    pub fn upload(self: *SpriteBatch, cmd: *c.SDL_GPUCommandBuffer) void {
+    fn upload(self: *SpriteBatch, cmd: *c.SDL_GPUCommandBuffer) void {
         const zone = profile.zoneNamed(@src(), "sprite upload");
         defer zone.End();
+        const gpu = spriteGpuState(self);
         self.prepare();
         if (self.vertex_count == 0) return;
-        if (self.vertex_count > self.gpu_vertex_capacity) self.growGpuBuffers(self.vertex_count);
-        if (!self.index_filled) self.fillIndexBuffer(cmd);
+        if (self.vertex_count > gpu.gpu_vertex_capacity) self.growGpuBuffers(self.vertex_count);
+        if (!gpu.index_filled) self.fillIndexBuffer(cmd);
         const bytes = vertexBytes(self.vertex_count);
 
         // cycle = true lets SDL hand us a fresh buffer if the GPU is still reading the last one.
-        const mapped = c.SDL_MapGPUTransferBuffer(self.device, self.upload_buffer, true) orelse {
+        const mapped = c.SDL_MapGPUTransferBuffer(gpu.device, gpu.upload_buffer, true) orelse {
             std.debug.panic("SDL_MapGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
         };
         const dst: [*]u8 = @ptrCast(mapped);
         @memcpy(dst[0..bytes], std.mem.sliceAsBytes(self.vertices[0..self.vertex_count]));
-        c.SDL_UnmapGPUTransferBuffer(self.device, self.upload_buffer);
+        c.SDL_UnmapGPUTransferBuffer(gpu.device, gpu.upload_buffer);
 
         const copy_pass = c.SDL_BeginGPUCopyPass(cmd);
-        const src = c.SDL_GPUTransferBufferLocation{ .transfer_buffer = self.upload_buffer, .offset = 0 };
-        const region = c.SDL_GPUBufferRegion{ .buffer = self.vertex_buffer, .offset = 0, .size = bytes };
+        const src = c.SDL_GPUTransferBufferLocation{ .transfer_buffer = gpu.upload_buffer, .offset = 0 };
+        const region = c.SDL_GPUBufferRegion{ .buffer = gpu.vertex_buffer, .offset = 0, .size = bytes };
         c.SDL_UploadToGPUBuffer(copy_pass, &src, &region, true);
         c.SDL_EndGPUCopyPass(copy_pass);
     }
 
     /// Records one draw call per batch. Call inside a render pass, after upload().
-    pub fn draw(self: *SpriteBatch, pass: ?*c.SDL_GPURenderPass) void {
+    fn draw(self: *SpriteBatch, pass: ?*c.SDL_GPURenderPass) void {
         const zone = profile.zoneNamed(@src(), "sprite draw");
         defer zone.End();
         if (self.batch_count == 0) return;
+        const gpu = spriteGpuState(self);
 
-        c.SDL_BindGPUGraphicsPipeline(pass, self.pipeline);
-        c.SDL_BindGPUVertexBuffers(pass, 0, &self.vb_binding, 1);
-        c.SDL_BindGPUIndexBuffer(pass, &self.ib_binding, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
+        c.SDL_BindGPUGraphicsPipeline(pass, gpu.pipeline);
+        c.SDL_BindGPUVertexBuffers(pass, 0, &gpu.vb_binding, 1);
+        c.SDL_BindGPUIndexBuffer(pass, &gpu.ib_binding, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
 
         for (self.batches[0..self.batch_count]) |batch| {
             // A texture whose upload is still running has nothing to sample yet. Skip its batch this
             // frame. The game queues the sprite again next frame.
             if (!batch.texture.isReady()) continue;
-            const sampler = batch.texture.binding();
+            const sampler = texture_renderer.backendBinding(batch.texture);
             c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
             // The indices name absolute vertices, so the draw starts at this batch's first quad in the
             // index buffer and uses no base vertex.
@@ -324,27 +338,27 @@ pub const SpriteBatch = struct {
     /// Doubles the quad storage until it holds `needed` sprites. Sprites already queued this frame
     /// are kept.
     fn growQuads(self: *SpriteBatch, needed: usize) void {
-        const bigger = allocQuads(grownCapacity(self.quads.len, needed));
+        const bigger = allocQuads(self.allocator, grownCapacity(self.quads.len, needed));
         @memcpy(bigger[0..self.sprite_count], self.quads[0..self.sprite_count]);
-        freeSlice(Quad, self.quads);
+        freeSlice(self.allocator, Quad, self.quads);
         self.quads = bigger;
     }
 
     /// Doubles the vertex storage until it holds `needed` vertices. Vertices already written this
     /// frame are kept.
     fn growVertices(self: *SpriteBatch, needed: usize) void {
-        const bigger = allocVertices(grownCapacity(self.vertices.len, needed));
+        const bigger = allocVertices(self.allocator, grownCapacity(self.vertices.len, needed));
         @memcpy(bigger[0..self.vertex_count], self.vertices[0..self.vertex_count]);
-        freeSlice(Vertex, self.vertices);
+        freeSlice(self.allocator, Vertex, self.vertices);
         self.vertices = bigger;
     }
 
     /// Doubles the batch storage until it holds `needed` batches. Batches already built this frame
     /// are kept.
     fn growBatches(self: *SpriteBatch, needed: usize) void {
-        const bigger = allocBatches(grownCapacity(self.batches.len, needed));
+        const bigger = allocBatches(self.allocator, grownCapacity(self.batches.len, needed));
         @memcpy(bigger[0..self.batch_count], self.batches[0..self.batch_count]);
-        freeSlice(Batch, self.batches);
+        freeSlice(self.allocator, Batch, self.batches);
         self.batches = bigger;
     }
 
@@ -352,19 +366,20 @@ pub const SpriteBatch = struct {
     /// old buffers are released at once. SDL frees each one after the frames still using it finish,
     /// so this doesn't wait for the GPU. The new index buffer is written by the next upload.
     fn growGpuBuffers(self: *SpriteBatch, needed: usize) void {
-        const capacity = grownCapacity(self.gpu_vertex_capacity, needed);
-        c.SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
-        c.SDL_ReleaseGPUTransferBuffer(self.device, self.upload_buffer);
-        c.SDL_ReleaseGPUBuffer(self.device, self.index_buffer);
-        if (self.index_staging) |staging| c.SDL_ReleaseGPUTransferBuffer(self.device, staging);
-        self.index_staging = null;
-        self.vertex_buffer = createVertexBuffer(self.device, capacity);
-        self.upload_buffer = createUploadBuffer(self.device, capacity);
-        self.index_buffer = createIndexBuffer(self.device, capacity / vertices_per_quad);
-        self.vb_binding = .{ .buffer = self.vertex_buffer, .offset = 0 };
-        self.ib_binding = .{ .buffer = self.index_buffer, .offset = 0 };
-        self.gpu_vertex_capacity = capacity;
-        self.index_filled = false;
+        const gpu = spriteGpuState(self);
+        const capacity = grownCapacity(gpu.gpu_vertex_capacity, needed);
+        c.SDL_ReleaseGPUBuffer(gpu.device, gpu.vertex_buffer);
+        c.SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.upload_buffer);
+        c.SDL_ReleaseGPUBuffer(gpu.device, gpu.index_buffer);
+        if (gpu.index_staging) |staging| c.SDL_ReleaseGPUTransferBuffer(gpu.device, staging);
+        gpu.index_staging = null;
+        gpu.vertex_buffer = createVertexBuffer(gpu.device, capacity);
+        gpu.upload_buffer = createUploadBuffer(gpu.device, capacity);
+        gpu.index_buffer = createIndexBuffer(gpu.device, capacity / vertices_per_quad);
+        gpu.vb_binding = .{ .buffer = gpu.vertex_buffer, .offset = 0 };
+        gpu.ib_binding = .{ .buffer = gpu.index_buffer, .offset = 0 };
+        gpu.gpu_vertex_capacity = capacity;
+        gpu.index_filled = false;
     }
 
     /// Writes the index of every quad corner into the whole index buffer. The indices name this
@@ -372,20 +387,21 @@ pub const SpriteBatch = struct {
     /// before this frame's draws. The contents depend only on the capacity, so this runs once per
     /// creation.
     fn fillIndexBuffer(self: *SpriteBatch, cmd: *c.SDL_GPUCommandBuffer) void {
-        const quads = self.gpu_vertex_capacity / vertices_per_quad;
+        const gpu = spriteGpuState(self);
+        const quads = gpu.gpu_vertex_capacity / vertices_per_quad;
         const bytes = indexBytes(quads);
 
-        if (self.index_staging == null) {
+        if (gpu.index_staging == null) {
             var info = std.mem.zeroes(c.SDL_GPUTransferBufferCreateInfo);
             info.usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
             info.size = bytes;
-            self.index_staging = c.SDL_CreateGPUTransferBuffer(self.device, &info) orelse {
+            gpu.index_staging = c.SDL_CreateGPUTransferBuffer(gpu.device, &info) orelse {
                 std.debug.panic("SDL_CreateGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
             };
         }
-        const staging = self.index_staging.?;
+        const staging = gpu.index_staging.?;
 
-        const mapped = c.SDL_MapGPUTransferBuffer(self.device, staging, false) orelse {
+        const mapped = c.SDL_MapGPUTransferBuffer(gpu.device, staging, false) orelse {
             std.debug.panic("SDL_MapGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
         };
         const dst: [*]u8 = @ptrCast(mapped);
@@ -395,29 +411,48 @@ pub const SpriteBatch = struct {
                 std.mem.writeInt(u32, dst[at .. at + index_size][0..index_size], indexValue(quad, k), .little);
             }
         }
-        c.SDL_UnmapGPUTransferBuffer(self.device, staging);
+        c.SDL_UnmapGPUTransferBuffer(gpu.device, staging);
 
         const copy_pass = c.SDL_BeginGPUCopyPass(cmd);
         const src = c.SDL_GPUTransferBufferLocation{ .transfer_buffer = staging, .offset = 0 };
-        const region = c.SDL_GPUBufferRegion{ .buffer = self.index_buffer, .offset = 0, .size = bytes };
+        const region = c.SDL_GPUBufferRegion{ .buffer = gpu.index_buffer, .offset = 0, .size = bytes };
         c.SDL_UploadToGPUBuffer(copy_pass, &src, &region, false);
         c.SDL_EndGPUCopyPass(copy_pass);
 
-        self.index_filled = true;
+        gpu.index_filled = true;
     }
 
     /// Releases GPU resources. Call before the renderer is deinitialized.
     pub fn deinit(self: *SpriteBatch) void {
-        c.SDL_ReleaseGPUTransferBuffer(self.device, self.upload_buffer);
-        if (self.index_staging) |staging| c.SDL_ReleaseGPUTransferBuffer(self.device, staging);
-        c.SDL_ReleaseGPUBuffer(self.device, self.index_buffer);
-        c.SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
-        c.SDL_ReleaseGPUGraphicsPipeline(self.device, self.pipeline);
-        freeSlice(Quad, self.quads);
-        freeSlice(Vertex, self.vertices);
-        freeSlice(Batch, self.batches);
+        const gpu = spriteGpuState(self);
+        c.SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.upload_buffer);
+        if (gpu.index_staging) |staging| c.SDL_ReleaseGPUTransferBuffer(gpu.device, staging);
+        c.SDL_ReleaseGPUBuffer(gpu.device, gpu.index_buffer);
+        c.SDL_ReleaseGPUBuffer(gpu.device, gpu.vertex_buffer);
+        c.SDL_ReleaseGPUGraphicsPipeline(gpu.device, gpu.pipeline);
+        freeSlice(self.allocator, Quad, self.quads);
+        freeSlice(self.allocator, Vertex, self.vertices);
+        freeSlice(self.allocator, Batch, self.batches);
+        self.allocator.destroy(gpu);
+        self.* = undefined;
     }
 };
+
+pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat) SpriteBatch {
+    return SpriteBatch.init(allocator, device, color_format);
+}
+
+pub fn upload(batch: *SpriteBatch, cmd: *c.SDL_GPUCommandBuffer) void {
+    batch.upload(cmd);
+}
+
+pub fn draw(batch: *SpriteBatch, pass: ?*c.SDL_GPURenderPass) void {
+    batch.draw(pass);
+}
+
+fn spriteGpuState(batch: *const SpriteBatch) *SpriteGpuState {
+    return @ptrCast(@alignCast(batch.gpu_state));
+}
 
 /// The four corners of one sprite in pixels, through `projection`. The texture coordinates, flip,
 /// origin, rotation, and color are applied. The order is top-left, bottom-left, bottom-right, top-right.
@@ -567,20 +602,20 @@ fn grownCapacity(current: usize, needed: usize) usize {
     return capacity;
 }
 
-fn allocQuads(count: usize) []Quad {
-    return std.heap.page_allocator.alloc(Quad, count) catch @panic("out of memory");
+fn allocQuads(allocator: std.mem.Allocator, count: usize) []Quad {
+    return allocator.alloc(Quad, count) catch @panic("out of memory");
 }
 
-fn allocVertices(count: usize) []Vertex {
-    return std.heap.page_allocator.alloc(Vertex, count) catch @panic("out of memory");
+fn allocVertices(allocator: std.mem.Allocator, count: usize) []Vertex {
+    return allocator.alloc(Vertex, count) catch @panic("out of memory");
 }
 
-fn allocBatches(count: usize) []Batch {
-    return std.heap.page_allocator.alloc(Batch, count) catch @panic("out of memory");
+fn allocBatches(allocator: std.mem.Allocator, count: usize) []Batch {
+    return allocator.alloc(Batch, count) catch @panic("out of memory");
 }
 
 /// Frees storage from `allocQuads`, `allocVertices`, or `allocBatches`. A zero-length slice owns no
 /// memory, so it is skipped.
-fn freeSlice(comptime T: type, slice: []T) void {
-    if (slice.len != 0) std.heap.page_allocator.free(slice);
+fn freeSlice(allocator: std.mem.Allocator, comptime T: type, slice: []T) void {
+    if (slice.len != 0) allocator.free(slice);
 }
