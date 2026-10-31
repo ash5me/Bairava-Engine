@@ -3,7 +3,7 @@
  *
  * build.zig runs this at build time. It writes two files that the game reads at startup:
  *   atlas.png  the packed sprites, RGBA, with transparent space between them
- *   atlas.txt  where each sprite sits in atlas.png, read by src/engine/atlas.zig
+ *   atlas.txt  where each sprite sits in atlas.png, read by src/engine/assets/loaders/atlas.zig
  *
  * Usage:
  *   atlas_pack <out.png> <out.txt> <name> <input.png> [<name> <input.png> ...]

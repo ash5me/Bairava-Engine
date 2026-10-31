@@ -91,7 +91,7 @@ vsync = true
 bind move_left = left, a
 ```
 
-Window dimensions must be from 64 to 8192 pixels. Boolean values accept `true`/`false`, `yes`/`no`, and `on`/`off`. A `bind` line replaces the defaults for one named action and can list up to four comma-separated key names. Valid action names are `move_left`, `move_right`, `move_up`, `move_down`, `quit`, `toggle_scale`, `zoom_in`, `zoom_out`, and `zoom_reset`. Key names are the SDL key enum names used in `src/engine/input.zig`.
+Window dimensions must be from 64 to 8192 pixels. Boolean values accept `true`/`false`, `yes`/`no`, and `on`/`off`. A `bind` line replaces the defaults for one named action and can list up to four comma-separated key names. Valid action names are `move_left`, `move_right`, `move_up`, `move_down`, `quit`, `toggle_scale`, `zoom_in`, `zoom_out`, and `zoom_reset`. Key names are the SDL key enum names used in `src/engine/input/input.zig`.
 
 ## Project layout
 
@@ -111,7 +111,7 @@ tools/assets/              Cross-platform checkerboard keyer and sprite importer
 vendor/                    Third-party C headers/sources used by the build
 ```
 
-The main integration boundary is `src/engine/engine.zig`: a game supplies `init`, `update`, `draw`, and `deinit` hooks. Engine code is under `src/engine/`; demo-specific behavior and configuration live under `src/game/`.
+The main integration boundary is `src/engine/core/engine.zig`: a game supplies `init`, `update`, `draw`, and `deinit` hooks. Engine code is under `src/engine/`; demo-specific behavior and configuration live under `src/game/`.
 
 ## Map format
 
@@ -125,7 +125,7 @@ layer ground
 1 1 1 1 ...
 ```
 
-See `src/engine/tilemap.zig` for the parser's complete validation rules.
+See `src/engine/scene/tilemap.zig` for the parser's complete validation rules.
 
 ## Runtime diagnostics
 
