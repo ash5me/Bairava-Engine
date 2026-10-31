@@ -4,12 +4,12 @@
 
 const std = @import("std");
 
-const sprite = @import("engine/renderer/sprite.zig");
+const animation = @import("engine/animation/animation.zig");
 const math = @import("engine/core/math.zig");
+const camera = @import("engine/renderer/camera.zig");
+const sprite = @import("engine/renderer/sprite.zig");
 const Texture = @import("engine/renderer/texture.zig").Texture;
 const tilemap = @import("engine/scene/tilemap.zig");
-const camera = @import("engine/renderer/camera.zig");
-const animation = @import("engine/animation/animation.zig");
 
 test {
     _ = @import("engine/renderer/renderer.zig");
@@ -126,7 +126,7 @@ fn expectQuadUvs(batch: *const sprite.SpriteBatch, q: usize, src: sprite.Rect, t
     const v_bottom = (src.y + src.h) / tex_h;
     // Top-left, bottom-left, bottom-right, then top-left, bottom-right, top-right.
     const expected = [6][2]f32{
-        .{ u_left, v_top }, .{ u_left, v_bottom }, .{ u_right, v_bottom },
+        .{ u_left, v_top }, .{ u_left, v_bottom },  .{ u_right, v_bottom },
         .{ u_left, v_top }, .{ u_right, v_bottom }, .{ u_right, v_top },
     };
     for (expected, 0..) |uv, k| {

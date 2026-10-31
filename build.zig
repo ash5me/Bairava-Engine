@@ -189,7 +189,7 @@ const shader_targets = [_]ShaderTarget{
     },
     .{
         .ext = "msl",
-        .args = &.{"-target", "metal"},
+        .args = &.{ "-target", "metal" },
         .suffix = "_msl",
         .define = null,
         .option = "metal",
