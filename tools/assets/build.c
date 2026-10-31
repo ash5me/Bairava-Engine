@@ -8,7 +8,7 @@
  */
 
 #include "../../vendor/stb_image.h"
-#include "../../src/engine/ui/text.h"
+#include "../../src/engine/text/text.h"
 
 #include <errno.h>
 #include <stdio.h>

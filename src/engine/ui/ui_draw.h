@@ -2,8 +2,8 @@
  * ui_draw.h: the draw list that text and widgets write into.
  *
  * A quad says where to draw one rectangle of a texture and how to tint it. It has the same
- * shape as a sprite in src/engine/sprite.zig, so a backend draws each quad as one drawSprite
- * call (see src/engine/ui.zig). Nothing here depends on SDL or the GPU.
+ * shape as a sprite in src/engine/renderer/sprite.zig, so a backend draws each quad as one drawSprite
+ * call (see src/engine/ui/ui.zig). Nothing here depends on SDL or the GPU.
  */
 #ifndef UI_DRAW_H
 #define UI_DRAW_H

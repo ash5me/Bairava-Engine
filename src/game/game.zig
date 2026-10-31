@@ -1,11 +1,11 @@
 //! Gameplay: the level, the player, the demo panel, and how actions drive them. The engine calls
 //! into this file through `init`, `update`, `draw`, and `deinit`, and never looks inside it. Game
-//! code imports only engine/engine.zig, so everything the game needs from the platform goes through
+//! code imports only engine/core/engine.zig, so everything the game needs from the platform goes through
 //! the engine's `Context`.
 
 const std = @import("std");
 
-const engine = @import("../engine/engine.zig");
+const engine = @import("../engine/core/engine.zig");
 const config = @import("config.zig");
 const controls = @import("controls.zig");
 const Level = @import("level.zig").Level;
