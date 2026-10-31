@@ -1,8 +1,8 @@
 //! The level: the tile map the game loads, and its size. Drawing the tiles is the engine's job
-//! (engine/tilemap_draw.zig), and game.zig decides which layer is drawn when.
+//! (engine/renderer/tilemap_draw.zig), and game.zig decides which layer is drawn when.
 
 const std = @import("std");
-const engine = @import("../engine/engine.zig");
+const engine = @import("../engine/core/engine.zig");
 
 /// Side length of one tile, in native pixels.
 pub const tile_px = engine.tilemap.tile_px;

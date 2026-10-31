@@ -3,7 +3,7 @@
 //! clips the player plays.
 
 const std = @import("std");
-const engine = @import("../engine/engine.zig");
+const engine = @import("../engine/core/engine.zig");
 
 /// The sprite is 16x32 pixels. The sheet is laid out in rows by facing.
 const width: f32 = 16.0;

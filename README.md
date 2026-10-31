@@ -55,7 +55,7 @@ zig build test                     # run unit tests (no GPU or window; links SDL
 
 Run `zig build asset-build` to validate and stage the general asset set without installing the game. Use `audio` for uncompressed PCM WAV inputs that should also get an IMA ADPCM sidecar, or `wav` to keep only the WAV runtime file. Font rows include bake height, first codepoint, and glyph count after dependencies, for example `font font assets/font.ttf font.ttf - 10 32 224`; append `sdf` to generate a scalable distance-field atlas instead of the default bitmap atlas. The build graph tracks the manifest, its source files, and the generated atlas input, so edits rebuild the asset step. Install Arm's `astcenc` command line tool and put it on `PATH` to generate ASTC variants; BC1, BC3, RGBA8, IMA ADPCM, and `.bfnt` outputs do not need extra tools.
 
-The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root, take a font path, and `zig build test` doesn't run them. Since font baking now links the vendored FreeType sources, compile these harnesses with the include path, macro, and source list configured by `addFreeType` in `build.zig`, plus `vendor/stb_truetype_impl.c`, `src/engine/ui/text.c`, and the relevant harness source. A passing run prints `imgui: all checks passed` and `text: all checks passed`. On Windows, `scripts/run-ui-tests.ps1` does this from the real build. It reads the include paths, macros, and FreeType sources from `zig build --verbose-cc`, compiles both harnesses with `zig cc`, runs them, and saves the build log to `ui-tests/`. Run it from the project root with `powershell -ExecutionPolicy Bypass -File .\scripts\run-ui-tests.ps1`. Pass another font with `-FontPath`; the default is `assets\font.ttf`.
+The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root, take a font path, and `zig build test` doesn't run them. Since font baking now links the vendored FreeType sources, compile these harnesses with the include path, macro, and source list configured by `addFreeType` in `build.zig`, plus `vendor/stb_truetype_impl.c`, `src/engine/text/text.c`, and the relevant harness source. A passing run prints `imgui: all checks passed` and `text: all checks passed`. On Windows, `scripts/run-ui-tests.ps1` does this from the real build. It reads the include paths, macros, and FreeType sources from `zig build --verbose-cc`, compiles both harnesses with `zig cc`, runs them, and saves the build log to `ui-tests/`. Run it from the project root with `powershell -ExecutionPolicy Bypass -File .\scripts\run-ui-tests.ps1`. Pass another font with `-FontPath`; the default is `assets\font.ttf`.
 
 ## Continuous integration
 
@@ -139,7 +139,7 @@ Every panic is also recorded in the log file before Zig prints it, so a failed a
 2026-10-29 07:57:18 INFO  game: atlas 512x512 with 2 sprites
 ```
 
-The file is written by log.c (`vendor/log.c`), through `src/engine/log_file.c`. Each run replaces the file from the last run, so it holds one run only. Every line is flushed as it's written, so the file is complete even when the game crashes. Both outputs use the same level threshold. Change `log_file_name` in `game/config.zig` to rename the file, or set it to `null` to log to the terminal only. If the file can't be opened, the game warns in the terminal and keeps running.
+The file is written by log.c (`vendor/log.c`), through `src/engine/logging/log_file.c`. Each run replaces the file from the last run, so it holds one run only. Every line is flushed as it's written, so the file is complete even when the game crashes. Both outputs use the same level threshold. Change `log_file_name` in `game/config.zig` to rename the file, or set it to `null` to log to the terminal only. If the file can't be opened, the game warns in the terminal and keeps running.
 
 ### Profiling with Tracy
 
@@ -199,47 +199,79 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 ├── build.zig.zon              Package manifest and pinned dependencies
 ├── src/
 │   ├── main.zig               Entry point: hands the game to the engine
-│   ├── engine/                Reusable engine code. Never names a game type.
-│   │   ├── engine.zig         Public engine API: window, fixed-timestep loop, scale modes, Config, Context, DrawContext
-│   │   ├── sdl.zig            The only SDL3 C import
-│   │   ├── renderer.zig       GPU device, swapchain, command buffers, render passes
-│   │   ├── shader.zig         Picks a shader format (SPIR-V, DXIL, or MSL) and creates GPU shaders from embedded code
-│   │   ├── texture.zig        2D textures, render targets, nearest-neighbor sampler
-│   │   ├── image.zig          Decodes image files to RGBA8 with stb_image
-│   │   ├── sprite.zig         Batched textured quads, sprite pipeline, vertex upload
-│   │   ├── camera.zig         View position, follow target, smoothing, edge clamping, zoom easing
-│   │   ├── animation.zig      Sprite-sheet clips and the animator that plays them
-│   │   ├── input.zig          Key enum, held, pressed, and released state for keys and the left mouse button, mouse position
-│   │   ├── settings.zig       Settings file: name = value lines, the window settings (resolution, fullscreen, vsync), and the line reader
-│   │   ├── audio.zig          Sound output: WAV or IMA ADPCM loading, device-format conversion, SDL audio-stream voices
-│   │   ├── ima.zig            BRAD IMA ADPCM decoder to interleaved signed 16-bit PCM
-│   │   ├── audio_voices.zig   Voice handles, gain, and the finish and loop rules (no SDL)
-│   │   ├── view.zig           Fits the view to the window for each zoom and scale mode, and maps mouse positions from window to view and world
-│   │   ├── log.zig            Logging to the terminal and the log file, the panic record, and assertions
-│   │   ├── log_file.h         Log file output through log.c: open, close, and write one line
-│   │   ├── log_file.c         The sink log.c calls, which writes each line with a wall-clock time
-│   │   ├── profile.zig        Tracy profiling zones and frame marks through ztracy. The only ztracy import
-│   │   ├── debug_overlay.zig  On-screen frame-time graph and frame stats, toggled with F3
-│   │   ├── frame_history.zig  Frame-time history and statistics. Pure math, covered by zig build test
-│   │   ├── math.zig           cglm wrappers: projection, transforms, normalization. The only cglm import.
-│   │   ├── string.zig         Validated fixed-capacity Name and Path types
-│   │   ├── hash_map.zig       StringMap: open-addressing hash map keyed by Name
-│   │   ├── assets.zig         Asset Table: names to ids and validated paths
-│   │   ├── asset_cache.zig    Asset cache: loads each asset once, reference counts, unloads unused entries
-│   │   ├── atlas.zig          Texture atlas index: the rectangle of each sprite in the atlas image
-│   │   ├── loaded_atlas.zig   The atlas on the GPU: its texture, its index, and the region of each sprite
-│   │   ├── vector.zig         Custom struct vectors in AoS or SoA layout, with strided column views
-│   │   ├── entity.zig         Entity world: component rows, generational handles, swap-remove despawn
-│   │   ├── ui.zig             Bridge to the GPU: loads preprocessed font data or bakes TTF fallback, then queues UI quads
-│   │   ├── ui/                C text and widgets. Pure C with no SDL or GPU use, compiled into the executable
-│   │   │   ├── ui_draw.h      Quad and draw list types, shared by text and widgets
+│   ├── engine/                Reusable engine code. Never names a game type. Modules are grouped by area.
+│   │   ├── core/              The public API, the frame loop, and what the engine owns while it runs
+│   │   │   ├── engine.zig     Public engine API. Game code imports only this file
+│   │   │   ├── application.zig   `Config`: what the game passes to `run`
+│   │   │   ├── runtime.zig    `run` and the frame loop: fixed-timestep updates, layout, passes, present
+│   │   │   ├── context.zig    `Context` (init and update), `DrawContext` (draw), and asset loading through them
+│   │   │   ├── lifecycle.zig  `Session`: startup and shutdown of settings, SDL, window, GPU, batches, input, audio
+│   │   │   ├── event.zig      Event pump: quit, F11 fullscreen, F3 overlay, and input events
+│   │   │   ├── settings.zig   Settings file: name = value lines, window settings, key bind lines
+│   │   │   └── math.zig       cglm wrappers: projection, transforms, normalization. The only cglm import
+│   │   ├── platform/          Operating system and SDL. Only platform/sdl/ imports SDL
+│   │   │   ├── platform.zig   Facade over the platform backend
+│   │   │   └── sdl/
+│   │   │       ├── sdl.zig    The only SDL3 C import
+│   │   │       ├── window.zig Window creation, fullscreen, pixel size and density
+│   │   │       ├── gpu.zig    GPU device, swapchain, frame acquire and submit
+│   │   │       ├── input.zig  SDL events and keyboard state into `Input`, and the scancode table
+│   │   │       └── audio.zig  Playback device, and one SDL audio stream per voice
+│   │   ├── renderer/          Drawing
+│   │   │   ├── renderer.zig   Render passes and color targets
+│   │   │   ├── sprite.zig     Batched textured quads, sprite pipeline, vertex upload
+│   │   │   ├── texture.zig    2D textures, render targets, nearest-neighbor sampler
+│   │   │   ├── shader.zig     Picks a shader format and creates GPU shaders from embedded code
+│   │   │   ├── camera.zig     View position, follow target, smoothing, edge clamping, zoom easing
+│   │   │   ├── view.zig       Fits the view to the window for each zoom and scale mode, and maps mouse positions
+│   │   │   ├── loaded_atlas.zig  The atlas on the GPU: its texture, its index, and each sprite's region
+│   │   │   └── tilemap_draw.zig  Draws one tile layer at a time, with view culling
+│   │   ├── assets/            Names, caching, and loading
+│   │   │   ├── manager.zig    Facade over the registry, cache, and loaders
+│   │   │   ├── registry.zig   Asset table: names to ids and validated paths
+│   │   │   ├── cache.zig      Asset cache: loads each asset once, reference counts, unloads unused entries
+│   │   │   └── loaders/
+│   │   │       ├── image.zig  Image decoding through stb_image, to RGBA8
+│   │   │       └── atlas.zig  Texture atlas index: parsing and lookup by name
+│   │   ├── input/
+│   │   │   └── input.zig      `Key` enum, held, pressed, released, and mouse state. No platform code
+│   │   ├── audio/
+│   │   │   ├── audio.zig      Public audio API. Re-exports the SDL backend
+│   │   │   ├── voices.zig     Voice handles, gain, and the finish and loop rules. No SDL
+│   │   │   └── ima.zig        BRAD IMA ADPCM decoder to interleaved signed 16-bit PCM
+│   │   ├── animation/
+│   │   │   └── animation.zig  Sprite-sheet clips and the animator that plays them
+│   │   ├── ecs/
+│   │   │   └── entity.zig     Entity world: component rows, generational handles, swap-remove despawn
+│   │   ├── physics/
+│   │   │   └── shapes.zig     Point and Box in pixels, used by movement and collision
+│   │   ├── scene/
+│   │   │   └── tilemap.zig    Tile map format, layers, solid tiles, and box movement against tiles
+│   │   ├── text/
+│   │   │   ├── font.zig       Font on the GPU: prebaked sidecar or TTF baking, lazy glyph growth
 │   │   │   ├── text.h         Font baking and text drawing API. Does not include rasterizer headers
-│   │   │   ├── text.c         stb_truetype and FreeType font baking, BFNT metadata loading, and one quad per glyph
+│   │   │   └── text.c         stb_truetype and FreeType baking, BFNT metadata, one quad per glyph
+│   │   ├── ui/
+│   │   │   ├── ui.zig         Canvas and Ui: bridge from the C widgets to the sprite batch
+│   │   │   ├── c.zig          The one C import of the UI headers
+│   │   │   ├── ui_draw.h      Quad and draw list types, shared by text and widgets
 │   │   │   ├── imgui.h        Immediate-mode UI API: begin and end a frame, label, button, slider
 │   │   │   └── imgui.c        The widgets, with hot and active ids, and ## suffixes for duplicate labels
-│   │   ├── tilemap.zig        Tile map format and parser, layers, solid tiles, box movement against tiles
-│   │   └── tilemap_draw.zig   Draws one tile layer at a time, with view culling
-│   ├── game/                  Gameplay code. Uses the engine only through engine/engine.zig.
+│   │   ├── memory/            Storage types: fixed-capacity strings, hash map, AoS and SoA vectors
+│   │   │   ├── string.zig     Validated fixed-capacity Name and Path types
+│   │   │   ├── hash_map.zig   StringMap: open-addressing hash map keyed by Name
+│   │   │   └── vector.zig     Custom struct vectors in AoS or SoA layout
+│   │   ├── logging/
+│   │   │   ├── log.zig        Logging to the terminal and the log file, the panic record, and assertions
+│   │   │   ├── log_file.h     Log file output through log.c
+│   │   │   └── log_file.c     The sink log.c calls, which writes each line with a wall-clock time
+│   │   ├── profiling/
+│   │   │   ├── profile.zig    Tracy profiling zones and frame marks. The only ztracy import
+│   │   │   ├── debug_overlay.zig  On-screen frame-time graph and frame stats, toggled with F3
+│   │   │   └── frame_history.zig  Frame-time history and statistics. Pure math
+│   │   └── jobs/
+│   │       └── README.md      Planned job system. Not implemented yet
+│   ├── game/                  Gameplay code. Uses the engine only through engine/core/engine.zig
 │   │   ├── game.zig           Game state, asset loading, the UI font, the demo panel, update and draw
 │   │   ├── controls.zig       Named actions, default keys, and the `bind` lines that rebind them
 │   │   ├── player.zig         Player position, facing, walk clips, drawing
@@ -256,7 +288,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 ├── tools/
 │   ├── assets/keyer.c         Cross-platform checkerboard-background removal tool
 │   ├── assets/import.c        Copies and registers atlas sprites
-│   ├── assets/build.c          Validates assets, emits GPU texture formats, IMA ADPCM audio, preprocessed fonts, and the asset index
+│   ├── assets/build.c         Validates assets, emits GPU texture formats, IMA ADPCM audio, preprocessed fonts, and the asset index
 │   └── atlas/pack.c           Build-time texture atlas packer; writes atlas.png and atlas.txt
 ├── tests/
 │   └── ui/
@@ -295,14 +327,14 @@ Zoom multiplies the scale, and the view size follows from it. At zoom 2 the scal
 
 ### Frame lifecycle
 
-The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing runs once per frame.
+The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing runs once per frame.
 
 1. Measure the frame time since the last frame, capped at 0.1 s.
 2. Drain the SDL event queue. The engine handles quit requests, F11, and F3. Key and mouse events update the held state, and presses, releases, and clicks wait in `Input` for the next update step.
 3. Add the frame time to an accumulator. While it holds at least one fixed step (1/60 s by default), latch the pending input so it reaches exactly one update, run game `update` with `ctx.dt` set to that step, and subtract the step. Stop early if the game sets `running` to false.
 4. Game `update`: read actions from `game/controls.zig`. Quit, scale toggle, and zoom act on their press. Movement actions move the player at 80 px/s, with diagonals normalized, and solid tiles stop the player's feet on each axis, so the player slides along walls.
 5. Compute `alpha`, the leftover fraction of a step, from 0 to 1. Drawing blends between the last two updates with it, so motion stays smooth when the display rate and update rate differ.
-6. Read the window size in pixels. If either side is zero, the window is minimized, so sleep for 16 ms (`idle_sleep_ms` in `engine/engine.zig`) and start the next frame. Otherwise, ease the camera's zoom toward the zoom the game asked for, choose the scale for the current scale mode and zoom (see Rendering model), then compute the view size. The reference native view is 320×180 in `game/config.zig`.
+6. Read the window size in pixels. If either side is zero, the window is minimized, so sleep for 16 ms (`idle_sleep_ms` in `engine/core/engine.zig`) and start the next frame. Otherwise, ease the camera's zoom toward the zoom the game asked for, choose the scale for the current scale mode and zoom (see Rendering model), then compute the view size. The reference native view is 320×180 in `game/config.zig`.
 7. If the view size changed, wait for the GPU to go idle and recreate the native target.
 8. Acquire a command buffer and swapchain texture. If either is unavailable, sleep for the same 16 ms and start the next frame, so a minimized window doesn't spin.
 9. Pass 1: game `draw` points the camera at the player's blended center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target. The debug overlay is queued after the game, in the same pass.
@@ -329,11 +361,11 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 | stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8, and image validation in the importer (`tools/assets/import.c`) and the keyer (`tools/assets/keyer.c`) | Public domain or MIT |
 | stb_image_write | Vendored in `vendor/` | Writing `atlas.png` in the build's atlas packer | Public domain or MIT |
 | stb_rect_pack | Vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
-| stb_truetype | Vendored in `vendor/` | Build-time font preprocessing and TTF fallback baking (`tools/assets/build.c`, `src/engine/ui/text.c`) | Public domain or MIT |
+| stb_truetype | Vendored in `vendor/` | Build-time font preprocessing and TTF fallback baking (`tools/assets/build.c`, `src/engine/text/text.c`) | Public domain or MIT |
 | FreeType | 2.15.0, vendored in `vendor/freetype-2.15.0/` | CFF-capable font baking, SDF rasterization, and dynamic glyph caching | FreeType License |
 | cglm | 0.9.7, vendored in `vendor/cglm/`: headers, the 46 C sources its CMake lists, and its license | Vector and matrix math, the pixel projection, and transforms | MIT |
-| log.c | rxi's log.c, 2020 (`log_Event` API), vendored in `vendor/log.c` and `vendor/log.h` | Delivers each message to the log file through `src/engine/log_file.c` | MIT |
-| ztracy | Zig bindings, pinned to commit `2d06ebe` in `build.zig.zon` | Tracy zones and frame marks, compiled in with `-Dtracy=true` through `src/engine/profile.zig` | MIT |
+| log.c | rxi's log.c, 2020 (`log_Event` API), vendored in `vendor/log.c` and `vendor/log.h` | Delivers each message to the log file through `src/engine/logging/log_file.c` | MIT |
+| ztracy | Zig bindings, pinned to commit `2d06ebe` in `build.zig.zon` | Tracy zones and frame marks, compiled in with `-Dtracy=true` through `src/engine/profiling/profile.zig` | MIT |
 | Tracy client | 0.14.1, bundled in ztracy's `libs/tracy/` and built from source with `-Dtracy=true` | The profiler's runtime: records zones and sends them to the Tracy viewer | 3-clause BSD |
 | Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
 | Arm astcenc | Optional, installed separately and on `PATH` | ASTC 4x4 texture variants, encoded at build time (`tools/assets/build.c`) | Apache 2.0 |
@@ -357,7 +389,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - GPU device creation with a Vulkan 1.2 request, SPIR-V shaders (plus DXIL when built with `-Ddxil=true`), and an optional validation layer (`-Dgpu-debug`).
 - Swapchain claim, command buffer acquire and submit, and clear-color render passes.
 - A build step that compiles two Slang entry points to SPIR-V, and to DXIL when `-Ddxil=true` is set, and embeds them in the executable.
-- Shader loading that picks the first format the device accepts (SPIR-V first, then DXIL). Shader code is embedded in the executable at build time, aligned for 32-bit word reads, and each shader's entry point and resource counts are declared as a `shader.Source` beside the pipeline in `sprite.zig`.
+- Shader loading that picks the first format the device accepts (SPIR-V first, then DXIL). Shader code is embedded in the executable at build time, aligned for 32-bit word reads, and each shader's entry point and resource counts are declared as a `shader.Source` beside the pipeline in `renderer/sprite.zig`.
 - One sprite shader: the texture sample multiplied by the vertex color.
 
 **Textures and images**
@@ -366,7 +398,7 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Render-target textures in the swapchain format.
 - Nearest-neighbor sampler with clamp-to-edge addressing.
 - Assets installed beside the executable and loaded through `SDL_GetBasePath`, so the game runs from any directory.
-- Build-time texture atlas: `tools/atlas/pack.c` packs the sprites listed in `assets/sprites.txt` into one square PNG with stb_rect_pack. The square is the smallest power of two that fits, and each sprite has one transparent texel of padding on every side. `engine/atlas.zig` reads the index written beside the image, and the game draws every sprite from that one texture.
+- Build-time texture atlas: `tools/atlas/pack.c` packs the sprites listed in `assets/sprites.txt` into one square PNG with stb_rect_pack. The square is the smallest power of two that fits, and each sprite has one transparent texel of padding on every side. `engine/assets/loaders/atlas.zig` reads the index written beside the image, and the game draws every sprite from that one texture.
 
 **2D rendering**
 - Sprite batching: quads buffered per frame as four vertices drawn through an index buffer, one draw call per run of the same texture, alpha blending, tint, source rectangles, and no fixed sprite or texture-switch limit.
@@ -382,17 +414,17 @@ The loop is in `engine/engine.zig`. Game logic runs at a fixed rate, and drawing
 - Font manifest entries can opt into `.bfnt` v3 SDF atlases by appending `sdf`; bitmap output stays the default. `Font.bakeSdf` is also available for runtime baking, and `ui_font_draw_text_scaled` scales glyph quads while the sprite shader reconstructs smooth coverage.
 - Text becomes one quad per glyph, decoded from UTF-8. `Font.load` lazily rasterizes and caches codepoints outside the baked range from the retained font source; unsupported glyphs draw as `?`.
 - Immediate-mode widgets in `src/engine/ui/imgui.c`: label, button, and slider. Hover and press are tracked through two ids, and a `##` suffix tells duplicate labels apart without drawing the suffix.
-- `src/engine/ui.zig` uploads the font and queues the UI quads as sprites at z 1000, so they draw above the world.
+- `src/engine/ui/ui.zig` uploads the font and queues the UI quads as sprites at z 1000, so they draw above the world.
 - Input tracks the left button's held state, and its press and release each reach one update step.
 - A demo panel in `game/game.zig` (a label, a click counter, and a volume slider) runs in the update step, as a first end-to-end check of the text and widget path.
 
 **Math and data**
-- cglm for vectors and matrices, wrapped in `math.zig`. The sprite projection and diagonal normalization use it. `math.zig` also covers 3D transforms, perspective and look-at matrices, and quaternions (slerp, look rotation, billboard). Only the 2D parts are used so far.
-- Validated names and paths (`string.zig`), a hash map keyed by names (`hash_map.zig`), and an asset table that gives each name a dense id (`assets.zig`).
-- Tile maps (`tilemap.zig`): a text format with three layers (ground, decoration, foreground), tile IDs, empty cells written as `.`, solid IDs, and a spawn cell. Malformed maps report what is wrong. `TileMap.moveBox` moves a box against solid tiles, one axis at a time.
-- Sprite-sheet animation (`animation.zig`): clips that name a row of frames, with frame time and loop mode, and an animator per entity.
+- cglm for vectors and matrices, wrapped in `core/math.zig`. The sprite projection and diagonal normalization use it. `core/math.zig` also covers 3D transforms, perspective and look-at matrices, and quaternions (slerp, look rotation, billboard). Only the 2D parts are used so far.
+- Validated names and paths (`memory/string.zig`), a hash map keyed by names (`memory/hash_map.zig`), and an asset table that gives each name a dense id (`assets/registry.zig`).
+- Tile maps (`scene/tilemap.zig`): a text format with three layers (ground, decoration, foreground), tile IDs, empty cells written as `.`, solid IDs, and a spawn cell. Malformed maps report what is wrong. `TileMap.moveBox` moves a box against solid tiles, one axis at a time.
+- Sprite-sheet animation (`animation/animation.zig`): clips that name a row of frames, with frame time and loop mode, and an animator per entity.
 - `zig build test` runs every unit test: the string, hash map, asset table, math, view, tile map, camera, animation, input, and renderer modules. It links SDL and opens no window or GPU device.
-- Mouse mapping from window points to view and world pixels in `view.zig`, through `Context.mouseWorld`. Its tests run with `zig build test`.
+- Mouse mapping from window points to view and world pixels in `renderer/view.zig`, through `Context.mouseWorld`. Its tests run with `zig build test`.
 
 **Gameplay**
 - Player movement with arrow keys or WASD, normalized diagonals, and collision with solid tiles.
@@ -410,37 +442,37 @@ These estimates are rough. They measure how close each area is to something usab
 
 | Area | File | Status | Est. done | Notes |
 |---|---|---|---|---|
-| Platform | `sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
-| Engine | `engine/engine.zig` | Prototype | 65% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, camera zoom, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
-| Logging and assertions | `engine/log.zig`, `log_file.c`, `vendor/log.c` | Functional | 85% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Terminal and log file output through log.c, with panics recorded in the file. Missing: rotation, and keeping logs from earlier runs. |
-| Profiling | `profile.zig`, `engine/engine.zig` | Functional | 60% | Tracy zones for the frame, events, updates, passes, uploads, submit, and asset loads, plus frame marks. Compiled in only with `-Dtracy=true`. A captured session checked the zone names and counts. Missing: GPU timing zones, allocation tracking, and plots. |
+| Platform | `platform/sdl/sdl.zig` | Complete | 100% | Single C-import point for SDL3. |
+| Engine | `engine/core/engine.zig` | Prototype | 65% | Window, GPU setup, native-view pipeline, fixed-timestep loop, fit and integer scaling, camera zoom, and the `Game` interface. Missing: scene or state system, device-lost recovery. |
+| Logging and assertions | `engine/logging/log.zig`, `logging/log_file.c`, `vendor/log.c` | Functional | 85% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Terminal and log file output through log.c, with panics recorded in the file. Missing: rotation, and keeping logs from earlier runs. |
+| Profiling | `profiling/profile.zig`, `engine/core/engine.zig` | Functional | 60% | Tracy zones for the frame, events, updates, passes, uploads, submit, and asset loads, plus frame marks. Compiled in only with `-Dtracy=true`. A captured session checked the zone names and counts. Missing: GPU timing zones, allocation tracking, and plots. |
 | Gameplay | `game/` | Prototype | 20% | Player with directional walk clips, one level loaded from `assets/maps/level1.txt` and drawn in layers, and movement and quit actions bound in `game/controls.zig`. No entities or rules. |
-| Renderer | `renderer.zig` | Solid base | 75% | Device, swapchain, and passes work. Asks the device for DXIL and MSL only when the build embeds those formats. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, pass helpers. |
-| Shaders | `shader.zig` | Basic | 65% | Picks the first shader format the device accepts (SPIR-V, DXIL, then MSL) and creates GPU shaders from code embedded at build time. DXIL (`-Ddxil=true`) and MSL (`-Dmetal=true`) are optional. Per-shader entry points and resource counts are declared in `sprite.zig`. Missing: reflection. Uniform buffer count is supported but unused. |
-| Textures | `texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: unload and reload. |
-| Atlas | `atlas.zig`, `tools/atlas/pack.c` | Functional | 60% | Build-time packing with stb_rect_pack, index parsing with validation, and lookup by name. Missing: runtime packing, several atlas pages, rotated sprites. |
-| Images | `image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
-| Math | `math.zig` | Functional | 60% | cglm wrappers: identity, mul, invert, transpose, translate, scale, rotate, ortho, perspective, look-at, point and vector transforms, 3D vector helpers, and quaternions (slerp, look rotation, billboard). 18 tests. Only the 2D parts are used so far. |
-| Strings | `string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
-| Hash map | `hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, removal by backward-shift deletion (no tombstones), checked against `std.StringHashMap`. |
-| Assets | `assets.zig` | Early | 40% | Names, dense ids, and validated paths. The game no longer uses it, since its sprites come from the atlas. Loading and caching are in `asset_cache.zig`, which looks assets up by these names. |
-| Asset cache | `asset_cache.zig` | Early | 50% | Generic cache keyed by asset name: reference counts, load on first `acquire`, and `unloadUnused`. Names and paths come from `assets.zig`, and the index is the engine's `StringMap`. Not yet compiled or run, and not yet used by the engine or game. Missing: GPU textures through the cache, unloading on a schedule, hot reload. |
-| Sprites | `sprite.zig` | Functional | 75% | Batched quads with four vertices each and a 32-bit index buffer. Per-sprite tint, alpha, flip, rotation around an origin, and z-order, sorted once per frame. Storage grows with each frame. Missing: instancing. |
-| Camera | `camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
-| Animation | `animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
-| Level | `game/level.zig` | Early | 50% | Loads the tile map and reports its size. Drawing is in `engine/tilemap_draw.zig`, one layer at a time in ground, decoration, player, foreground order, with culling. Solid tiles block the player. No tile animation. |
-| Tile map | `engine/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |
-| Input | `input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. The left button's held, pressed, and released state is tracked for the UI. Clicks don't store a position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `input.zig` and run through `src/tests.zig`. |
-| View mapping | `view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
+| Renderer | `renderer/renderer.zig` | Solid base | 75% | Device, swapchain, and passes work. Asks the device for DXIL and MSL only when the build embeds those formats. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, pass helpers. |
+| Shaders | `renderer/shader.zig` | Basic | 65% | Picks the first shader format the device accepts (SPIR-V, DXIL, then MSL) and creates GPU shaders from code embedded at build time. DXIL (`-Ddxil=true`) and MSL (`-Dmetal=true`) are optional. Per-shader entry points and resource counts are declared in `renderer/sprite.zig`. Missing: reflection. Uniform buffer count is supported but unused. |
+| Textures | `renderer/texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: unload and reload. |
+| Atlas | `assets/loaders/atlas.zig`, `tools/atlas/pack.c` | Functional | 60% | Build-time packing with stb_rect_pack, index parsing with validation, and lookup by name. Missing: runtime packing, several atlas pages, rotated sprites. |
+| Images | `assets/loaders/image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
+| Math | `core/math.zig` | Functional | 60% | cglm wrappers: identity, mul, invert, transpose, translate, scale, rotate, ortho, perspective, look-at, point and vector transforms, 3D vector helpers, and quaternions (slerp, look rotation, billboard). 18 tests. Only the 2D parts are used so far. |
+| Strings | `memory/string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
+| Hash map | `memory/hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, removal by backward-shift deletion (no tombstones), checked against `std.StringHashMap`. |
+| Assets | `assets/registry.zig` | Early | 40% | Names, dense ids, and validated paths. The game no longer uses it, since its sprites come from the atlas. Loading and caching are in `assets/cache.zig`, which looks assets up by these names. |
+| Asset cache | `assets/cache.zig` | Early | 50% | Generic cache keyed by asset name: reference counts, load on first `acquire`, and `unloadUnused`. Names and paths come from `assets/registry.zig`, and the index is the engine's `StringMap`. Not yet compiled or run, and not yet used by the engine or game. Missing: GPU textures through the cache, unloading on a schedule, hot reload. |
+| Sprites | `renderer/sprite.zig` | Functional | 75% | Batched quads with four vertices each and a 32-bit index buffer. Per-sprite tint, alpha, flip, rotation around an origin, and z-order, sorted once per frame. Storage grows with each frame. Missing: instancing. |
+| Camera | `renderer/camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
+| Animation | `animation/animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
+| Level | `game/level.zig` | Early | 50% | Loads the tile map and reports its size. Drawing is in `engine/renderer/tilemap_draw.zig`, one layer at a time in ground, decoration, player, foreground order, with culling. Solid tiles block the player. No tile animation. |
+| Tile map | `engine/scene/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |
+| Input | `input/input.zig` | Functional | 60% | Held, pressed, and released keys work through the `Key` enum, and one-shot input reaches exactly one update step. The left button's held, pressed, and released state is tracked for the UI. Clicks don't store a position yet. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. No gamepad or text input. Unit tests are in `input/input.zig` and run through `src/tests.zig`. |
+| View mapping | `renderer/view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
 | Build | `build.zig`, `.github/workflows/ci.yml` | Functional | 70% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, optional DXIL and MSL), the texture atlas, the asset keyer, run step, and test step. CI builds and tests on Linux, macOS, and Windows. |
 | Assets | `tools/assets/keyer.c` | Utility | 30% | Cross-platform checkerboard keyer with configurable color thresholds, connected-border flood fill, and PNG output. It replaces the old one-off PowerShell script; it is not a general asset pipeline. |
 | Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, compressed texture headers, IMA ADPCM decoding, math, view, tile map, camera, animation, input, shader format selection, and renderer. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). Missing: tests that open a window or create a GPU device. |
-| Vector | `vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
-| Entities | `entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
-| Debug overlay | `debug_overlay.zig`, `frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
+| Vector | `memory/vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
+| Entities | `ecs/entity.zig` | Functional | 45% | World of component rows with generational handles, dense rows, and swap-remove despawn that repairs the handle of a moved row. The player is still a struct in `game/player.zig`, so no game code uses the world yet. Missing: spawning from level data, queries, and component tags. |
+| Debug overlay | `profiling/debug_overlay.zig`, `profiling/frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
 | Collision | none | Not started | 0% | |
-| Audio | `audio.zig`, `audio_voices.zig`, `ima.zig` | Early | 45% | One default playback device, WAV input plus build-generated IMA ADPCM sidecars, device-format conversion at load, and voices that each use one SDL audio stream, which SDL mixes. Decoder and voice rules have unit tests. The game plays no sounds yet. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
-| Text | `ui/text.c`, `ui/text.h`, `ui.zig` | Early | 45% | Build-time TTF/CFF preprocessing into `.bfnt` v2 bitmap or v3 SDF sidecars with glyph atlas, metrics, codepoint range, and kerning pairs; v1 sidecars remain readable. `Font.load` lazily rasterizes and caches missing codepoints, growing the atlas and refreshing its GPU texture. One quad per glyph, UTF-8 input. Missing: shaping for Tamil and other complex scripts. |
+| Audio | `audio/audio.zig`, `audio/voices.zig`, `audio/ima.zig` | Early | 45% | One default playback device, WAV input plus build-generated IMA ADPCM sidecars, device-format conversion at load, and voices that each use one SDL audio stream, which SDL mixes. Decoder and voice rules have unit tests. The game plays no sounds yet. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
+| Text | `text/text.c`, `text/text.h`, `ui/ui.zig` | Early | 45% | Build-time TTF/CFF preprocessing into `.bfnt` v2 bitmap or v3 SDF sidecars with glyph atlas, metrics, codepoint range, and kerning pairs; v1 sidecars remain readable. `Font.load` lazily rasterizes and caches missing codepoints, growing the atlas and refreshing its GPU texture. One quad per glyph, UTF-8 input. Missing: shaping for Tamil and other complex scripts. |
 | UI widgets | `ui/imgui.c`, `ui/imgui.h` | Early | 35% | Label, button, and slider with hot and active ids and `##` suffixes. Tested with the C harness using scripted input. Not yet checked in the running game. Missing: checkbox, panels and layouts beyond one column, text input, keyboard focus, scrolling. |
 | Scenes and state | none | Not started | 0% | |
 
@@ -450,21 +482,21 @@ These are the natural extension points. Each one reuses existing code.
 
 **Character sprite and animation.** The warrior is a region of the texture atlas, found by name at startup, and drawn through the existing `drawSprite` source-rectangle API, offset by that region. Each cell is 16×32 pixels. `game/player.zig` keeps a facing and an `engine.animation.Animator`. Each update, `clipFor` picks the clip for the facing and whether the player is moving, and the animator restarts only when the clip changes. Each walk row uses its five frames, and the clip for standing still shows frame 0. To add an animation, define a `Clip` (sheet row, frame count, frame time, loop mode) and select it in `clipFor`.
 
-**Add a tile layer.** Layers are the `Layer` enum in `engine/tilemap.zig`, and `all_layers` lists them. To add one, add an enum value and its name to `parseLayer`, then call `engine.tilemap_draw.drawLayer` for it in `Game.draw` at the point in the draw order where it belongs. A solid ID on any layer blocks movement.
+**Add a tile layer.** Layers are the `Layer` enum in `engine/scene/tilemap.zig`, and `all_layers` lists them. To add one, add an enum value and its name to `parseLayer`, then call `engine.tilemap_draw.drawLayer` for it in `Game.draw` at the point in the draw order where it belongs. A solid ID on any layer blocks movement.
 
 **Add collision to an entity.** Give the entity a `tilemap.Box` and call `TileMap.moveBox` with its movement each update, the same way `Player.update` does. Map edges count as solid, so they act as walls.
 
-**Add camera effects.** The camera is a position and a view size. `followSmooth` eases toward the clamped target, and `camera_rate` in `game/config.zig` sets how fast. Shake is an offset applied after `follow`. Zoom is already in place: `Context.zoomBy` and `resetZoom` set the target, `engine/engine.zig` eases `Camera.zoom` toward it each frame, and `view.chooseFit` turns the zoom into a scale and a view size. Drawing and culling read the view size, so they need no changes. To change the limits or the step, edit `zoom_min`, `zoom_max`, `zoom_step`, and `zoom_rate` in `game/config.zig`.
+**Add camera effects.** The camera is a position and a view size. `followSmooth` eases toward the clamped target, and `camera_rate` in `game/config.zig` sets how fast. Shake is an offset applied after `follow`. Zoom is already in place: `Context.zoomBy` and `resetZoom` set the target, `engine/core/engine.zig` eases `Camera.zoom` toward it each frame, and `view.chooseFit` turns the zoom into a scale and a view size. Drawing and culling read the view size, so they need no changes. To change the limits or the step, edit `zoom_min`, `zoom_max`, `zoom_step`, and `zoom_rate` in `game/config.zig`.
 
-**Add input actions.** Add a name to `Action` in `game/controls.zig`, give it default keys in `defaultKeys`, and query it with `self.bindings.held`, `self.bindings.pressed`, or `self.bindings.released`. The settings file can then bind it with a `bind` line. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input.zig` and map it to its SDL scancode. A new key name works in `bind` lines as soon as it is in `Key`.
+**Add input actions.** Add a name to `Action` in `game/controls.zig`, give it default keys in `defaultKeys`, and query it with `self.bindings.held`, `self.bindings.pressed`, or `self.bindings.released`. The settings file can then bind it with a `bind` line. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input/input.zig` and map it to its SDL scancode. A new key name works in `bind` lines as soon as it is in `Key`.
 
-**Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `sprite.zig` with the stage, resource counts, and embedded code for each format. DXIL and MSL slices are empty unless enabled with `-Ddxil=true` or `-Dmetal=true`. Follow the target-specific resource declarations in `default.slang`; Slang emits Metal texture and sampler arguments for MSL. Load it with `shader.load` and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
+**Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `renderer/sprite.zig` with the stage, resource counts, and embedded code for each format. DXIL and MSL slices are empty unless enabled with `-Ddxil=true` or `-Dmetal=true`. Follow the target-specific resource declarations in `default.slang`; Slang emits Metal texture and sampler arguments for MSL. Load it with `shader.load` and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
 
 **Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
 
 **Add a sprite.** Run `zig build asset-import -- path/to/image.png sprite_name`. This copies the image to `assets/imported/` and registers it in `assets/sprites.txt`; the next `zig build` packs it into the atlas. In the game, look the sprite up once with `atlas.region(name)`, on the `LoadedAtlas` in `Game.atlas`, and store the returned region in a field, as `Game.init` does for `tile` and `warrior`. Draw it by offsetting the source rectangle by the region's position in the atlas, as `engine.tilemap_draw.drawLayer` and `Player.draw` do.
 
-**Add entities.** Define the components as one struct with a field per component value, for example `const Body = struct { x: f32, vx: f32, id: u64 };`. Create a world with `var world = engine.entity.World(Body, .soa).init(allocator)`, choosing `.aos` or `.soa` as the layout (see `engine/vector.zig`). Spawn with `world.spawn(row)`, which returns a `Handle`. Keep the handle, not a row index, because despawning moves rows. A system loops over `0..world.count()` and reads a field with `world.rows.column("vx")`, which works the same under either layout. Under SoA, `world.rows.items("x")` gives a plain slice when a system needs one. Draw entities as `Player.draw` does, subtracting the camera from world positions.
+**Add entities.** Define the components as one struct with a field per component value, for example `const Body = struct { x: f32, vx: f32, id: u64 };`. Create a world with `var world = engine.entity.World(Body, .soa).init(allocator)`, choosing `.aos` or `.soa` as the layout (see `engine/memory/vector.zig`). Spawn with `world.spawn(row)`, which returns a `Handle`. Keep the handle, not a row index, because despawning moves rows. A system loops over `0..world.count()` and reads a field with `world.rows.column("vx")`, which works the same under either layout. Under SoA, `world.rows.items("x")` gives a plain slice when a system needs one. Draw entities as `Player.draw` does, subtracting the camera from world positions.
 
 **Add a UI widget or panel.** Widgets are in `src/engine/ui/imgui.c`. A widget takes the next row of its column with `next_row`, calls `interact` to track hover and press, then appends quads with `fill` or `ui_font_draw_text`. The demo panel in `game/game.zig` shows the pattern: `updateUi` builds the widgets in the update step, so each press is seen once, and `draw` passes the quads to `engine.ui.queueQuads`. To change the font, replace `assets/font.ttf`, or edit `ui_font_path` and `ui_font_px` in `game/config.zig`.
 
@@ -476,7 +508,7 @@ These are the natural extension points. Each one reuses existing code.
 
 3. **Fixed: a minimized window spun the CPU.** A zero-size window, or a frame with no swapchain, used to restart the loop without waiting. Both cases now sleep for 16 ms first, so a minimized window idles.
 
-4. **Vulkan is the default backend. Direct3D 12 and Metal formats are opt-in.** SPIR-V shaders are always built. `zig build -Ddxil=true` embeds DXIL (`sm_6_0`), and `zig build -Dmetal=true` embeds MSL; the renderer tells SDL which optional formats are available. `shader.pickFormat` selects the first supported format. SDL consumes Slang's MSL source with the original entry-point names. The `default.slang` sampler declarations cover Vulkan and D3D12; Slang maps the texture and sampler to Metal arguments for MSL. Vertex locations match the attributes in `sprite.zig`.
+4. **Vulkan is the default backend. Direct3D 12 and Metal formats are opt-in.** SPIR-V shaders are always built. `zig build -Ddxil=true` embeds DXIL (`sm_6_0`), and `zig build -Dmetal=true` embeds MSL; the renderer tells SDL which optional formats are available. `shader.pickFormat` selects the first supported format. SDL consumes Slang's MSL source with the original entry-point names. The `default.slang` sampler declarations cover Vulkan and D3D12; Slang maps the texture and sampler to Metal arguments for MSL. Vertex locations match the attributes in `renderer/sprite.zig`.
 
 5. **Fixed: names didn't match.** The package is `Bairava` in `build.zig.zon`, the executable and window are `Semkootru`, and the sprite shader is `default.slang`.
 
@@ -490,7 +522,7 @@ These are the natural extension points. Each one reuses existing code.
 
 10. **Fixed: the SPIR-V version was not pinned.** `build.zig` now passes `-profile spirv_1_5` to `slangc`, the version that matches the Vulkan 1.2 request made at runtime.
 
-11. **Fixed: `view.zig`'s tests didn't run.** `src/tests.zig` imports `view.zig`, so its tests run with `zig build test`.
+11. **Fixed: `renderer/view.zig`'s tests didn't run.** `src/tests.zig` imports `renderer/view.zig`, so its tests run with `zig build test`.
 
 12. **Zoom recreates the native target.** A zoom step that changes the view size rebuilds the native target and waits for the GPU to go idle, as a window resize does. Zoom eases over a fraction of a second, so one zoom can cause several rebuilds. The target is small, so this should be cheap, but it has not been measured. In fit mode a fractional zoom leaves some native pixels one screen pixel larger than others, as fit mode already does. Integer mode rounds zoom to whole scales, so its steps are coarser than fit mode's, and at a base scale of 1 it cannot zoom out at all.
 
@@ -521,7 +553,7 @@ These are the natural extension points. Each one reuses existing code.
 - [x] Index buffer for quads (4 vertices instead of 6). The vertex and index buffers grow together.
 - [x] Sprite flip, rotation, origin, per-sprite alpha, and z-order, passed as `drawSprite` options.
 - [x] Entity system: AoS and SoA vectors under a handle-based world. The player is not migrated yet.
-- [ ] Asset manager with caching. Executable-relative paths already work. The cache module exists in `asset_cache.zig`, but the game doesn't load its textures through it yet.
+- [ ] Asset manager with caching. Executable-relative paths already work. The cache module exists in `assets/cache.zig`, but the game doesn't load its textures through it yet.
 - [x] Asynchronous texture uploads.
 - [x] Shader embedding at build time.
 - [x] Audio through SDL3 audio streams, with PCM WAV support and optional build-encoded IMA ADPCM sidecars. The demo game doesn't play sounds yet.
@@ -567,11 +599,11 @@ The engine is currently a 2D project, so prioritize textures, audio, and fonts r
 - Game `update` runs at the fixed rate `update_hz` in `game/config.zig`, and `ctx.dt` is that step. `draw` runs once per frame and gets `alpha`, which blends between the last two updates.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
-- Only `sdl.zig` imports SDL's C headers, only `math.zig` imports cglm's, and only `profile.zig` imports ztracy.
-- The C code for text and widgets lives in `src/engine/ui/` and never touches SDL or the GPU. `text.c` uses stb_truetype for TrueType and FreeType for CFF-capable font rasterization; `vendor/stb_truetype_impl.c` provides stb_truetype's implementation. `ui.zig` is the one bridge from that code to the sprite batch.
-- `math.zig`, `string.zig`, `hash_map.zig`, `assets.zig`, `asset_cache.zig`, `atlas.zig`, `vector.zig`, `entity.zig`, `view.zig`, `tilemap.zig`, `camera.zig`, `animation.zig`, and `audio_voices.zig` don't import SDL or `log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
+- Only `platform/sdl/sdl.zig` imports SDL's C headers, only `core/math.zig` imports cglm's, and only `profiling/profile.zig` imports ztracy.
+- The C code for text and widgets lives in `src/engine/ui/` and never touches SDL or the GPU. `text.c` uses stb_truetype for TrueType and FreeType for CFF-capable font rasterization; `vendor/stb_truetype_impl.c` provides stb_truetype's implementation. `ui/ui.zig` is the one bridge from that code to the sprite batch.
+- `core/math.zig`, `memory/string.zig`, `memory/hash_map.zig`, `assets/registry.zig`, `assets/cache.zig`, `assets/loaders/atlas.zig`, `memory/vector.zig`, `ecs/entity.zig`, `renderer/view.zig`, `scene/tilemap.zig`, `renderer/camera.zig`, `animation/animation.zig`, and `audio/voices.zig` don't import SDL or `logging/log.zig`, so they can be tested without a GPU. Keep new pure code the same way when you can, and list its file in `src/tests.zig`. Modules that import SDL are listed there too, and their tests call no SDL function that needs a window or GPU.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
-- Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/engine.zig`.
+- Engine code lives in `src/engine/` and never names a game type. Game code lives in `src/game/` and uses the engine only through `engine/core/engine.zig`.
 - Initialization failures and shader or GPU setup errors panic with the SDL message. Image loading returns Zig errors.
 - Capacity limits are constants that panic when exceeded, so overflows are caught early.
 - Log with `engine.log.scoped`, and check invariants with `engine.log.assert`. Don't use `std.debug.assert`, which is undefined behavior in release builds.

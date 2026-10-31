@@ -75,13 +75,13 @@ const freetype_sources = [_][]const u8{
 };
 
 /// Gives `module` cglm's headers and compiles cglm's C sources into it. Two macros must match the
-/// @cImport in src/engine/math.zig, so the C library and the translated headers agree.
+/// @cImport in src/engine/core/math.zig, so the C library and the translated headers agree.
 /// CGLM_ALL_UNALIGNED stops cglm from assuming 16-byte alignment, which Zig arrays don't guarantee.
 /// CGLM_FORCE_DEPTH_ZERO_TO_ONE gives depth from 0 (near) to 1 (far), as SDL_GPU expects. Without
 /// it, cglm's exported glmc_* functions would use depth from -1 to 1 while math.zig uses 0 to 1.
 /// cglm's SIMD paths are off here. Zig's @cImport translates cglm's SIMD wrappers into calls to
 /// helpers that are never defined, so the build would fail to link. The portable scalar code is
-/// used on every target, and src/engine/math.zig undefines the same macros before its @cImport.
+/// used on every target, and src/engine/core/math.zig undefines the same macros before its @cImport.
 const cglm_simd_flags = [_][]const u8{
     "-U__SSE__",
     "-U__SSE2__",
@@ -241,18 +241,19 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
 
     // Text and UI: stb_truetype and FreeType bake fonts from vendor/, and the C widget code in
-    // src/engine/ui/ builds the quads that src/engine/ui.zig draws. None of it touches SDL or the GPU.
+    // src/engine/ui/ builds the quads that src/engine/ui/ui.zig draws. None of it touches SDL or the GPU.
     exe.root_module.addIncludePath(b.path("src/engine/ui"));
+    exe.root_module.addIncludePath(b.path("src/engine/text"));
     addFreeType(b, exe.root_module);
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/text.c") });
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
     exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
 
     // Log file output: log.c (vendor/) delivers each message to log_file.c, which writes it to the file.
-    exe.root_module.addIncludePath(b.path("src/engine"));
+    exe.root_module.addIncludePath(b.path("src/engine/logging"));
     exe.root_module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/log_file.c") });
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/engine/logging/log_file.c") });
 
     // cglm: vector and matrix math. See addCglm above.
     addCglm(b, exe.root_module);
@@ -303,7 +304,7 @@ pub fn build(b: *std.Build) void {
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/build.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
-    asset_builder.root_module.addCSourceFile(.{ .file = b.path("src/engine/ui/text.c") });
+    asset_builder.root_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
     const run_asset_builder = b.addRunArtifact(asset_builder);
     run_asset_builder.addFileArg(b.path("assets/asset_manifest.txt"));
     const runtime_assets = run_asset_builder.addOutputDirectoryArg("runtime-assets");
@@ -416,10 +417,10 @@ pub fn build(b: *std.Build) void {
     // texture.zig reaches the logger, so the test binary builds the log C code too. Zones compile to
     // nothing without -Dtracy, so the tests need only ztracy's Zig module, not the Tracy library.
     test_module.addIncludePath(b.path("vendor"));
-    test_module.addIncludePath(b.path("src/engine"));
+    test_module.addIncludePath(b.path("src/engine/logging"));
     test_module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
     test_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
-    test_module.addCSourceFile(.{ .file = b.path("src/engine/log_file.c") });
+    test_module.addCSourceFile(.{ .file = b.path("src/engine/logging/log_file.c") });
     test_module.addImport("ztracy", ztracy.module("root"));
     const tests = b.addTest(.{ .root_module = test_module });
     const run_tests = b.addRunArtifact(tests);

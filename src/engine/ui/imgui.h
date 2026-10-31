@@ -12,7 +12,7 @@
 #ifndef UI_IMGUI_H
 #define UI_IMGUI_H
 
-#include "text.h"
+#include "../text/text.h"
 
 /* Pointer state for one frame, in the same pixels the UI is drawn in. */
 typedef struct ui_input {

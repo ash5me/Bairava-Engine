@@ -3,7 +3,7 @@
  *
  * Build and run from the project root, after fetching stb_truetype.h into vendor/:
  *   gcc -std=c99 -Wall -Wextra -fsanitize=address,undefined -Ivendor -Isrc/engine/ui \
- *       tests/ui/test_imgui.c src/engine/ui/imgui.c src/engine/ui/text.c \
+ *       tests/ui/test_imgui.c src/engine/ui/imgui.c src/engine/text/text.c \
  *       vendor/stb_truetype_impl.c -lm -o test_imgui
  *   ./test_imgui path/to/font.ttf
  */

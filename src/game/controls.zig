@@ -1,11 +1,11 @@
 //! Named actions and the keys bound to them. Gameplay asks for actions and never for keys.
 //! The keys in `defaultKeys` are the defaults. The settings file rebinds an action with a `bind`
 //! line, such as `bind move_left = left, a`, and that replaces the action's keys. Key names are
-//! the enum names of `Key` in src/engine/input.zig.
+//! the enum names of `Key` in src/engine/input/input.zig.
 
 const std = @import("std");
 
-const engine = @import("../engine/engine.zig");
+const engine = @import("../engine/core/engine.zig");
 
 const log = engine.log.scoped("controls");
 
