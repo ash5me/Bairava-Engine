@@ -1,10 +1,19 @@
-//! Keyboard and mouse state, with no platform code. The platform layer (platform/sdl/input.zig)
-//! fills it from SDL: held keys once per frame, and presses, releases, and clicks as they arrive.
-//! The game reads it during `update`, where each press or click appears in exactly one step.
+//! Keyboard and mouse state, with no platform code. Platform events reach it through `apply` as
+//! they arrive, and held keys are sampled once per frame by `sampleHeld`.
+//!
+//! Frame order: the platform event queue is drained (each event goes to `apply`), held keys are
+//! sampled, each update step runs after `latch`, and then the frame is drawn. Presses, releases, and
+//! clicks gather between update steps, so a frame with no update step keeps them for the next one.
+//! The game reads them during `update`, where each press or click appears in exactly one step.
 
 const std = @import("std");
+const types = @import("../platform/types.zig");
+const Scancode = types.Scancode;
+const Event = types.Event;
 
-/// Keys the engine can report. To add one, add it here and map it to its SDL scancode in platform/sdl/input.zig.
+/// Keys the engine can report. To add one, add it here, add its physical key to `Scancode` in
+/// platform/types.zig, map it both ways in `scancodeOf` and `keyFor` below, and map the scancode
+/// to SDL in platform/sdl/input.zig.
 pub const Key = enum {
     escape,
     left,
@@ -31,6 +40,70 @@ pub const Key = enum {
     f5,
     f9,
 };
+
+/// The physical key each engine key is read from. The switch names every `Key`, so a key without a
+/// scancode does not build.
+pub fn scancodeOf(key: Key) Scancode {
+    return switch (key) {
+        .escape => .escape,
+        .left => .left,
+        .right => .right,
+        .up => .up,
+        .down => .down,
+        .w => .w,
+        .a => .a,
+        .s => .s,
+        .d => .d,
+        .i => .i,
+        .equal => .equal,
+        .minus => .minus,
+        .zero => .zero,
+        .keypad_plus => .keypad_plus,
+        .keypad_minus => .keypad_minus,
+        .space => .space,
+        .enter => .enter,
+        .tab => .tab,
+        .q => .q,
+        .e => .e,
+        .f => .f,
+        .r => .r,
+        .f5 => .f5,
+        .f9 => .f9,
+    };
+}
+
+/// The engine key for a physical key, or null if the engine does not key on it. F3 and F11 are not
+/// keys: the event pump reads them as commands.
+pub fn keyFor(code: Scancode) ?Key {
+    return switch (code) {
+        .escape => .escape,
+        .left => .left,
+        .right => .right,
+        .up => .up,
+        .down => .down,
+        .w => .w,
+        .a => .a,
+        .s => .s,
+        .d => .d,
+        .i => .i,
+        .equal => .equal,
+        .minus => .minus,
+        .zero => .zero,
+        .keypad_plus => .keypad_plus,
+        .keypad_minus => .keypad_minus,
+        .space => .space,
+        .enter => .enter,
+        .tab => .tab,
+        .q => .q,
+        .e => .e,
+        .f => .f,
+        .r => .r,
+        .f5 => .f5,
+        .f9 => .f9,
+        .f3 => null,
+        .f11 => null,
+    };
+}
 
 
 /// Number of keys in `Key`. Per-key arrays are indexed by `@intFromEnum(key)`.
@@ -116,12 +189,42 @@ pub const Input = struct {
         return false;
     }
 
-    /// Sets whether a key is held. The platform calls this from the keyboard state.
+    /// Sets whether a key is held. `sampleHeld` calls this once per frame.
     pub fn setHeld(self: *Input, key: Key, down: bool) void {
         self.held_keys[@intFromEnum(key)] = down;
     }
 
-    /// Records a key going down. The platform drops auto-repeat before calling this.
+    /// Samples every key's held state from a platform query. Call once per frame, after the event
+    /// queue is drained, so held keys are as of that pump.
+    pub fn sampleHeld(self: *Input, comptime isHeld: fn (Scancode) bool) void {
+        for (std.enums.values(Key)) |key| {
+            self.setHeld(key, isHeld(scancodeOf(key)));
+        }
+    }
+
+    /// Applies one platform event. Presses ignore auto-repeat, and only the left mouse button is
+    /// recorded. `quit` is handled by the event pump, so it changes no input state here.
+    pub fn apply(self: *Input, event: Event) void {
+        switch (event) {
+            .quit => {},
+            .key_down => |down| {
+                if (down.repeat) return;
+                if (keyFor(down.scancode)) |key| self.keyDown(key);
+            },
+            .key_up => |up| {
+                if (keyFor(up.scancode)) |key| self.keyUp(key);
+            },
+            .mouse_motion => |motion| self.moveMouse(motion.x, motion.y),
+            .mouse_button_down => |button| {
+                if (button == .left) self.leftButton(true);
+            },
+            .mouse_button_up => |button| {
+                if (button == .left) self.leftButton(false);
+            },
+        }
+    }
+
+    /// Records a key going down. `apply` drops auto-repeat before calling this.
     pub fn keyDown(self: *Input, key: Key) void {
         self.pending_pressed[@intFromEnum(key)] = true;
     }
@@ -273,4 +376,99 @@ test "a left release clears mouse_down and reaches the update step once" {
 
     input.latch();
     try std.testing.expect(!input.mouse_released);
+}
+
+test "every engine key has a scancode, and that scancode maps back to it" {
+    // Both switches are exhaustive, so a missing entry does not build. This checks that they agree.
+    for (std.enums.values(Key)) |key| {
+        try std.testing.expectEqual(@as(?Key, key), keyFor(scancodeOf(key)));
+    }
+}
+
+test "F3 and F11 are read as commands, not as keys" {
+    try std.testing.expectEqual(@as(?Key, null), keyFor(.f3));
+    try std.testing.expectEqual(@as(?Key, null), keyFor(.f11));
+    try std.testing.expectEqual(@as(usize, 26), std.enums.values(Scancode).len);
+    try std.testing.expectEqual(@as(usize, 24), key_count);
+}
+
+test "a key-down presses its key, and an auto-repeated key-down does not" {
+    var input = Input{};
+    input.apply(.{ .key_down = .{ .scancode = .w, .repeat = true } });
+    input.latch();
+    try std.testing.expect(!input.wasPressed(.w));
+
+    input.apply(.{ .key_down = .{ .scancode = .w, .repeat = false } });
+    input.latch();
+    try std.testing.expect(input.wasPressed(.w));
+}
+
+test "a key-up releases its key" {
+    var input = Input{};
+    input.apply(.{ .key_up = .{ .scancode = .s } });
+    input.latch();
+    try std.testing.expect(input.wasReleased(.s));
+}
+
+test "a scancode the engine does not key on changes no key" {
+    var input = Input{};
+    input.apply(.{ .key_down = .{ .scancode = .f3, .repeat = false } });
+    input.apply(.{ .key_up = .{ .scancode = .f11 } });
+    input.latch();
+    for (std.enums.values(Key)) |key| {
+        try std.testing.expect(!input.wasPressed(key));
+        try std.testing.expect(!input.wasReleased(key));
+    }
+}
+
+test "apply moves the mouse, and records only the left button" {
+    var input = Input{};
+    input.apply(.{ .mouse_motion = .{ .x = 120.5, .y = 60.25 } });
+    try std.testing.expectEqual(@as(f32, 120.5), input.mouse_x);
+    try std.testing.expectEqual(@as(f32, 60.25), input.mouse_y);
+
+    input.apply(.{ .mouse_button_down = .right });
+    input.latch();
+    try std.testing.expect(!input.left_clicked);
+    try std.testing.expect(!input.mouse_down);
+
+    input.apply(.{ .mouse_button_down = .left });
+    input.latch();
+    try std.testing.expect(input.left_clicked);
+    try std.testing.expect(input.mouse_down);
+
+    input.apply(.{ .mouse_button_up = .left });
+    input.latch();
+    try std.testing.expect(input.mouse_released);
+    try std.testing.expect(!input.mouse_down);
+}
+
+test "quit changes no input state, because the event pump handles it" {
+    var input = Input{};
+    input.apply(.quit);
+    input.latch();
+    for (std.enums.values(Key)) |key| {
+        try std.testing.expect(!input.wasPressed(key));
+    }
+    try std.testing.expect(!input.mouse_down);
+}
+
+fn onlyWHeld(code: Scancode) bool {
+    return code == .w;
+}
+
+fn noneHeld(code: Scancode) bool {
+    _ = code;
+    return false;
+}
+
+test "sampleHeld sets each key's held state from the platform query" {
+    var input = Input{};
+    input.sampleHeld(onlyWHeld);
+    for (std.enums.values(Key)) |key| {
+        try std.testing.expectEqual(key == .w, input.held(key));
+    }
+    // A later sample replaces the earlier one, so a key that is no longer down stops being held.
+    input.sampleHeld(noneHeld);
+    try std.testing.expect(!input.held(.w));
 }

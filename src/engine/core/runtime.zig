@@ -97,7 +97,7 @@ pub fn run(comptime Game: type, config: Config) void {
             const pumped = event.pump(session.window, &session.input);
             if (pumped.quit) ctx.running = false;
             if (pumped.toggle_overlay) overlay.toggle();
-            platform.input.syncHeld(&session.input);
+            session.input.sampleHeld(platform.events.isHeld);
         }
 
         // Fixed-timestep updates. Run whole steps while the accumulated time covers one, so game
