@@ -32,6 +32,10 @@ pub const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
 pub const Texture = @import("../renderer/texture.zig").Texture;
 /// A texture atlas on the GPU, with where each sprite sits in it. See `Context.loadAtlas`.
 pub const LoadedAtlas = @import("../renderer/loaded_atlas.zig").LoadedAtlas;
+/// A counted reference to a texture registered with `Context.registerTexture`. See `Context.acquireTexture`.
+pub const TextureHandle = @import("context.zig").TextureHandle;
+/// Why a handle can't be used: it was never issued or was released, or its texture has been unloaded.
+pub const HandleError = @import("../assets/handle.zig").LookupError;
 /// Fits the native view to the window, and maps window, view, and world coordinates.
 /// `Context.mouseWorld` uses the mapping.
 pub const view = @import("../renderer/view.zig");

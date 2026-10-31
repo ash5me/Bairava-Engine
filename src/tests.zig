@@ -18,6 +18,7 @@ test {
     _ = @import("engine/profiling/frame_history.zig");
     _ = @import("engine/memory/hash_map.zig");
     _ = @import("engine/assets/registry.zig");
+    _ = @import("engine/assets/handle.zig");
     _ = @import("engine/assets/cache.zig");
     _ = @import("engine/audio/voices.zig");
     _ = @import("engine/audio/audio.zig");

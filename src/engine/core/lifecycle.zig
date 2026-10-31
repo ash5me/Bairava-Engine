@@ -36,6 +36,7 @@ pub const Session = struct {
     world_batch_created: bool = false,
     screen_batch_created: bool = false,
     audio_created: bool = false,
+    textures_ready: bool = false,
     stopped: bool = true,
     window: *platform.Window = undefined,
     gpu: platform.gpu.Gpu = undefined,
@@ -49,6 +50,8 @@ pub const Session = struct {
     audio: audio.Audio = undefined,
     cam: Camera = undefined,
     ctx: Context = undefined,
+    /// Textures registered by name. It lives in the engine arena, so the context can point at it.
+    textures: *context.TextureStore = undefined,
 
     /// Opens everything, in dependency order: settings are read, then the platform starts, then the
     /// window, the GPU device, and the audio device. A failed step returns its error after releasing
@@ -111,6 +114,9 @@ pub const Session = struct {
         self.audio_created = true;
         // The game sets the world size every frame, so the camera starts without one.
         self.cam = Camera{ .view_w = native_wf, .view_h = native_hf, .world_w = 0, .world_h = 0 };
+        // The store is allocated before the context, because the context points at it. Its loader reads
+        // textures through the context, so the store is set up once the context exists.
+        self.textures = try self.engine_allocator.create(context.TextureStore);
         // Before the first frame is drawn, assume the view fills the window at its native size.
         self.ctx = Context{
             .gpu_state = @ptrCast(self.gpu.device),
@@ -123,7 +129,10 @@ pub const Session = struct {
             .camera = &self.cam,
             .audio = &self.audio,
             .settings_text = settings_text,
+            .textures = self.textures,
         };
+        try self.textures.init(self.engine_allocator, context.max_registered_textures, context.textureLoader(&self.ctx));
+        self.textures_ready = true;
     }
 
     /// Releases everything `start` opened, in reverse order: the audio device, the batches, the
@@ -147,6 +156,16 @@ pub const Session = struct {
         if (self.target_created) {
             self.target.deinit();
             self.target_created = false;
+        }
+        if (self.textures_ready) {
+            // Textures hold GPU objects, so they go before the device. The game was released first, so
+            // nothing still in use is dropped here. The counters are logged as the store closes.
+            const counts = self.textures.stats();
+            elog.info("texture store at shutdown: {d} hits, {d} misses, {d} failed loads, {d} still loaded", .{
+                counts.hits, counts.misses, counts.failed_loads, counts.loaded,
+            });
+            self.textures.deinit();
+            self.textures_ready = false;
         }
         if (self.gpu_created) {
             // The device must go before the window, because it is still claimed for that window.

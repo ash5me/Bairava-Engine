@@ -7,6 +7,9 @@ const audio = @import("../audio/audio.zig");
 const platform = @import("../platform/platform.zig");
 const image = @import("../assets/loaders/image.zig");
 const atlas = @import("../assets/loaders/atlas.zig");
+const handle = @import("../assets/handle.zig");
+const manager = @import("../assets/manager.zig");
+const registry = @import("../assets/registry.zig");
 const logging = @import("../logging/log.zig");
 const profile = @import("../profiling/profile.zig");
 const ui = @import("../ui/ui.zig");
@@ -34,10 +37,23 @@ pub const AssetError = error{
     FontLoadFailed,
     TextureLoadFailed,
     OutOfMemory,
+    /// The name isn't valid for a registered asset. See assets/registry.zig for the rules.
+    InvalidName,
+    /// No asset is registered under the name.
+    UnknownAsset,
 };
 
 /// Longest full asset path the loader builds, in bytes. A longer path panics with a clear message.
 pub const max_full_path = platform.max_full_path;
+
+/// The store that holds textures registered by name. Its handles are what the texture functions on
+/// `Context` take and return.
+pub const TextureStore = manager.Store(Texture);
+/// A counted reference to a registered texture. See `Context.acquireTexture`.
+pub const TextureHandle = TextureStore.Handle;
+/// The most textures the game can register by name. The store reserves a slot for each one up front,
+/// so a handle never has to move when more textures are loaded.
+pub const max_registered_textures: u32 = 256;
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
 pub const Context = struct {
@@ -66,6 +82,8 @@ pub const Context = struct {
     /// Sound output. Load sounds with `loadSound` and play them through this. It stays silent when
     /// no playback device could be opened.
     audio: *audio.Audio,
+    /// Textures registered by name and loaded on first use. The texture functions below use it.
+    textures: *TextureStore,
     /// Text of the settings file, read at startup. Empty when there is no file. The game reads its
     /// key bindings from it in `init`.
     settings_text: []const u8 = "",
@@ -117,6 +135,51 @@ pub const Context = struct {
         defer img.deinit();
         elog.debug("loaded texture {s} ({d}x{d})", .{ abs, img.width, img.height });
         return texture_renderer.createRgba8(self.allocators.asset, device, img.width, img.height, img.pixels);
+    }
+
+    /// Gives the name `name` to the image at `path`, relative to the executable's folder. Names follow the
+    /// rules in assets/registry.zig and must be unique. Register each name before its first
+    /// `acquireTexture`. No more than `max_registered_textures` names fit.
+    pub fn registerTexture(self: *const Context, name: []const u8, path: []const u8) registry.Table.Error!void {
+        try self.textures.register(name, path);
+    }
+
+    /// Returns a counted reference to the texture called `name`, loading it now if it isn't loaded. Each
+    /// acquire needs one `releaseTexture`. Acquiring one name again shares the same GPU texture. Fails
+    /// with `error.UnknownAsset` for a name that was never registered, with `error.InvalidName` for a
+    /// malformed name, and with the load error when the image is missing or malformed. A failed call
+    /// changes nothing.
+    pub fn acquireTexture(self: *const Context, name: []const u8) AssetError!TextureHandle {
+        return self.textures.acquire(name) catch |err| return assetErrorFor(err);
+    }
+
+    /// The texture a handle names, for drawing. It is valid while the handle holds a reference. Fails
+    /// with `error.StaleHandle` after the texture was unloaded, and with `error.InvalidHandle` for a
+    /// handle that was never issued or has been released.
+    pub fn textureOf(self: *const Context, ref: TextureHandle) handle.LookupError!*const Texture {
+        return self.textures.get(ref);
+    }
+
+    /// Adds one reference to a live texture handle, for a second holder that will release its own. Fails
+    /// the same way `textureOf` does for a stale or cleared handle.
+    pub fn retainTexture(self: *const Context, ref: TextureHandle) handle.LookupError!void {
+        return self.textures.retain(ref);
+    }
+
+    /// Releases one reference, and clears `ref`. The texture is unloaded later, once nothing holds it and
+    /// `unloadUnusedTextures` runs, or at shutdown.
+    pub fn releaseTexture(self: *const Context, ref: *TextureHandle) handle.LookupError!void {
+        return self.textures.release(ref);
+    }
+
+    /// Unloads the textures that no handle holds, which frees their GPU memory. Returns how many were unloaded.
+    pub fn unloadUnusedTextures(self: *const Context) usize {
+        return self.textures.unloadUnused();
+    }
+
+    /// Counters for the texture store: hits, misses, loaded textures, and their estimated bytes.
+    pub fn textureStats(self: *const Context) TextureStore.Stats {
+        return self.textures.stats();
     }
 
     /// Loads a sound and converts it to the device's format. `relative` is relative to the executable's
@@ -195,6 +258,49 @@ pub const Context = struct {
         return .{ .texture = texture, .index = index };
     }
 };
+
+/// Loads a texture for the store through the same path as `loadTexture`, so the compressed variants
+/// and the RGBA8 fallback behave the same way for handles as for direct loads.
+fn loadStoredTexture(context_ptr: *anyopaque, path: []const u8) anyerror!Texture {
+    const ctx: *Context = @ptrCast(@alignCast(context_ptr));
+    return ctx.loadTexture(path);
+}
+
+/// Frees a stored texture's GPU objects. The device must still exist, which the session guarantees by
+/// tearing the store down before the device.
+fn unloadStoredTexture(_: *anyopaque, value: *Texture) void {
+    value.deinit();
+}
+
+/// The size of a stored texture, estimated at four bytes per texel. Compressed variants take less, so
+/// this is an upper bound.
+fn storedTextureBytes(value: *const Texture) usize {
+    return @as(usize, value.width) * @as(usize, value.height) * 4;
+}
+
+/// The loader for the texture store. It loads through `ctx`, which must not move while the store is alive.
+pub fn textureLoader(ctx: *Context) TextureStore.Loader {
+    return .{
+        .context = ctx,
+        .load = &loadStoredTexture,
+        .unload = &unloadStoredTexture,
+        .size = &storedTextureBytes,
+    };
+}
+
+/// Maps the errors the texture store returns onto the engine's public `AssetError`.
+fn assetErrorFor(err: anyerror) AssetError {
+    return switch (err) {
+        error.UnknownAsset => error.UnknownAsset,
+        error.Empty, error.TooLong, error.BadCharacter, error.BadSegment, error.Absolute => error.InvalidName,
+        error.OutOfMemory => error.OutOfMemory,
+        error.PathTooLong => error.PathTooLong,
+        error.FileNotFound => error.FileNotFound,
+        error.ReadFailed => error.ReadFailed,
+        error.DecodeFailed => error.DecodeFailed,
+        else => error.TextureLoadFailed,
+    };
+}
 
 fn contextGpuDevice(ctx: *const Context) *platform.gpu.Device {
     return @ptrCast(ctx.gpu_state);

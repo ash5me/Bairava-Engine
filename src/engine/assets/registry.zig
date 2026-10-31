@@ -77,6 +77,11 @@ pub const Table = struct {
         return self.len;
     }
 
+    /// The most assets this table can hold, as given to `init`. Every id it issues is below this.
+    pub fn maxAssets(self: *const Table) AssetId {
+        return @intCast(self.entries.len);
+    }
+
     /// The name of asset `id`, or null if `id` wasn't issued by this table.
     pub fn nameOf(self: *const Table, id: AssetId) ?[]const u8 {
         const found = self.entry(id) orelse return null;
@@ -176,4 +181,14 @@ test "path pointers stay valid while more assets are registered" {
     }
     try std.testing.expectEqual(before, table.pathOf(first).?);
     try std.testing.expectEqualStrings("assets/first.png", before.slice());
+}
+
+test "maxAssets reports the size given to init, whatever the count" {
+    var table = try Table.init(std.testing.allocator, 3);
+    defer table.deinit();
+
+    try std.testing.expectEqual(@as(AssetId, 3), table.maxAssets());
+    _ = try table.register("a", "assets/a.png");
+    try std.testing.expectEqual(@as(AssetId, 1), table.count());
+    try std.testing.expectEqual(@as(AssetId, 3), table.maxAssets());
 }

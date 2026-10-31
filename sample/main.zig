@@ -3,8 +3,8 @@
 //! swarm from either square. Tab in the swarm returns to the red square. Escape quits.
 //!
 //! Each square scene loads its texture in `init` and releases it in `deinit`. Textures loaded through
-//! the asset loader are kept until the run ends (P1.5 adds unload), so each switch adds a little memory
-//! that is released only when the sample exits.
+//! the asset loader keep a little host bookkeeping until the run ends, so each switch adds a small amount
+//! of memory. Textures acquired by name with `ctx.acquireTexture` can be unloaded early; this sample doesn't use them.
 
 const engine = @import("bairava");
 

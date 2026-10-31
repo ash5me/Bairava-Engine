@@ -62,3 +62,12 @@ fn expectNoSdlApi(comptime T: type) void {
         }
     }
 }
+
+test "texture handles and the context's texture functions expose no SDL types" {
+    expectNoSdlApi(bairava.TextureHandle);
+    try std.testing.expect(@hasDecl(bairava.Context, "registerTexture"));
+    try std.testing.expect(@hasDecl(bairava.Context, "acquireTexture"));
+    try std.testing.expect(@hasDecl(bairava.Context, "textureOf"));
+    try std.testing.expect(@hasDecl(bairava.Context, "retainTexture"));
+    try std.testing.expect(@hasDecl(bairava.Context, "releaseTexture"));
+}
