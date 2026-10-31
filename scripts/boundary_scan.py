@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-<<<<<<< HEAD
 """Platform-boundary scanner for engine/game migration (migration.md P0.5).
-=======
-"""Platform-boundary scanner for the SDL migration (migration.md, Step 9).
->>>>>>> main
 
 Finds SDL references under src/, classifies each hit against ALLOWLIST
 (migration.md, decision D9), and reports three groups:
@@ -15,7 +11,6 @@ Finds SDL references under src/, classifies each hit against ALLOWLIST
     they are reported as notices and never fail.
 
 Categories
-<<<<<<< HEAD
   sdl_name           an SDL_ or SDLK_ name, or a use of an SDL import alias, in code
   sdl_import         an import of platform/sdl/sdl.zig, or an SDL3 include
   backend_import     an import of another platform/sdl/ file from outside that folder
@@ -32,11 +27,6 @@ Scope:
   - scripts/boundary-fixtures/ contain isolated negative fixtures and are
     not part of the repository source reachability graph.
   - ALLOWLIST entries are narrow exceptions owned by migration.md D9.
-=======
-  sdl_name        an SDL_ or SDLK_ name, or a use of an SDL import alias, in code
-  sdl_import      an import of platform/sdl/sdl.zig, or an SDL3 include
-  backend_import  an import of another platform/sdl/ file from outside that folder
->>>>>>> main
 
 Comments are removed, and string-literal bodies are blanked before matching,
 so text in comments and strings does not count as a reference. SDL names that
@@ -47,6 +37,7 @@ Usage:
   python3 scripts/boundary_scan.py                 report; exit 0
   python3 scripts/boundary_scan.py --fail          exit 1 on reachable violations
   python3 scripts/boundary_scan.py --report FILE   also write the report to FILE
+  python3 scripts/boundary_scan.py --self-test      run negative boundary fixtures
 """
 
 import argparse
@@ -57,7 +48,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-<<<<<<< HEAD
 BUILD_ROOTS = ["src/main.zig", "src/engine/core/engine.zig", "src/tests.zig", "src/engine_api_test.zig"]
 SDL_BACKEND_DIR = "src/engine/platform/sdl/"
 
@@ -65,12 +55,6 @@ ALL_CATEGORIES = {
     "sdl_name", "sdl_import", "backend_import",
     "engine_game_import", "private_engine_import", "game_sdl_import",
 }
-=======
-BUILD_ROOTS = ["src/main.zig", "src/tests.zig"]
-SDL_BACKEND_DIR = "src/engine/platform/sdl/"
-
-ALL_CATEGORIES = {"sdl_name", "sdl_import", "backend_import"}
->>>>>>> main
 
 # (path or directory prefix ending in "/", allowed categories, reason).
 # Source: migration.md D9. A file missing here must have no hits.
@@ -98,7 +82,6 @@ SDL_NAME_RE = re.compile(r'\bSDLK?_[A-Za-z0-9_]+')
 C_INCLUDE_SDL_RE = re.compile(r'#\s*include\s*[<"]SDL3/')
 
 
-<<<<<<< HEAD
 def classify_boundary_import(rel, resolved, target):
     """Return prohibited dependency categories for one Zig import."""
     cats = set()
@@ -114,8 +97,6 @@ def classify_boundary_import(rel, resolved, target):
     return cats
 
 
-=======
->>>>>>> main
 def allowed_for(rel):
     for key, cats, why in ALLOWLIST:
         if (key.endswith("/") and rel.startswith(key)) or rel == key:
@@ -194,33 +175,24 @@ def scan_file(path, rel):
         if is_c:
             if C_INCLUDE_SDL_RE.search(raw):
                 cats.add("sdl_import")
-<<<<<<< HEAD
                 if rel.startswith("src/game/"):
                     cats.add("game_sdl_import")
-=======
->>>>>>> main
         else:
             for m in IMPORT_RE.finditer(raw.split("//", 1)[0]):
                 target = m.group(1)
                 resolved = os.path.normpath(os.path.join(os.path.dirname(rel), target)).replace(os.sep, "/")
                 base = os.path.basename(resolved)
-<<<<<<< HEAD
                 cats.update(classify_boundary_import(rel, resolved, target))
                 if resolved.startswith(SDL_BACKEND_DIR) and not rel.startswith(SDL_BACKEND_DIR):
                     cats.add("sdl_import" if base == "sdl.zig" else "backend_import")
                     if rel.startswith("src/game/"):
                         cats.add("game_sdl_import")
-=======
-                if resolved.startswith(SDL_BACKEND_DIR) and not rel.startswith(SDL_BACKEND_DIR):
-                    cats.add("sdl_import" if base == "sdl.zig" else "backend_import")
->>>>>>> main
                 elif base == "sdl.zig":
                     cats.add("sdl_import")
             if "@cImport" in code and file_is_sdl_cimport:
                 cats.add("sdl_import")
             if SDL_NAME_RE.search(code):
                 cats.add("sdl_name")
-<<<<<<< HEAD
                 if rel.startswith("src/game/"):
                     cats.add("game_sdl_import")
             for a in sdl_aliases:
@@ -228,11 +200,6 @@ def scan_file(path, rel):
                     cats.add("sdl_name")
                     if rel.startswith("src/game/"):
                         cats.add("game_sdl_import")
-=======
-            for a in sdl_aliases:
-                if alias_use[a].search(code):
-                    cats.add("sdl_name")
->>>>>>> main
         if cats:
             hits[lineno] = frozenset(cats)
         elif SDL_NAME_RE.search(" ".join(strings)):
@@ -276,15 +243,11 @@ def counts(hits):
 
 
 def fmt_counts(c):
-<<<<<<< HEAD
     category_order = (
         "sdl_name", "sdl_import", "backend_import",
         "engine_game_import", "private_engine_import", "game_sdl_import",
     )
     return ", ".join(f"{k} {c[k]}" for k in category_order if k in c)
-=======
-    return ", ".join(f"{k} {c[k]}" for k in ("sdl_name", "sdl_import", "backend_import") if k in c)
->>>>>>> main
 
 
 def render(results, reach):
@@ -292,11 +255,7 @@ def render(results, reach):
     total = len(results)
     zig = sum(1 for r in results if not r["is_c"])
     live_zig = sum(1 for r in results if not r["is_c"] and r["rel"] in reach)
-<<<<<<< HEAD
     out.append("Platform-boundary scan (migration.md P0.5)")
-=======
-    out.append("Platform-boundary scan (migration.md Step 9)")
->>>>>>> main
     out.append(f"Scanned {total} files under src/ ({zig} .zig, {total - zig} .c/.h).")
     out.append(f"Reachable .zig from {', '.join(BUILD_ROOTS)}: {live_zig}. "
                f"Unreachable .zig: {zig - live_zig}.")
@@ -352,7 +311,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fail", action="store_true", help="exit 1 when reachable violations exist")
     ap.add_argument("--report", metavar="FILE", help="also write the report to FILE")
-<<<<<<< HEAD
     ap.add_argument("--self-test", action="store_true", help="run built-in negative boundary fixtures")
     args = ap.parse_args()
     if args.self_test:
@@ -387,9 +345,6 @@ def main():
             return 1
         print("Boundary self-test: 3/3 negative fixtures rejected")
         return 0
-=======
-    args = ap.parse_args()
->>>>>>> main
 
     if not SRC.is_dir():
         print(f"error: {SRC} not found", file=sys.stderr)
