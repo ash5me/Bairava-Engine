@@ -96,9 +96,9 @@ pub const SpriteBatch = struct {
     projection: math.Mat4 = undefined,
 
     /// Builds the pipeline and GPU buffers. `color_format` is the swapchain format
-    /// the sprites render into.
-    fn init(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat) SpriteBatch {
-        const gpu_state = backend.sprite.create(allocator, device, color_format, initial_sprites * vertices_per_quad);
+    /// the sprites render into. `fragment` is the shader the quads run through.
+    fn init(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat, fragment: backend.shader.Source) SpriteBatch {
+        const gpu_state = backend.sprite.create(allocator, device, color_format, initial_sprites * vertices_per_quad, fragment);
         return .{
             .gpu_state = @ptrCast(gpu_state),
             .allocator = allocator,
@@ -229,8 +229,15 @@ pub const SpriteBatch = struct {
     }
 };
 
+/// A batch of sprites, drawn with the default sprite shader.
 pub fn create(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat) SpriteBatch {
-    return SpriteBatch.init(allocator, device, color_format);
+    return SpriteBatch.init(allocator, device, color_format, backend.sprite.sprite_fragment);
+}
+
+/// A batch whose quads run through one post-processing effect's shader. It takes the same vertices as a
+/// sprite batch, so a post-processing chain can queue one full-view quad through it.
+pub fn createEffect(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat, effect: render_types.Effect) SpriteBatch {
+    return SpriteBatch.init(allocator, device, color_format, backend.post.fragmentSource(effect));
 }
 
 pub fn upload(batch: *SpriteBatch, cmd: *backend.CommandBuffer) void {

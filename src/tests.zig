@@ -14,6 +14,7 @@ const physics_queries = @import("engine/physics/queries.zig");
 
 test {
     _ = @import("engine/renderer/renderer.zig");
+    _ = @import("engine/renderer/post.zig");
     _ = @import("engine/memory/string.zig");
     _ = @import("engine/profiling/frame_history.zig");
     _ = @import("engine/diagnostics/text.zig");
@@ -49,6 +50,7 @@ test {
     _ = @import("engine/core/settings.zig");
     _ = @import("engine/renderer/backends/sdl_gpu/shader.zig");
     _ = @import("engine/renderer/backends/sdl_gpu/pass.zig");
+    _ = @import("engine/renderer/backends/sdl_gpu/post.zig");
     _ = @import("engine/input/input.zig");
     _ = @import("engine/input/gamepad.zig");
     _ = @import("engine/input/action.zig");

@@ -36,5 +36,8 @@ pub fn main() !void {
         .settings_file = config.settings_file_name,
         .fullscreen = config.fullscreen,
         .vsync = config.vsync,
+        .post_effects = config.post_effects,
+        .texture_budget_bytes = config.texture_budget_bytes,
+        .texture_loads_per_frame = config.texture_loads_per_frame,
     });
 }

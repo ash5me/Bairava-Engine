@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const view = @import("../renderer/view.zig");
+const render_types = @import("../renderer/render_types.zig");
 const ScaleMode = view.ScaleMode;
 
 /// Settings the game passes to `run`.
@@ -51,6 +52,14 @@ pub const Config = struct {
     fullscreen: bool = false,
     /// Wait for vsync, unless the settings file says otherwise.
     vsync: bool = true,
+    /// Post-processing effects, run in order over the finished world before it is shown. Empty by default, which
+    /// presents the world unchanged. A chain holds at most `render_types.max_post_effects` effects.
+    post_effects: []const render_types.Effect = &.{},
+    /// Most bytes the texture cache may hold, counted at four bytes per texel. Idle textures are unloaded, least
+    /// recently used first, to stay within it. Zero means no budget.
+    texture_budget_bytes: usize = 0,
+    /// Requested textures the runtime loads each frame, between frames. Zero turns preloading off.
+    texture_loads_per_frame: usize = 2,
 
     pub const ValidationError = error{
         EmptyTitle,
@@ -62,6 +71,7 @@ pub const Config = struct {
         InvalidZoomBounds,
         InvalidZoomRate,
         InvalidDebugFont,
+        TooManyPostEffects,
     };
 
     /// Validates all engine-owned startup values before any platform resource is created.
@@ -88,6 +98,7 @@ pub const Config = struct {
         if (self.debug_font_path.len == 0 or
             !std.math.isFinite(self.debug_font_px) or self.debug_font_px <= 0.0)
             return error.InvalidDebugFont;
+        if (self.post_effects.len > render_types.max_post_effects) return error.TooManyPostEffects;
     }
 
     pub fn validationMessage(err: ValidationError) []const u8 {
@@ -101,6 +112,7 @@ pub const Config = struct {
             error.InvalidZoomBounds => "engine config zoom bounds must be finite, positive, and include zoom 1",
             error.InvalidZoomRate => "engine config zoom_rate must be a finite non-negative number",
             error.InvalidDebugFont => "engine config debug font path must not be empty and debug font px must be positive",
+            error.TooManyPostEffects => "engine config post_effects holds more effects than one chain allows",
         };
     }
 };
@@ -125,4 +137,10 @@ test "Config validation rejects invalid startup values" {
 
     var clear = Config{ .clear_rgb = .{ 0.0, 1.1, 0.0 } };
     try std.testing.expectError(error.InvalidClearColor, clear.validate());
+}
+
+test "Config validation rejects a post-processing chain longer than one chain allows" {
+    const too_many = [_]render_types.Effect{.grayscale} ** (render_types.max_post_effects + 1);
+    const config = Config{ .post_effects = &too_many };
+    try std.testing.expectError(error.TooManyPostEffects, config.validate());
 }

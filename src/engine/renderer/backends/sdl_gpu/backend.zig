@@ -8,6 +8,7 @@ pub const shader = @import("shader.zig");
 pub const pass = @import("pass.zig");
 pub const texture = @import("texture.zig");
 pub const sprite = @import("sprite.zig");
+pub const post = @import("post.zig");
 
 /// The GPU device, and the handles the renderer passes between its operations.
 pub const Device = c.SDL_GPUDevice;

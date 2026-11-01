@@ -17,6 +17,7 @@ const startup = @import("startup.zig");
 const Camera = @import("../renderer/camera.zig").Camera;
 const sprite = @import("../renderer/sprite.zig");
 const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
+const post = @import("../renderer/post.zig");
 const texture = @import("../renderer/texture.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 const settings = @import("settings.zig");
@@ -43,6 +44,7 @@ pub const Session = struct {
     immediate_present_supported: bool = false,
     target_created: bool = false,
     world_batch_created: bool = false,
+    post_chain_created: bool = false,
     screen_batch_created: bool = false,
     audio_created: bool = false,
     textures_ready: bool = false,
@@ -55,6 +57,8 @@ pub const Session = struct {
     target: Texture = undefined,
     world_batch: SpriteBatch = undefined,
     screen_batch: SpriteBatch = undefined,
+    /// The effects that run between the world pass and the present pass. Empty unless the config names effects.
+    post_chain: post.Chain = undefined,
     input: Input = .{},
     /// The step startup is on. After a failed start, it names the subsystem that failed. See startup.zig.
     stage: startup.Stage = .not_started,
@@ -131,6 +135,9 @@ pub const Session = struct {
         self.world_batch_created = true;
         self.screen_batch = sprite.create(self.engine_allocator, self.gpu.device, self.format);
         self.screen_batch_created = true;
+        // Effects are sized like the world target, and an empty list makes no GPU objects.
+        self.post_chain = post.Chain.init(self.engine_allocator, self.gpu.device, self.format, config.post_effects, config.native_w, config.native_h);
+        self.post_chain_created = true;
         // Sound output. A missing device leaves it silent, so it never stops the game.
         self.audio = audio.Audio.init();
         self.audio_created = true;
@@ -161,6 +168,7 @@ pub const Session = struct {
             .reloads = &self.reloads,
         };
         try self.textures.init(self.engine_allocator, context.max_registered_textures, context.textureLoader(&self.ctx));
+        self.textures.setBudget(config.texture_budget_bytes);
         self.textures_ready = true;
         self.stage = .ready;
     }
@@ -178,6 +186,10 @@ pub const Session = struct {
         if (self.audio_created) {
             self.audio.deinit();
             self.audio_created = false;
+        }
+        if (self.post_chain_created) {
+            self.post_chain.deinit();
+            self.post_chain_created = false;
         }
         if (self.screen_batch_created) {
             self.screen_batch.deinit();

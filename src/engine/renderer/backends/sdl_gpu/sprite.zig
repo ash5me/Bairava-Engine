@@ -22,7 +22,8 @@ const vertex_source = shader.Source{
     .stage = c.SDL_GPU_SHADERSTAGE_VERTEX,
     .code = .{ .spirv = embedded.default_vert, .dxil = embedded.default_vert_dxil, .msl = embedded.default_vert_msl },
 };
-const fragment_source = shader.Source{
+/// The sprite fragment shader: the texture sample multiplied by the vertex color.
+pub const sprite_fragment = shader.Source{
     .name = "default.frag",
     .entry = "fragmentMain",
     .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
@@ -47,11 +48,13 @@ pub const State = struct {
 
 /// Builds the pipeline and the GPU buffers. `initial_vertices` is the starting capacity; the vertex buffer
 /// is replaced when a frame needs more. `color_format` is the swapchain format the sprites render into.
-pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat, initial_vertices: usize) *State {
+/// `fragment` is the fragment stage the pipeline runs: `sprite_fragment` for sprites, or one effect's
+/// shader from post.zig. Every fragment shader must read one sampler, as declared in its source.
+pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat, initial_vertices: usize, fragment: shader.Source) *State {
     const format = shader.pickFormat(device);
     const vert = shader.load(device, format, vertex_source);
     defer c.SDL_ReleaseGPUShader(device, vert);
-    const frag = shader.load(device, format, fragment_source);
+    const frag = shader.load(device, format, fragment);
     defer c.SDL_ReleaseGPUShader(device, frag);
 
     // Alpha blending, so transparent pixels show what's behind them.

@@ -35,6 +35,14 @@ pub const zoom_max: f32 = 4.0;
 pub const zoom_step: f32 = 1.25;
 /// How fast the camera eases to a new zoom, per second. Zero snaps.
 pub const zoom_rate: f32 = 8.0;
+/// Post-processing effects, run in order over the finished world before it is shown. Empty turns them off.
+/// To try one, list it, for example `&.{ .vignette }` or `&.{ .grayscale, .vignette }`.
+pub const post_effects: []const engine.Effect = &.{};
+/// The most bytes the texture cache may hold. Zero means no budget. The game does not request textures through
+/// the cache yet, so this and `texture_loads_per_frame` have no effect until it does.
+pub const texture_budget_bytes: usize = 0;
+/// Textures the runtime loads each frame from its preload requests. Zero turns preloading off.
+pub const texture_loads_per_frame: usize = 2;
 
 comptime {
     if (!(zoom_min > 0.0 and zoom_min <= 1.0 and zoom_max >= 1.0)) @compileError("zoom bounds must be positive and include 1");

@@ -28,6 +28,10 @@ pub fn Store(comptime T: type) type {
         pub const Loader = cache.Cache(T).Loader;
         /// Counters for the store. See cache.zig.
         pub const Stats = cache.Cache(T).Stats;
+        /// How urgently a requested value loads. See cache.zig.
+        pub const Priority = cache.Priority;
+        /// What one `pump` did. See cache.zig.
+        pub const PumpResult = cache.PumpResult;
 
         table: registry.Table,
         cached: cache.Cache(T),
@@ -80,6 +84,21 @@ pub fn Store(comptime T: type) type {
         /// The store's counters.
         pub fn stats(self: *const Self) Stats {
             return self.cached.stats();
+        }
+
+        /// Caps the bytes the store holds. Zero removes the cap. See cache.zig.
+        pub fn setBudget(self: *Self, bytes: usize) void {
+            self.cached.setBudget(bytes);
+        }
+
+        /// Marks `name` as wanted at `priority`, so `pump` loads it. See cache.zig.
+        pub fn request(self: *Self, name: []const u8, priority: Priority) !void {
+            return self.cached.request(name, priority);
+        }
+
+        /// Loads up to `max_loads` requested values, highest priority first. See cache.zig.
+        pub fn pump(self: *Self, max_loads: usize) PumpResult {
+            return self.cached.pump(max_loads);
         }
     };
 }
@@ -188,4 +207,21 @@ test "deinit unloads values that are still held" {
 
 test "stores for different value types have different handle types" {
     try std.testing.expect(Store(u32).Handle != Store(f32).Handle);
+}
+
+test "a store preloads requested values, and an acquire of one loads nothing more" {
+    var source = FakeLoader{};
+    var store: TestStore = undefined;
+    try initTestStore(&store, &source);
+    defer store.deinit();
+
+    try store.register("tile", "assets/tile.png");
+    try store.request("tile", .high);
+    const pumped = store.pump(4);
+    try std.testing.expectEqual(@as(usize, 1), pumped.loaded);
+    try std.testing.expectEqual(@as(u32, 1), source.loads);
+
+    var tile = try store.acquire("tile");
+    try std.testing.expectEqual(@as(u32, 1), source.loads);
+    try store.release(&tile);
 }

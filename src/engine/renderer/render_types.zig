@@ -4,6 +4,13 @@
 /// An RGBA color, each channel from 0 to 1. Clear colors use it.
 pub const Color = struct { r: f32, g: f32, b: f32, a: f32 };
 
+/// A post-processing effect: one full-view pass over the image before it. Each one is a fragment shader in
+/// shaders/default.slang, and backends/sdl_gpu/post.zig picks the shader for it.
+pub const Effect = enum { grayscale, vignette };
+
+/// The most effects one post-processing chain may hold. Its passes are allocated when the chain is created.
+pub const max_post_effects: usize = 8;
+
 /// Vertex layout for sprite quads. Positions are in normalized device coordinates. Color is RGBA:
 /// the tint in RGB, and the sprite's alpha in A.
 pub const Vertex = extern struct {

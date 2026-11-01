@@ -261,6 +261,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │       └── audio.zig  Playback device, WAV decoding, conversion, and SDL streams
 │   │   ├── renderer/          Drawing
 │   │   │   ├── renderer.zig   Render passes and color targets, on engine-owned types
+│   │   │   ├── post.zig       Post-processing chain: effect passes over the world target, alternating two targets
 │   │   │   ├── render_types.zig  Color, vertex layout, and index values shared with the backend
 │   │   │   ├── sprite.zig     Batched textured quads: z order and batching on the CPU, then the backend draws
 │   │   │   ├── texture.zig    2D textures and render targets, as engine values over the backend's state
@@ -269,6 +270,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │   │   ├── shader.zig   Picks a shader format and creates GPU shaders from embedded code
 │   │   │   │   ├── pass.zig     Begins and ends render passes, with the clear color
 │   │   │   │   ├── texture.zig  GPU textures, samplers, upload fences, and format mapping
+│   │   │   │   ├── post.zig     Effect fragment shaders, one per `render_types.Effect`
 │   │   │   │   └── sprite.zig   Sprite pipeline, vertex and index buffers, upload, and draw calls
 │   │   │   ├── camera.zig     View position, follow target, smoothing, edge clamping, zoom easing
 │   │   │   ├── view.zig       Fits the view to the window for each zoom and scale mode, and maps mouse positions
@@ -391,8 +393,9 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 7. If the view size changed, call `platform.gpu.waitIdle` and recreate the native target.
 8. Acquire a command buffer and swapchain texture. If either is unavailable, sleep for the same 16 ms and start the next frame, so a minimized window doesn't spin.
 9. Pass 1: game `draw` points the camera at the player's blended center and queues the visible tiles and the player. The engine uploads the vertices and draws them into the native target. The debug overlay is queued after the game, in the same pass.
-10. Pass 2: queue one quad that stretches the native target across the window. In fit mode it covers the whole window. In integer mode it covers a centered whole-number multiple of the view.
-11. Submit the command buffer.
+10. Post-processing, only when `post_effects` in `game/config.zig` names effects: each effect is one full-view pass. It reads the image before it, and the passes alternate between two targets. The last pass's image is what pass 2 shows.
+11. Pass 2: queue one quad that stretches the native target, or the last effect's image, across the window. In fit mode it covers the whole window. In integer mode it covers a centered whole-number multiple of the view.
+12. Submit the command buffer.
 
 ### Coordinate systems
 
@@ -503,7 +506,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Logging and assertions | `engine/logging/log.zig`, `logging/log_file.c`, `vendor/log.c` | Functional | 85% | Levels, scopes, timestamps, and assertions that check in Debug and ReleaseSafe. Terminal and log file output through log.c, with panics recorded in the file. Missing: rotation, and keeping logs from earlier runs. |
 | Profiling | `profiling/profile.zig`, `engine/core/engine.zig` | Functional | 60% | Tracy zones for the frame, events, updates, passes, uploads, submit, and asset loads, plus frame marks. Compiled in only with `-Dtracy=true`. A captured session checked the zone names and counts. Missing: GPU timing zones, allocation tracking, and plots. |
 | Gameplay | `game/` | Prototype | 20% | Player with directional walk clips, one level loaded from `assets/maps/level1.txt` and drawn in layers, and movement and quit actions bound in `game/controls.zig`. No entities or rules. |
-| Renderer | `renderer/renderer.zig` | Solid base | 75% | Device, swapchain, and passes work. Asks the device for DXIL and MSL only when the build embeds those formats. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, pass helpers. |
+| Renderer | `renderer/renderer.zig` | Solid base | 75% | Device, swapchain, and passes work. Asks the device for DXIL and MSL only when the build embeds those formats. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Post-processing chain (`renderer/post.zig`) runs fragment-shader effects between the two passes. It has not been run on a GPU yet. Missing: device-lost recovery, pass helpers, effect parameters. |
 | Shaders | `renderer/backends/sdl_gpu/shader.zig` | Basic | 65% | Picks the first shader format the device accepts (SPIR-V, DXIL, then MSL) and creates GPU shaders from code embedded at build time. DXIL (`-Ddxil=true`) and MSL (`-Dmetal=true`) are optional. Per-shader entry points and resource counts are declared in `renderer/backends/sdl_gpu/sprite.zig`. Missing: reflection. Uniform buffer count is supported but unused. |
 | Textures | `renderer/texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: unload and reload. |
 | Atlas | `assets/loaders/atlas.zig`, `tools/atlas/pack.c` | Functional | 60% | Build-time packing with stb_rect_pack, index parsing with validation, and lookup by name. Missing: runtime packing, several atlas pages, rotated sprites. |
@@ -512,7 +515,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Strings | `memory/string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
 | Hash map | `memory/hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, removal by backward-shift deletion (no tombstones), checked against `std.StringHashMap`. |
 | Assets | `assets/registry.zig` | Early | 40% | Names, dense ids, and validated paths. The game no longer uses it, since its sprites come from the atlas. Loading and caching are in `assets/cache.zig`, which looks assets up by these names. |
-| Asset cache | `assets/cache.zig` | Early | 50% | Generic cache keyed by asset name: reference counts, load on first `acquire`, and `unloadUnused`. Names and paths come from `assets/registry.zig`, and the index is the engine's `StringMap`. Not yet compiled or run, and not yet used by the engine or game. Missing: GPU textures through the cache, unloading on a schedule, hot reload. |
+| Asset cache | `assets/cache.zig` | Early | 50% | Generic cache keyed by asset name: reference counts, load on first `acquire`, `unloadUnused`, a byte budget with least-recently-used eviction, and priority preloading through `request` and `pump`. Names and paths come from `assets/registry.zig`, and the index is the engine's `StringMap`. Not yet compiled or run. The engine's texture store uses it, but the game still loads its atlas, font, and sound directly. Missing: asynchronous loading, which needs the job system; fonts and sounds in the cache; hot reload; unloading on a schedule. |
 | Sprites | `renderer/sprite.zig` | Functional | 75% | Batched quads with four vertices each and a 32-bit index buffer. Per-sprite tint, alpha, flip, rotation around an origin, and z-order, sorted once per frame. Storage grows with each frame. Missing: instancing. |
 | Camera | `renderer/camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
 | Animation | `animation/animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
@@ -550,7 +553,9 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `renderer/backends/sdl_gpu/sprite.zig` with the stage, resource counts, and embedded code for each format. DXIL and MSL slices are empty unless enabled with `-Ddxil=true` or `-Dmetal=true`. Follow the target-specific resource declarations in `default.slang`; Slang emits Metal texture and sampler arguments for MSL. Load it with `shader.load` and create a pipeline the way `backends/sdl_gpu/sprite.zig`'s `create` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
 
-**Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
+**Add a render target.** `texture.createTarget` creates a target in the swapchain format. Pass it to `renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting or a minimap. Full-screen effects belong in the post-processing chain instead.
+
+**Add a post-processing effect.** An effect is one fragment entry point in `shaders/default.slang`. Add a row for it to `shader_entries` in `build.zig`, add its name to `render_types.Effect`, and map that name to its shader in `renderer/backends/sdl_gpu/post.zig`. Turn it on by listing it in `game/config.zig` as `post_effects`, for example `&.{ .vignette }`. Effects run in order over the finished world, after the game draws, so they also change the debug overlay. Effects take no parameters yet. Adding a uniform block would allow them.
 
 **Add a sprite.** Run `zig build asset-import -- path/to/image.png sprite_name`. This copies the image to `assets/imported/` and registers it in `assets/sprites.txt`; the next `zig build` packs it into the atlas. In the game, look the sprite up once with `atlas.region(name)`, on the `LoadedAtlas` in `Game.atlas`, and store the returned region in a field, as `Game.init` does for `tile` and `warrior`. Draw it by offsetting the source rectangle by the region's position in the atlas, as `engine.tilemap_draw.drawLayer` and `Player.draw` do.
 

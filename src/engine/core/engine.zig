@@ -32,6 +32,11 @@ pub const run = @import("runtime.zig").run;
 /// How the native view is fitted to the window. See `view.chooseFit`.
 pub const ScaleMode = @import("../renderer/view.zig").ScaleMode;
 
+/// A post-processing effect, named in `Config.post_effects`. See renderer/post.zig.
+pub const Effect = @import("../renderer/render_types.zig").Effect;
+/// How urgently a texture is preloaded, for `Context.requestTexture`.
+pub const TexturePriority = @import("context.zig").TexturePriority;
+
 /// Keys, mouse, and gamepad state for the game. See input/input.zig.
 pub const Input = @import("../input/input.zig").Input;
 pub const Key = @import("../input/input.zig").Key;

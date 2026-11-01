@@ -55,3 +55,22 @@ float4 fragmentMain(VSOutput input) : SV_Target {
     }
     return texel * input.color;
 }
+
+// Post-processing effects. Each is a separate fragment entry point, compiled by build.zig, and runs
+// as one full-view pass over the image before it. They reuse the sprite vertex stage above, so they
+// take the same vertex layout, and they sample through the same sampler binding.
+[shader("fragment")]
+float4 postGrayscaleMain(VSOutput input) : SV_Target {
+    float4 texel = sampleTex(input.uv);
+    float luma = dot(texel.rgb, float3(0.2126, 0.7152, 0.0722));
+    return float4(luma, luma, luma, texel.a) * input.color;
+}
+
+[shader("fragment")]
+float4 postVignetteMain(VSOutput input) : SV_Target {
+    float4 texel = sampleTex(input.uv);
+    // uv runs from 0 to 1, so the center is 0 and the corners are 2. Corners fall to half brightness.
+    float2 centered = input.uv * 2.0 - 1.0;
+    float falloff = 1.0 - 0.25 * dot(centered, centered);
+    return float4(texel.rgb * falloff, texel.a) * input.color;
+}

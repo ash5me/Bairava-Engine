@@ -175,6 +175,15 @@ pub fn run(comptime Game: type, config: Config) !void {
             collector.stats.record(.asset, secondsBetween(asset_start, clockIf()));
         }
 
+        // Preloads requested textures a few at a time. They load here, between frames, so a texture never appears
+        // partway through an update, and a burst of requests spreads over several frames.
+        if (config.texture_loads_per_frame > 0) {
+            const zone = profile.zoneNamed(@src(), "texture preload");
+            defer zone.End();
+            const pumped = session.textures.pump(config.texture_loads_per_frame);
+            if (pumped.failed > 0) elog.warn("{d} requested texture(s) failed to load and were dropped", .{pumped.failed});
+        }
+
         // Fixed-timestep updates. Run whole steps while the accumulated time covers one, so game
         // logic advances at the same rate on any display. Stop early if the game quits.
         var steps: u32 = 0;
@@ -246,6 +255,7 @@ pub fn run(comptime Game: type, config: Config) !void {
             platform.gpu.waitIdle(session.gpu.device);
             session.target.deinit();
             session.target = texture.createTarget(allocators.engineAllocator(), session.gpu.device, view_w, view_h, session.format);
+            session.post_chain.resize(view_w, view_h);
             elog.debug("native target is now {d}x{d} at {d:.2} scale ({s})", .{ view_w, view_h, fit.scale, mode_label });
         }
 
@@ -344,6 +354,14 @@ pub fn run(comptime Game: type, config: Config) !void {
         renderer.endPass(world_pass);
         if (gate.enabled) collector.stats.record(.draw, secondsBetween(draw_start, clockIf()));
 
+        // Post-processing: each effect reads the image before it. With no effects, the world target is presented as it is.
+        var presented: *const texture.Texture = &session.target;
+        if (session.post_chain.enabled()) {
+            const zone = profile.zoneNamed(@src(), "post");
+            defer zone.End();
+            presented = session.post_chain.run(frame.cmd, &session.target);
+        }
+
         // Pass 2: stretch the target onto the window. Fit mode covers the whole window. Integer
         // mode covers a centered whole-number multiple of the view, and the edges stay black.
         const present_start = clockIf();
@@ -364,7 +382,7 @@ pub fn run(comptime Game: type, config: Config) !void {
             };
             const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
             session.screen_batch.begin(win_wf, win_hf);
-            session.screen_batch.drawSprite(&session.target, view_rect, dst_rect, .{});
+            session.screen_batch.drawSprite(presented, view_rect, dst_rect, .{});
             sprite.upload(&session.screen_batch, frame.cmd);
             const screen_pass = renderer.beginPass(frame.cmd, frame.swapchain, black);
             sprite.draw(&session.screen_batch, screen_pass);

@@ -73,6 +73,8 @@ pub const max_full_path = platform.max_full_path;
 pub const TextureStore = manager.Store(Texture);
 /// A counted reference to a registered texture. See `Context.acquireTexture`.
 pub const TextureHandle = TextureStore.Handle;
+/// How urgently a requested texture loads. See `Context.requestTexture`.
+pub const TexturePriority = TextureStore.Priority;
 /// The most textures the game can register by name. The store reserves a slot for each one up front,
 /// so a handle never has to move when more textures are loaded.
 pub const max_registered_textures: u32 = 256;
@@ -199,6 +201,13 @@ pub const Context = struct {
     /// changes nothing.
     pub fn acquireTexture(self: *const Context, name: []const u8) AssetError!TextureHandle {
         return self.textures.acquire(name) catch |err| return assetErrorFor(err);
+    }
+
+    /// Marks the texture called `name` for preloading at `priority`. The runtime loads requested textures a few at a
+    /// time between frames, so a burst of loads doesn't stall one frame. `acquireTexture` still loads at once when a
+    /// texture is needed now. Fails the way `acquireTexture` does for an unknown or malformed name.
+    pub fn requestTexture(self: *const Context, name: []const u8, priority: TexturePriority) AssetError!void {
+        self.textures.request(name, priority) catch |err| return assetErrorFor(err);
     }
 
     /// The texture a handle names, for drawing. It is valid while the handle holds a reference. Fails

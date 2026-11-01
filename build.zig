@@ -183,6 +183,8 @@ const ShaderEntry = struct {
 const shader_entries = [_]ShaderEntry{
     .{ .entry = "vertexMain", .stage = "vertex", .file = "default.vert", .decl = "default_vert" },
     .{ .entry = "fragmentMain", .stage = "fragment", .file = "default.frag", .decl = "default_frag" },
+    .{ .entry = "postGrayscaleMain", .stage = "fragment", .file = "post_grayscale.frag", .decl = "post_grayscale_frag" },
+    .{ .entry = "postVignetteMain", .stage = "fragment", .file = "post_vignette.frag", .decl = "post_vignette_frag" },
 };
 
 /// One output format for every shader entry point.

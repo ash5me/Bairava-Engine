@@ -109,6 +109,7 @@ test "texture handles and the context's texture functions expose no SDL types" {
     try std.testing.expect(@hasDecl(bairava.Context, "textureOf"));
     try std.testing.expect(@hasDecl(bairava.Context, "retainTexture"));
     try std.testing.expect(@hasDecl(bairava.Context, "releaseTexture"));
+    try std.testing.expect(@hasDecl(bairava.Context, "requestTexture"));
 }
 
 test "Context exposes an SDL-free runtime capabilities query" {

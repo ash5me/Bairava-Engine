@@ -21,6 +21,14 @@
 //! Failures: a load the loader rejects changes nothing and is counted in `Stats.failed_loads`. A
 //! malformed or unregistered name is rejected before anything is loaded.
 //!
+//! Budget: `setBudget` caps the bytes the cache holds. A load that would go over the cap first unloads the
+//! least recently used idle values. A referenced value is never unloaded to make room, so the cache can stay
+//! over budget while everything it holds is in use. `Stats.over_budget` counts those times.
+//!
+//! Preloading: `request` marks an unloaded asset as wanted at a `Priority`, and `pump` loads wanted assets,
+//! highest priority first, up to a limit per call. A preloaded value holds no reference, so it can be unloaded
+//! if nothing acquires it. Loads are still synchronous. `pump` only spreads them across calls.
+//!
 //! The cache isn't thread-safe. The table it reads must outlive it and must not move after `init`,
 //! because the cache keeps a pointer to it.
 
@@ -31,6 +39,13 @@ const strings = @import("../memory/string.zig");
 
 /// Why a handle can't be used. See handle.zig.
 pub const LookupError = handle.LookupError;
+
+/// How urgently a requested asset loads. `pump` loads higher priorities first. Slots store these values, so 0
+/// means nothing has requested the asset.
+pub const Priority = enum(u8) { low = 1, normal = 2, high = 3 };
+
+/// What one `pump` did: how many requested values loaded, and how many failed to load.
+pub const PumpResult = struct { loaded: usize = 0, failed: usize = 0 };
 
 /// A cache of values of type `T`, loaded through a `Loader` that the caller supplies.
 pub fn Cache(comptime T: type) type {
@@ -63,8 +78,10 @@ pub fn Cache(comptime T: type) type {
             misses: u64 = 0,
             /// Loads the loader rejected. Nothing was cached for these.
             failed_loads: u64 = 0,
-            /// Values unloaded by `unloadUnused` or `deinit`.
+            /// Values unloaded by `unloadUnused`, by the budget, or by `deinit`.
             unloads: u64 = 0,
+            /// Times the cache was left over its budget, because every value it still held was referenced.
+            over_budget: u64 = 0,
             /// Values loaded right now, referenced or not.
             loaded: usize = 0,
             /// Sum of the sizes that `Loader.size` reported for the loaded values.
@@ -80,6 +97,11 @@ pub fn Cache(comptime T: type) type {
             /// Counted references to this load. Zero means cached but unused.
             refs: u32 = 0,
             bytes: usize = 0,
+            /// The request for this value as a `Priority`, or 0 when nothing has asked for it. A load clears it.
+            pending: u8 = 0,
+            /// The use clock's value when the value was last loaded or acquired. Budget eviction unloads the
+            /// smallest value first, so the least recently used idle value goes first.
+            last_use: u64 = 0,
             value: T = undefined,
         };
 
@@ -88,6 +110,10 @@ pub fn Cache(comptime T: type) type {
         loader: Loader,
         slots: []Slot,
         counts: Stats = .{},
+        /// Most bytes the cache holds before it unloads idle values. Zero means no budget.
+        budget_bytes: usize = 0,
+        /// Advances on every load and acquire, and stamps each slot with its use order.
+        clock: u64 = 0,
 
         /// Creates an empty cache over the names in `table`. Values load on their first acquire. The
         /// slots cover the table's whole capacity, so names registered later still have a slot.
@@ -123,21 +149,12 @@ pub fn Cache(comptime T: type) type {
             if (slot.loaded) {
                 self.counts.hits += 1;
                 slot.refs += 1;
+                slot.last_use = self.touch();
                 return .{ .id = id, .generation = slot.generation };
             }
 
-            self.counts.misses += 1;
-            const path = self.table.pathOf(id) orelse return error.UnknownAsset;
-            const value = self.loader.load(self.loader.context, path.slice()) catch |err| {
-                self.counts.failed_loads += 1;
-                return err;
-            };
-            slot.value = value;
-            slot.loaded = true;
+            try self.loadSlot(id);
             slot.refs = 1;
-            slot.bytes = if (self.loader.size) |measure| measure(&slot.value) else 0;
-            self.counts.loaded += 1;
-            self.counts.bytes += slot.bytes;
             return .{ .id = id, .generation = slot.generation };
         }
 
@@ -180,6 +197,114 @@ pub fn Cache(comptime T: type) type {
                 }
             }
             return unloaded;
+        }
+
+        /// Sets the byte budget. Zero removes it. Lowering it unloads idle values at once, least recently used first,
+        /// until the cache fits or only referenced values are left.
+        pub fn setBudget(self: *Self, bytes: usize) void {
+            self.budget_bytes = bytes;
+            self.enforceBudget(null);
+        }
+
+        /// Marks the asset `name` as wanted at `priority`, so a later `pump` loads it. A value that is already
+        /// loaded needs nothing, so the request is ignored. Asking again keeps the higher priority. A malformed
+        /// or unregistered name fails the way `acquire` does, and changes nothing.
+        pub fn request(self: *Self, name: []const u8, priority: Priority) !void {
+            const checked = try strings.Name.init(name);
+            const id = self.table.find(checked.slice()) orelse return error.UnknownAsset;
+            if (id >= self.slots.len) return error.UnknownAsset;
+            const slot = &self.slots[id];
+            if (slot.loaded) return;
+            slot.pending = @max(slot.pending, @intFromEnum(priority));
+        }
+
+        /// Loads up to `max_loads` requested values, highest priority first, and the lower id first on a tie.
+        /// A preloaded value holds no reference, so it stays cached only until something acquires it or
+        /// `unloadUnused` runs. A request whose load fails is dropped, so a bad asset is not retried on every call.
+        pub fn pump(self: *Self, max_loads: usize) PumpResult {
+            var result = PumpResult{};
+            while (result.loaded + result.failed < max_loads) {
+                const id = self.nextRequest() orelse break;
+                if (self.loadSlot(id)) |_| {
+                    result.loaded += 1;
+                } else |_| {
+                    result.failed += 1;
+                }
+            }
+            return result;
+        }
+
+        /// The requested, unloaded slot with the highest priority, or null when nothing is requested.
+        fn nextRequest(self: *const Self) ?assets.AssetId {
+            var best: ?assets.AssetId = null;
+            for (self.slots, 0..) |slot, i| {
+                if (slot.pending == 0 or slot.loaded) continue;
+                if (best) |chosen| {
+                    if (slot.pending <= self.slots[chosen].pending) continue;
+                }
+                best = @as(assets.AssetId, @intCast(i));
+            }
+            return best;
+        }
+
+        /// Loads slot `id` without taking a reference, and clears its request. A failed load is counted and
+        /// returned, and changes nothing. A successful load may unload idle values to stay within the budget,
+        /// but never the value it just loaded.
+        fn loadSlot(self: *Self, id: assets.AssetId) !void {
+            const slot = &self.slots[id];
+            slot.pending = 0;
+            self.counts.misses += 1;
+            const path = self.table.pathOf(id) orelse return error.UnknownAsset;
+            const value = self.loader.load(self.loader.context, path.slice()) catch |err| {
+                self.counts.failed_loads += 1;
+                return err;
+            };
+            slot.value = value;
+            slot.loaded = true;
+            slot.refs = 0;
+            slot.bytes = if (self.loader.size) |measure| measure(&slot.value) else 0;
+            slot.last_use = self.touch();
+            self.counts.loaded += 1;
+            self.counts.bytes += slot.bytes;
+            self.enforceBudget(id);
+        }
+
+        /// Advances the use clock and returns the new value. Each slot records it when the slot is loaded or
+        /// acquired, so the smallest recorded value belongs to the least recently used slot.
+        fn touch(self: *Self) u64 {
+            self.clock += 1;
+            return self.clock;
+        }
+
+        /// Unloads idle values, least recently used first, until the cache is within its budget. `keep` names a
+        /// value that must stay, such as the one just loaded. Referenced values are never unloaded, so when none
+        /// is idle the cache can stay over budget, and that is counted in `over_budget`.
+        fn enforceBudget(self: *Self, keep: ?assets.AssetId) void {
+            if (self.budget_bytes == 0) return;
+            while (self.counts.bytes > self.budget_bytes) {
+                const victim = self.leastRecentlyUsedIdle(keep) orelse {
+                    self.counts.over_budget += 1;
+                    return;
+                };
+                self.unloadSlot(&self.slots[victim]);
+            }
+        }
+
+        /// The loaded, unreferenced slot used least recently, other than `keep`. Null when there is none.
+        fn leastRecentlyUsedIdle(self: *const Self, keep: ?assets.AssetId) ?assets.AssetId {
+            var best: ?assets.AssetId = null;
+            for (self.slots, 0..) |slot, i| {
+                if (!slot.loaded or slot.refs != 0) continue;
+                const id: assets.AssetId = @intCast(i);
+                if (keep) |kept| {
+                    if (kept == id) continue;
+                }
+                if (best) |chosen| {
+                    if (slot.last_use >= self.slots[chosen].last_use) continue;
+                }
+                best = id;
+            }
+            return best;
         }
 
         /// The number of values loaded right now, referenced or not.
@@ -559,4 +684,131 @@ test "many assets: bulk unload keeps the rest reachable" {
     try std.testing.expectEqual(@as(usize, 300), cache.unloadUnused());
     try std.testing.expectEqual(@as(usize, 0), cache.count());
     try std.testing.expectEqual(source.loads, source.unloads);
+}
+
+test "a budget unloads the least recently used idle value before a load that would exceed it" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+    // Each FakeSource value is 100 bytes, so two fit in the budget and a third does not.
+    cache.setBudget(250);
+
+    var tile = try cache.acquire("tile");
+    const tile_kept = tile;
+    try cache.release(&tile);
+    var warrior = try cache.acquire("warrior");
+    try cache.release(&warrior);
+
+    // Use the warrior again, so the tile is now the least recently used idle value.
+    var warrior_again = try cache.acquire("warrior");
+    try cache.release(&warrior_again);
+
+    var button = try cache.acquire("ui/button");
+    try std.testing.expectEqual(@as(usize, 2), cache.count());
+    try std.testing.expectEqual(@as(usize, 200), cache.stats().bytes);
+    try std.testing.expectEqual(@as(u64, 1), cache.stats().unloads);
+    try std.testing.expectEqual(@as(u64, 0), cache.stats().over_budget);
+    try std.testing.expectError(error.StaleHandle, cache.get(tile_kept));
+    try cache.release(&button);
+}
+
+test "a budget never unloads a referenced value, and counts the loads that stay over it" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+    cache.setBudget(150);
+
+    var tile = try cache.acquire("tile");
+    var warrior = try cache.acquire("warrior");
+    try std.testing.expectEqual(@as(usize, 2), cache.count());
+    try std.testing.expectEqual(@as(u64, 1), cache.stats().over_budget);
+    try std.testing.expectEqual(@as(u64, 0), cache.stats().unloads);
+    try cache.release(&tile);
+    try cache.release(&warrior);
+}
+
+test "requests load highest priority first, and a preloaded value holds no reference" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+
+    const tile_id = table.find("tile").?;
+    const warrior_id = table.find("warrior").?;
+    const button_id = table.find("ui/button").?;
+
+    try cache.request("tile", .low);
+    try cache.request("warrior", .high);
+    try cache.request("ui/button", .normal);
+    // A lower request does not lower a pending higher one.
+    try cache.request("warrior", .low);
+
+    const first = cache.pump(2);
+    try std.testing.expectEqual(@as(usize, 2), first.loaded);
+    try std.testing.expectEqual(@as(usize, 0), first.failed);
+    try std.testing.expect(cache.slots[warrior_id].loaded);
+    try std.testing.expect(cache.slots[button_id].loaded);
+    try std.testing.expect(!cache.slots[tile_id].loaded);
+
+    // Nothing holds a preloaded value, so it is idle and unloadUnused can free it.
+    try std.testing.expectEqual(@as(u32, 0), cache.slots[warrior_id].refs);
+
+    const second = cache.pump(5);
+    try std.testing.expectEqual(@as(usize, 1), second.loaded);
+    try std.testing.expectEqual(@as(usize, 0), cache.pump(5).loaded);
+    try std.testing.expectEqual(@as(u32, 3), source.loads);
+
+    // Acquiring a preloaded value is a hit, so it loads nothing.
+    var warrior = try cache.acquire("warrior");
+    try std.testing.expectEqual(@as(u32, 3), source.loads);
+    try cache.release(&warrior);
+    try std.testing.expectEqual(@as(usize, 3), cache.unloadUnused());
+}
+
+test "a request for an unknown name is refused, and a request for a loaded value does nothing" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+
+    try std.testing.expectError(error.UnknownAsset, cache.request("missing", .high));
+    try std.testing.expectEqual(@as(usize, 0), cache.pump(10).loaded);
+
+    var tile = try cache.acquire("tile");
+    try cache.request("tile", .high);
+    try std.testing.expectEqual(@as(usize, 0), cache.pump(10).loaded);
+    try std.testing.expectEqual(@as(u32, 1), source.loads);
+    try cache.release(&tile);
+}
+
+test "a preload that fails is dropped, so the next pump does not retry it" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{ .fail_next = true };
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+
+    try cache.request("tile", .normal);
+    const first = cache.pump(4);
+    try std.testing.expectEqual(@as(usize, 0), first.loaded);
+    try std.testing.expectEqual(@as(usize, 1), first.failed);
+    try std.testing.expectEqual(@as(usize, 0), cache.pump(4).failed);
+    try std.testing.expectEqual(@as(u64, 1), cache.stats().failed_loads);
+    try std.testing.expectEqual(@as(usize, 0), cache.count());
 }
