@@ -8,7 +8,7 @@ const animation = @import("engine/animation/animation.zig");
 const math = @import("engine/core/math.zig");
 const camera = @import("engine/renderer/camera.zig");
 const sprite = @import("engine/renderer/sprite.zig");
-const Texture = @import("engine/renderer/texture.zig").Texture;
+const fixtures = @import("engine/test_fixtures.zig");
 const tilemap = @import("engine/scene/tilemap.zig");
 const physics_queries = @import("engine/physics/queries.zig");
 
@@ -66,30 +66,9 @@ test {
     _ = @import("engine/scene/host.zig");
 }
 
-/// A texture for the sprite tests. Sprites read only its size, so the GPU handles stay undefined and
-/// are never used.
-fn testTexture(width: u32, height: u32) Texture {
-    return .{ .gpu_state = undefined, .width = width, .height = height, .has_upload_fence = false };
-}
-
-/// A sprite batch with no GPU objects. `begin` and `drawSprite` use only the CPU-side fields, so the
-/// tests can fill it without a device. Its storage starts empty and grows on the heap.
-fn testBatch(no_vertices: *[0]sprite.Vertex, no_batches: *[0]sprite.Batch) sprite.SpriteBatch {
-    return .{
-        .gpu_state = undefined,
-        .allocator = std.testing.allocator,
-        .vertices = no_vertices,
-        .batches = no_batches,
-    };
-}
-
-/// Frees the storage a test batch grew into. A batch that never grew still points at the empty
-/// arrays on the test's stack, which have length 0, so they are skipped.
-fn freeTestBatch(batch: *sprite.SpriteBatch) void {
-    if (batch.vertices.len != 0) std.testing.allocator.free(batch.vertices);
-    if (batch.batches.len != 0) std.testing.allocator.free(batch.batches);
-    if (batch.quads.len != 0) std.testing.allocator.free(batch.quads);
-}
+const testTexture = fixtures.texture;
+const testBatch = fixtures.batch;
+const freeTestBatch = fixtures.freeBatch;
 
 test "drawSprite keeps every sprite of a frame, past the old 8192 limit" {
     var no_vertices: [0]sprite.Vertex = .{};

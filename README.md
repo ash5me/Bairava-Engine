@@ -50,7 +50,8 @@ zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
 zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to select Metal
 zig build run-sample               # build and launch the scene sample, which uses no Semkootru code
 zig build run-benchmark            # launch a deterministic 1000-sprite profiling workload
-zig build test                     # run unit tests (no GPU device or window; links SDL and needs slangc)
+zig build test                     # run Zig, public API, and C UI tests (needs SDL and slangc; no GPU/window)
+zig build test-ui                  # run only the C text and widget tests
 powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
                                   # package the current build into zig-out/release for a ship-ready artifact
 ```
@@ -72,11 +73,11 @@ Key runtime access points:
 How to test the P3 work:
 - `zig build check-assets` to validate the manifest and staged atlas assets.
 - `zig build asset-build` to rebuild packaged runtime assets without installing the game.
-- `zig build test` to run the canonical unit-test suite for the engine/game modules.
+- `zig build test` to run the canonical Zig and C test suites for the engine/game modules.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1` to package a release and generate `release-manifest.txt`.
 - `zig build run` or `zig build run-sample` to exercise the runtime and sample content path.
 
-The C code for text and widgets has its own tests in `tests/ui/`. They run from the project root, take a font path, and `zig build test` doesn't run them. Since font baking now links the vendored FreeType sources, compile these harnesses with the include path, macro, and source list configured by `addFreeType` in `build.zig`, plus `vendor/stb_truetype_impl.c`, `src/engine/text/text.c`, and the relevant harness source. A passing run prints `imgui: all checks passed` and `text: all checks passed`. On Windows, `scripts/run-ui-tests.ps1` does this from the real build. It reads the include paths, macros, and FreeType sources from `zig build --verbose-cc`, compiles both harnesses with `zig cc`, runs them, and saves the build log to `ui-tests/`. Run it from the project root with `powershell -ExecutionPolicy Bypass -File .\scripts\run-ui-tests.ps1`. Pass another font with `-FontPath`; the default is `assets\font.ttf`.
+The C text and widget harnesses in `tests/ui/` are part of `zig build test` and run on the same Linux, macOS, and Windows CI matrix as the Zig tests. The dedicated `zig build test-ui` target runs only those harnesses; pass an alternate font after `--` (for example, `zig build test-ui -- assets/font.ttf`). `scripts/run-ui-tests.ps1` remains available on Windows as a wrapper around that build step. Both harnesses share setup and assertion helpers in `tests/ui/test_support.c` and `tests/ui/test_support.h`. Shared Zig fixtures for sprite batches and compressed-image variants live in `src/engine/test_fixtures.zig`.
 
 ## Continuous integration
 
@@ -317,13 +318,12 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   ├── level.zig          Level: loads the tile map and reports its size
 │   │   ├── save.zig           Save file: versioned Parson JSON, with defaults for any fields a save omits
 │   │   └── config.zig         Title, window and native sizes, level path, UI font path and size, background color, update rate, scale mode, camera rate, zoom limits and step, asset list
-│   └── tests.zig              Test root for `zig build test`: unit and backend tests. Opens no window or GPU device.
+│   └── tests.zig              Test root for the Zig unit and backend tests. Opens no window or GPU device.
 ├── shaders/
 │   └── default.slang          Sprite vertex and fragment shaders. Compiled once per target, and `-DDXIL_TARGET` selects the D3D12 sampler layout
 ├── scripts/
-│   ├── run-ui-tests.ps1       Windows: builds and runs the text and widget C harnesses with the flags from the real build
+│   ├── run-ui-tests.ps1       Windows wrapper for `zig build test-ui`
 │   └── find-dxil.ps1          Windows: runs `zig build -Ddxil=true` and lists any .dxil and .spv outputs it finds
-├── ui-tests/                  Output folder for run-ui-tests.ps1: its build log and the compiled harnesses
 ├── tools/
 │   ├── assets/keyer.c         Cross-platform checkerboard-background removal tool
 │   ├── assets/import.c        Copies and registers atlas sprites
@@ -331,8 +331,10 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   └── atlas/pack.c           Build-time texture atlas packer; writes atlas.png and atlas.txt
 ├── tests/
 │   └── ui/
-│       ├── test_imgui.c       Scripted-input checks for the widgets (C, see Building and running)
-│       └── test_text.c        Checks for the baked atlas and the glyph quads text produces (C)
+│       ├── test_imgui.c       Scripted-input checks for the widgets (C)
+│       ├── test_text.c        Checks for the baked atlas and the glyph quads text produces (C)
+│       ├── test_support.c     Shared C harness setup and assertions
+│       └── test_support.h     Shared C test helpers
 ├── assets/
 │   ├── asset_manifest.txt     Runtime asset names, kinds, source/output paths, and dependencies
 │   ├── sprites.txt            Sprite names and image paths used by the atlas build
@@ -464,7 +466,7 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 - Validated names and paths (`memory/string.zig`), a hash map keyed by names (`memory/hash_map.zig`), and an asset table that gives each name a dense id (`assets/registry.zig`).
 - Tile maps (`scene/tilemap.zig`): a text format with three layers (ground, decoration, foreground), tile IDs, empty cells written as `.`, solid IDs, and a spawn cell. Malformed maps report what is wrong. `TileMap.moveBox` moves a box against solid tiles, one axis at a time.
 - Sprite-sheet animation (`animation/animation.zig`): clips that name a row of frames, with frame time and loop mode, and an animator per entity.
-- `zig build test` runs every unit test: the string, hash map, asset table, math, view, tile map, camera, animation, input, and renderer modules. It links SDL and opens no window or GPU device.
+- `zig build test` runs the Zig unit and public API tests plus both C UI harnesses. The Zig renderer tests link SDL, but no test opens a window or creates a GPU device.
 - Mouse mapping from window points to view and world pixels in `renderer/view.zig`, through `Context.mouseWorld`. Its tests run with `zig build test`.
 
 **Gameplay**
@@ -509,7 +511,7 @@ These estimates are rough. They measure how close each area is to something usab
 | View mapping | `renderer/view.zig` | Functional | 70% | Fits the native view to the window for each zoom and scale mode (`chooseFit`). Converts mouse positions from window points to view and world pixels, using the rectangle the view is drawn into. Pure math with its own tests, run by `zig build test`. |
 | Build | `build.zig`, `.github/workflows/ci.yml` | Functional | 70% | Builds SDL3, stb_image, stb_truetype, cglm, the UI C sources, embedded shaders (SPIR-V, optional DXIL and MSL), the texture atlas, the asset keyer, run step, and test step. CI builds and tests on Linux, macOS, and Windows. |
 | Assets | `tools/assets/keyer.c` | Utility | 30% | Cross-platform checkerboard keyer with configurable color thresholds, connected-border flood fill, and PNG output. It replaces the old one-off PowerShell script; it is not a general asset pipeline. |
-| Tests | `src/tests.zig` | Functional | 50% | Every unit test, run by `zig build test`: string, hash map, assets, compressed texture headers, IMA ADPCM decoding, math, view, tile map, camera, animation, input, shader format selection, renderer, and platform backend tests. No test opens a window or creates a GPU device. The C tests for text and widgets are in `tests/ui/` and run separately (see Building and running). |
+| Tests | `src/tests.zig`, `tests/ui/` | Functional | 50% | Zig unit and public API tests plus C text/widget harnesses, all run by `zig build test`. The Zig renderer tests link SDL, but no test opens a window or creates a GPU device. |
 | Vector | `memory/vector.zig` | Functional | 60% | Generic struct vector in AoS or SoA, one allocation for either layout, strided column views that work under both, and contiguous `items` under SoA. Missing: shrinking, sorting, and removal of unused capacity. |
 | Entities | `ecs/entity.zig`, `sample/main.zig` (swarm scene) | Functional | 70% | World of component rows with generational handles, dense rows, swap-remove despawn that repairs the moved row, and `handleAt` from a row to its handle. The iteration and mutation rules are in the module doc. The sample's swarm uses it. The player is still a struct in `game/player.zig`. Missing: spawning from level data, and queries beyond the row walk. |
 | Debug overlay | `profiling/debug_overlay.zig`, `profiling/frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |

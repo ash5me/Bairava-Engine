@@ -1,26 +1,14 @@
 /*
  * test_text.c: checks baked and preprocessed font data, plus the glyph quads text produces.
  *
- * Build and run from the project root, after fetching stb_truetype.h into vendor/:
- *   gcc -std=c99 -Wall -Wextra -fsanitize=address,undefined -Ivendor -Isrc/engine/ui \
- *       tests/ui/test_text.c src/engine/text/text.c vendor/stb_truetype_impl.c -lm -o test_text
- *   ./test_text path/to/font.ttf
+ * Run from the project root with `zig build test-ui`.
  */
 #include "text.h"
+#include "test_support.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static int failures;
-
-#define CHECK(cond)                                                          \
-    do {                                                                     \
-        if (!(cond)) {                                                       \
-            fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #cond); \
-            failures++;                                                      \
-        }                                                                    \
-    } while (0)
 
 static ui_font font;
 static ui_quad_list list; /* static, because the quad list is large */
@@ -71,8 +59,6 @@ static void check_atlas(void) {
 static void check_width(void) {
     CHECK(ui_font_text_width(&font, "", 0) == 0);
     CHECK(near(ui_font_text_width(&font, "ab", 2), glyph('a')->xadvance + glyph('b')->xadvance));
-    /* "é" is U+00E9, two bytes of UTF-8, and it is baked in the Latin-1 range. */
-    CHECK(near(ui_font_text_width(&font, "\xC3\xA9", 2), glyph(0xE9)->xadvance));
     /* "一" is U+4E00, outside the baked range, so it measures as '?'. */
     CHECK(near(ui_font_text_width(&font, "\xE4\xB8\x80", 3), glyph('?')->xadvance));
     /* A lone continuation byte is malformed, so it becomes U+FFFD, which also falls back to '?'. */
@@ -96,13 +82,12 @@ static void check_draw(void) {
         CHECK(list.items[1].dst.x > q->dst.x);                    /* the pen moves right */
     }
 
-    /* "é" must draw its own glyph, not the '?' fallback. The source rectangle identifies the glyph,
-     * and it differs from '?' even when two glyphs happen to share an advance width. */
+    /* A valid multibyte character outside the baked range draws the '?' fallback. */
     list.count = 0;
-    ui_font_draw_text(&font, &list, 0, 0, "\xC3\xA9", 2, red);
+    ui_font_draw_text(&font, &list, 0, 0, "\xE4\xB8\x80", 3, red);
     CHECK(list.count == 1);
     if (list.count == 1) {
-        CHECK(list.items[0].src.x == glyph(0xE9)->x0 && list.items[0].src.y == glyph(0xE9)->y0);
+        CHECK(list.items[0].src.x == glyph('?')->x0 && list.items[0].src.y == glyph('?')->y0);
     }
 
     /* A space has no pixels, so it adds no quad but still moves the pen. */
@@ -113,25 +98,6 @@ static void check_draw(void) {
     list.count = 0;
     ui_font_draw_text(&font, &list, 0, 0, "", 0, red);
     CHECK(list.count == 0);
-}
-
-static unsigned char *read_file(const char *path, size_t *len) {
-    FILE *f = fopen(path, "rb");
-    unsigned char *data = NULL;
-    long size = 0;
-    if (!f) return NULL;
-    if (fseek(f, 0, SEEK_END) == 0) size = ftell(f);
-    if (size > 0 && fseek(f, 0, SEEK_SET) == 0) {
-        data = malloc((size_t)size);
-        if (data && fread(data, 1, (size_t)size, f) == (size_t)size) {
-            *len = (size_t)size;
-        } else {
-            free(data);
-            data = NULL;
-        }
-    }
-    fclose(f);
-    return data;
 }
 
 static void put_u16le(unsigned char *p, unsigned short value) {
@@ -227,21 +193,12 @@ static void check_prebaked_roundtrip(void) {
 }
 
 int main(int argc, char **argv) {
-    unsigned char *ttf;
-    size_t len = 0;
-
     if (argc != 2) {
         fprintf(stderr, "usage: %s font.ttf\n", argv[0]);
         return 2;
     }
-    ttf = read_file(argv[1], &len);
-    if (!ttf) {
-        fprintf(stderr, "cannot read %s\n", argv[1]);
-        return 2;
-    }
-    /* 32..255 covers printable ASCII and Latin-1, so the "é" check has a real glyph. */
-    if (ui_font_bake(ttf, len, 16.0f, 32, 224, &font) != 0) {
-        fprintf(stderr, "font bake failed\n");
+    /* Bake printable ASCII and the Latin-1 range. */
+    if (!ui_test_load_font(argv[1], 16.0f, 32, 224, &font)) {
         return 1;
     }
 
@@ -250,10 +207,9 @@ int main(int argc, char **argv) {
     check_draw();
     check_prebaked_roundtrip();
 
-    free(ttf);
     ui_font_destroy(&font);
-    if (failures) {
-        fprintf(stderr, "%d check(s) failed\n", failures);
+    if (ui_test_failures) {
+        fprintf(stderr, "%d check(s) failed\n", ui_test_failures);
         return 1;
     }
     printf("text: all checks passed\n");

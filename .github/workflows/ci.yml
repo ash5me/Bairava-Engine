@@ -121,5 +121,5 @@ jobs:
         if: runner.os == 'macOS'
         run: zig build -Dmetal=true
 
-      - name: Run unit tests
+      - name: Run unit and UI tests
         run: zig build test

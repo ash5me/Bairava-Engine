@@ -66,8 +66,8 @@ Access:
 - In-game integration: `src/game/game.zig`
 
 Test/validation:
-- `zig build test`
-- Native UI harnesses remain outside the default Zig unit-test flow and are not required for the project’s normal build validation.
+- `zig build test` runs the Zig unit tests and the C text/widget harnesses on Windows, Linux, and macOS.
+- `zig build test-ui` runs only the C harnesses.
 
 ### P3.6 — Platform packaging and release automation
 - Added a release packaging script that builds a clean artifact in `zig-out/release`.

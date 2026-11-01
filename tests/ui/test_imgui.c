@@ -1,27 +1,12 @@
 /*
  * test_imgui.c: drives the widgets with scripted pointer input and checks what they report.
  *
- * Build and run from the project root, after fetching stb_truetype.h into vendor/:
- *   gcc -std=c99 -Wall -Wextra -fsanitize=address,undefined -Ivendor -Isrc/engine/ui \
- *       tests/ui/test_imgui.c src/engine/ui/imgui.c src/engine/text/text.c \
- *       vendor/stb_truetype_impl.c -lm -o test_imgui
- *   ./test_imgui path/to/font.ttf
+ * Run from the project root with `zig build test-ui`.
  */
 #include "imgui.h"
+#include "test_support.h"
 
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-static int failures;
-
-#define CHECK(cond)                                                          \
-    do {                                                                     \
-        if (!(cond)) {                                                       \
-            fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #cond); \
-            failures++;                                                      \
-        }                                                                    \
-    } while (0)
 
 /* The column every test uses: left edge 10, width 200, top 10. */
 #define COL_X 10.0f
@@ -181,40 +166,12 @@ static void test_overflow_is_counted(void) {
     CHECK(ui.list.dropped > 0);
 }
 
-static unsigned char *read_file(const char *path, size_t *len) {
-    FILE *f = fopen(path, "rb");
-    unsigned char *data = NULL;
-    long size = 0;
-    if (!f) return NULL;
-    if (fseek(f, 0, SEEK_END) == 0) size = ftell(f);
-    if (size > 0 && fseek(f, 0, SEEK_SET) == 0) {
-        data = malloc((size_t)size);
-        if (data && fread(data, 1, (size_t)size, f) == (size_t)size) {
-            *len = (size_t)size;
-        } else {
-            free(data);
-            data = NULL;
-        }
-    }
-    fclose(f);
-    return data;
-}
-
 int main(int argc, char **argv) {
-    unsigned char *ttf;
-    size_t len = 0;
-
     if (argc != 2) {
         fprintf(stderr, "usage: %s font.ttf\n", argv[0]);
         return 2;
     }
-    ttf = read_file(argv[1], &len);
-    if (!ttf) {
-        fprintf(stderr, "cannot read %s\n", argv[1]);
-        return 2;
-    }
-    if (ui_font_bake(ttf, len, 12.0f, 32, 95, &font) != 0) {
-        fprintf(stderr, "font bake failed\n");
+    if (!ui_test_load_font(argv[1], 12.0f, 32, 95, &font)) {
         return 1;
     }
     ui_init(&ui, &font);
@@ -227,10 +184,9 @@ int main(int argc, char **argv) {
     test_rows_stack();
     test_overflow_is_counted();
 
-    free(ttf);
     ui_font_destroy(&font);
-    if (failures) {
-        fprintf(stderr, "%d check(s) failed\n", failures);
+    if (ui_test_failures) {
+        fprintf(stderr, "%d check(s) failed\n", ui_test_failures);
         return 1;
     }
     printf("imgui: all checks passed\n");

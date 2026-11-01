@@ -109,6 +109,34 @@ fn addFreeType(b: *std.Build, module: *std.Build.Module) void {
     for (freetype_sources) |path| module.addCSourceFile(.{ .file = b.path(path) });
 }
 
+fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, with_imgui: bool) *std.Build.Step.Run {
+    const module = b.createModule(.{
+        .target = b.graph.host,
+        .optimize = .Debug,
+        .link_libc = true,
+    });
+    module.addIncludePath(b.path("vendor"));
+    module.addIncludePath(b.path("src/engine/text"));
+    module.addIncludePath(b.path("src/engine/ui"));
+    addFreeType(b, module);
+    module.addCSourceFile(.{ .file = b.path(test_source) });
+    module.addCSourceFile(.{ .file = b.path("tests/ui/test_support.c") });
+    module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
+    if (with_imgui) module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
+
+    const harness = b.addExecutable(.{ .name = name, .root_module = module });
+    const run = b.addRunArtifact(harness);
+    run.setCwd(b.path("."));
+    if (b.args) |args| {
+        if (args.len != 1) @panic("UI tests accept one font path after `--`");
+        run.addArgs(args);
+    } else {
+        run.addFileArg(b.path("assets/font.ttf"));
+    }
+    return run;
+}
+
 fn configureEngineModule(
     b: *std.Build,
     module: *std.Build.Module,
@@ -513,7 +541,14 @@ pub fn build(b: *std.Build) void {
     const run_api_tests = b.addRunArtifact(api_tests);
     run_api_tests.setCwd(b.path("."));
 
-    const test_step = b.step("test", "Run unit tests (no GPU device or window; links SDL and needs slangc)");
+    const run_text_ui_tests = addUiTestHarness(b, "test_text", "tests/ui/test_text.c", false);
+    const run_imgui_tests = addUiTestHarness(b, "test_imgui", "tests/ui/test_imgui.c", true);
+    const ui_test_step = b.step("test-ui", "Run the C text and widget UI tests");
+    ui_test_step.dependOn(&run_text_ui_tests.step);
+    ui_test_step.dependOn(&run_imgui_tests.step);
+
+    const test_step = b.step("test", "Run all unit, API, and UI tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_api_tests.step);
+    test_step.dependOn(ui_test_step);
 }
