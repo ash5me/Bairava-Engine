@@ -29,6 +29,9 @@ pub const DrawContext = @import("context.zig").DrawContext;
 pub const Allocators = @import("allocators.zig").ContextAllocators;
 pub const run = @import("runtime.zig").run;
 
+/// Semantic version of the public engine API. See docs/api-compatibility.md.
+pub const version = @import("../version.zig").version;
+
 /// How the native view is fitted to the window. See `view.chooseFit`.
 pub const ScaleMode = @import("../renderer/view.zig").ScaleMode;
 

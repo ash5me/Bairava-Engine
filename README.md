@@ -8,12 +8,15 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 
 **Status:** early prototype. The rendering path works end to end, and one animated character walks a tile map while the camera follows. Collision has not been started. The entity and audio modules exist and have tests, but the game does not use them yet. Text and basic UI widgets have a first version that hasn't been checked in the running game yet.
 
+The public engine API is version `0.1.0`, available as `engine.version`. See the [API compatibility policy](docs/api-compatibility.md) before upgrading or depending on the API.
+
 ## Contents
 
 - [Requirements](#requirements)
 - [Building and running](#building-and-running)
 - [Build profiles](docs/build-profiles.md)
 - [Dependency policy](docs/dependency-policy.md)
+- [API compatibility policy](docs/api-compatibility.md)
 - [Platform capabilities](docs/platform-capabilities.md)
 - [Debugging](#debugging)
 - [Controls](#controls)

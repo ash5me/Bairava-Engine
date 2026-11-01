@@ -17,6 +17,7 @@ pub const TextInput = engine.TextInput;
 pub const DrawContext = engine.DrawContext;
 pub const Allocators = engine.Allocators;
 pub const run = engine.run;
+pub const version = engine.version;
 pub const ScaleMode = engine.ScaleMode;
 pub const Effect = engine.Effect;
 pub const PostParams = engine.PostParams;

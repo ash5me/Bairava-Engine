@@ -95,7 +95,7 @@ if (Test-Path $assetSourceDir) {
     Copy-Item $assetSourceDir (Join-Path $releaseDir "assets") -Recurse -Force
 }
 
-foreach ($path in @("settings.txt", "README.md", "docs/build-profiles.md", "docs/dependency-policy.md", "docs/dependency-lock.json", "docs/platform-capabilities.md")) {
+foreach ($path in @("settings.txt", "README.md", "docs/build-profiles.md", "docs/dependency-policy.md", "docs/dependency-lock.json", "docs/platform-capabilities.md", "docs/api-compatibility.md")) {
     $source = Join-Path $root $path
     if (Test-Path $source) {
         $destination = Join-Path $releaseDir $path

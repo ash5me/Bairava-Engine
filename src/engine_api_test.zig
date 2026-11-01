@@ -14,9 +14,16 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.GamepadId;
     _ = bairava.TextInput;
     _ = bairava.run;
+    _ = bairava.version;
     _ = bairava.transform.Transform;
     _ = bairava.ui.TextLayout;
     _ = bairava.ui.TextAlignment;
+}
+
+test "the public engine version is the initial semantic API version" {
+    try std.testing.expectEqual(@as(u16, 0), bairava.version.major);
+    try std.testing.expectEqual(@as(u16, 1), bairava.version.minor);
+    try std.testing.expectEqual(@as(u16, 0), bairava.version.patch);
 }
 
 test "transforms compose through an entity hierarchy" {
