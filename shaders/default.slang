@@ -116,7 +116,8 @@ struct LightBlock {
     float4 ambient;           // rgb: the ambient light, which every lit sprite gets
     float4 lightPosition[16]; // xy: place in view pixels; z: height above the view; w: radius in pixels
     float4 lightColor[16];    // rgb: the light's color; a: its intensity
-    float4 info;              // x: how many lights are in use
+    float4 shadowSegment[16]; // xy: segment start; zw: segment end, in view pixels
+    float4 info;              // x: lights in use; y: shadow segments in use
 };
 
 #ifdef DXIL_TARGET
@@ -139,6 +140,19 @@ float4 sampleNormal(float2 uv) {
 }
 #endif
 
+bool blocksLight(float2 point, float2 light, float4 segment) {
+    float2 ray = light - point;
+    float2 edge = segment.zw - segment.xy;
+    float denominator = ray.x * edge.y - ray.y * edge.x;
+    if (abs(denominator) < 0.0001) return false;
+
+    float2 offset = segment.xy - point;
+    float alongRay = (offset.x * edge.y - offset.y * edge.x) / denominator;
+    float alongSegment = (offset.x * ray.y - offset.y * ray.x) / denominator;
+    return alongRay > 0.0001 && alongRay < 1.0 &&
+        alongSegment >= 0.0 && alongSegment <= 1.0;
+}
+
 [shader("fragment")]
 float4 litFragmentMain(VSOutput input) : SV_Target {
     float4 texel = sampleTex(input.uv);
@@ -154,9 +168,19 @@ float4 litFragmentMain(VSOutput input) : SV_Target {
 
     float3 light = lights.ambient.rgb;
     int count = int(lights.info.x);
+    int shadowCount = int(lights.info.y);
     for (int i = 0; i < count; i++) {
         float4 place = lights.lightPosition[i];
         float4 color = lights.lightColor[i];
+        bool blocked = false;
+        for (int j = 0; j < shadowCount; j++) {
+            if (blocksLight(input.position.xy, place.xy, lights.shadowSegment[j])) {
+                blocked = true;
+                break;
+            }
+        }
+        if (blocked) continue;
+
         // The light sits `place.z` above the view at (place.x, place.y). The vector from this pixel to the
         // light has that height as its z component, so a sprite lit from above faces it.
         float3 to_light = float3(place.xy - input.position.xy, place.z);

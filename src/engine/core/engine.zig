@@ -66,6 +66,8 @@ pub const Rect = @import("../renderer/sprite.zig").Rect;
 pub const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
 /// A point light for lit sprites, added with `SpriteBatch.addLight` in `draw`. See renderer/sprite.zig.
 pub const Light = @import("../renderer/sprite.zig").Light;
+/// A 2D line segment that blocks point lights added to a sprite batch.
+pub const ShadowSegment = @import("../renderer/sprite.zig").ShadowSegment;
 pub const Texture = @import("../renderer/texture.zig").Texture;
 /// A texture atlas on the GPU, with where each sprite sits in it. See `Context.loadAtlas`.
 pub const LoadedAtlas = @import("../renderer/loaded_atlas.zig").LoadedAtlas;

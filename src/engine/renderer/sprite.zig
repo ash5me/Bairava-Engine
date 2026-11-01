@@ -73,6 +73,12 @@ pub const Light = struct {
     intensity: f32 = 1,
 };
 
+/// A 2D line segment that occludes point lights. Coordinates are in view pixels.
+pub const ShadowSegment = struct {
+    start: [2]f32,
+    end: [2]f32,
+};
+
 /// Storage starts at these sizes and doubles when a frame needs more. A frame has no sprite or
 /// texture-switch limit.
 const initial_sprites = 1024;
@@ -122,9 +128,10 @@ pub const SpriteBatch = struct {
     draw_calls: u32 = 0,
     /// Maps pixel coordinates in the viewport to normalized device coordinates. Set by `begin`.
     projection: math.Mat4 = undefined,
-    /// The ambient light and the point lights for this frame, as the lit pipeline reads them. `begin` resets them.
+    /// The ambient light, point lights, and shadow segments for this frame. `begin` resets them.
     lighting: render_types.LightUniforms = undefined,
     light_count: u32 = 0,
+    shadow_segment_count: u32 = 0,
     /// True when `prepare` found a run with a normal map, so `upload` must push the lights.
     has_lit_runs: bool = false,
     /// The one-texel map that lit sprites without a normal map sample. It faces the viewer. The batch owns it, and
@@ -159,6 +166,7 @@ pub const SpriteBatch = struct {
         self.projection = math.ortho2d(viewport_w, viewport_h);
         self.lighting.reset();
         self.light_count = 0;
+        self.shadow_segment_count = 0;
         self.has_lit_runs = false;
     }
 
@@ -179,6 +187,24 @@ pub const SpriteBatch = struct {
         self.lighting.color[slot] = .{ light.color[0], light.color[1], light.color[2], light.intensity };
         self.light_count += 1;
         self.lighting.info[0] = @floatFromInt(self.light_count);
+    }
+
+    /// Adds a line segment that blocks point lights when the segment lies between the light and a
+    /// lit fragment. Ambient light is not blocked. A frame holds `render_types.max_shadow_segments`
+    /// segments; exceeding that limit panics.
+    pub fn addShadowSegment(self: *SpriteBatch, segment: ShadowSegment) void {
+        if (self.shadow_segment_count == render_types.max_shadow_segments) {
+            std.debug.panic("a frame holds at most {d} shadow segments", .{render_types.max_shadow_segments});
+        }
+        const slot = self.shadow_segment_count;
+        self.lighting.shadow_segment[slot] = .{
+            segment.start[0],
+            segment.start[1],
+            segment.end[0],
+            segment.end[1],
+        };
+        self.shadow_segment_count += 1;
+        self.lighting.info[1] = @floatFromInt(self.shadow_segment_count);
     }
 
     /// Queues one sprite. `src` is the texel rectangle to sample, and `dst` is the on-screen rectangle

@@ -71,8 +71,10 @@ pub fn grownCapacity(current: usize, needed: usize) usize {
 /// The most lights one frame may place. The lights are uniform data, so this is also the array size in
 /// `LightBlock` in shaders/default.slang, and the two must change together.
 pub const max_lights: usize = 16;
+/// The most shadow-casting line segments one frame may submit to the lit sprite shader.
+pub const max_shadow_segments: usize = 16;
 
-/// The uniform block lit sprites read: the ambient light and the lights in use. Every field is four floats,
+/// The uniform block lit sprites read: ambient light, point lights, and shadow segments. Every field is four floats,
 /// so each row is 16 bytes and the struct's bytes can be pushed to the GPU as they are. The layout matches
 /// `LightBlock` in shaders/default.slang, and a test checks the size.
 pub const LightUniforms = extern struct {
@@ -82,7 +84,9 @@ pub const LightUniforms = extern struct {
     position: [max_lights][4]f32,
     /// Per light: rgb, then the intensity multiplier.
     color: [max_lights][4]f32,
-    /// x holds how many lights are in use. The rest is unused.
+    /// Per segment: start xy and end xy, in view pixels.
+    shadow_segment: [max_shadow_segments][4]f32,
+    /// x holds the light count; y holds the shadow segment count.
     info: [4]f32,
 
     /// Clears every light and sets the ambient light to full brightness.
@@ -93,8 +97,8 @@ pub const LightUniforms = extern struct {
 };
 
 test "the light block is the size its shader declares, in whole 16-byte rows" {
-    // Four rows of four floats for the ambient and the info rows, plus two arrays of `max_lights` rows.
-    try std.testing.expectEqual(@as(usize, 16 * (2 + 2 * max_lights)), @sizeOf(LightUniforms));
+    // One ambient row, one info row, and rows for lights and shadow segments.
+    try std.testing.expectEqual(@as(usize, 16 * (2 + 2 * max_lights + max_shadow_segments)), @sizeOf(LightUniforms));
     try std.testing.expectEqual(@as(usize, 0), @sizeOf(LightUniforms) % 16);
 }
 
@@ -103,7 +107,9 @@ test "a reset light block has full ambient light and no lights" {
     lights.reset();
     try std.testing.expectEqual(@as(f32, 1), lights.ambient[0]);
     try std.testing.expectEqual(@as(f32, 0), lights.info[0]);
+    try std.testing.expectEqual(@as(f32, 0), lights.info[1]);
     try std.testing.expectEqual(@as(f32, 0), lights.position[max_lights - 1][3]);
+    try std.testing.expectEqual(@as(f32, 0), lights.shadow_segment[max_shadow_segments - 1][3]);
 }
 
 test "the post settings are one 16-byte row, and the defaults keep the effects' original strengths" {

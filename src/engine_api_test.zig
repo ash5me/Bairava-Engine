@@ -22,6 +22,7 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.localization.Catalog;
     _ = bairava.particles.System;
     _ = bairava.particles.Config;
+    _ = bairava.ShadowSegment;
 }
 
 test "the public engine version is the initial semantic API version" {

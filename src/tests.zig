@@ -204,17 +204,23 @@ test "lights and ambient light are stored for the frame and restored by the next
     batch.begin(320, 180);
     batch.setAmbient(.{ 0.2, 0.2, 0.3 });
     batch.addLight(.{ .x = 40, .y = 30, .radius = 64, .color = .{ 1, 0.5, 0 }, .intensity = 2 });
+    batch.addShadowSegment(.{ .start = .{ 30, 20 }, .end = .{ 50, 20 } });
     try std.testing.expectEqual(@as(u32, 1), batch.light_count);
+    try std.testing.expectEqual(@as(u32, 1), batch.shadow_segment_count);
     try std.testing.expectEqual(@as(f32, 1), batch.lighting.info[0]);
+    try std.testing.expectEqual(@as(f32, 1), batch.lighting.info[1]);
     try std.testing.expectEqual(@as(f32, 40), batch.lighting.position[0][0]);
     try std.testing.expectEqual(@as(f32, 64), batch.lighting.position[0][3]);
     try std.testing.expectEqual(@as(f32, 0.5), batch.lighting.color[0][1]);
     try std.testing.expectEqual(@as(f32, 2), batch.lighting.color[0][3]);
+    try std.testing.expectEqual([4]f32{ 30, 20, 50, 20 }, batch.lighting.shadow_segment[0]);
     try std.testing.expectApproxEqAbs(@as(f32, 0.2), batch.lighting.ambient[0], 1e-6);
 
     batch.begin(320, 180);
     try std.testing.expectEqual(@as(u32, 0), batch.light_count);
+    try std.testing.expectEqual(@as(u32, 0), batch.shadow_segment_count);
     try std.testing.expectEqual(@as(f32, 0), batch.lighting.info[0]);
+    try std.testing.expectEqual(@as(f32, 0), batch.lighting.info[1]);
     try std.testing.expectEqual(@as(f32, 1), batch.lighting.ambient[0]);
 }
 

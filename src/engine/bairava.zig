@@ -36,6 +36,7 @@ pub const Camera = engine.Camera;
 pub const Rect = engine.Rect;
 pub const SpriteBatch = engine.SpriteBatch;
 pub const Light = engine.Light;
+pub const ShadowSegment = engine.ShadowSegment;
 pub const Texture = engine.Texture;
 pub const LoadedAtlas = engine.LoadedAtlas;
 pub const TextureHandle = engine.TextureHandle;
