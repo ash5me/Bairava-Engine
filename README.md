@@ -55,7 +55,7 @@ zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
 zig build run -Dmetal=true         # also compile MSL shaders and allow SDL to select Metal
 zig build run-sample               # build and launch the scene sample, which uses no Semkootru code
 zig build run-benchmark            # launch a deterministic 1000-sprite profiling workload
-zig build test                     # run Zig, public API, and C UI tests (needs SDL and slangc; no GPU/window)
+zig build test                     # run Zig, public API, C UI, and asset-tool tests (needs SDL, slangc, Python 3; no GPU/window)
 zig build test-ui                  # run only the C text and widget tests
 powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
                                   # package the current build into zig-out/release for a ship-ready artifact

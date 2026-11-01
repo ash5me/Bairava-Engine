@@ -492,6 +492,11 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_asset_importer.addArgs(args);
     b.step("asset-import", "Copy and register an image for the sprite atlas").dependOn(&run_asset_importer.step);
 
+    const asset_tool_tests = b.addSystemCommand(&.{ "python", "tools/assets/test_tools.py" });
+    asset_tool_tests.addArtifactArg(asset_builder);
+    asset_tool_tests.addArtifactArg(asset_keyer);
+    asset_tool_tests.addArtifactArg(asset_importer);
+
     // Compile each shader entry point for each target, and embed the results in the executable
     // through a generated module, so the game reads no shader files at runtime. DXIL and MSL are
     // optional build targets; Vulkan SPIR-V is always present.
@@ -565,4 +570,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_api_tests.step);
     test_step.dependOn(ui_test_step);
+    test_step.dependOn(&asset_tool_tests.step);
 }

@@ -12,6 +12,7 @@ const application = @import("application.zig");
 const allocator_types = @import("allocators.zig");
 const context = @import("context.zig");
 const event = @import("event.zig");
+const fixed_timestep = @import("fixed_timestep.zig");
 const lifecycle = @import("lifecycle.zig");
 const startup = @import("startup.zig");
 const logging = @import("../logging/log.zig");
@@ -31,9 +32,6 @@ const Config = application.Config;
 const DrawContext = context.DrawContext;
 const elog = logging.scoped("engine");
 
-/// Longest frame time the loop will use. A longer stall is cut short, so the game slows down
-/// rather than racing to catch up.
-const max_dt: f32 = 0.1;
 /// How long to sleep when there is nothing to draw, in milliseconds. A minimized window has no
 /// pixels to draw into, so the loop idles instead of spinning. The sleep is short enough that a
 /// restored window shows up within a frame.
@@ -83,7 +81,7 @@ pub fn run(comptime Game: type, config: Config) !void {
     elog.info("profiling zones {s}", .{if (profile.enabled) "on (Tracy)" else "off"});
     elog.info("development tools {s}", .{if (gate.enabled) "on" else "off"});
 
-    const fixed_dt: f32 = 1.0 / @as(f32, @floatFromInt(config.update_hz));
+    var timestep = fixed_timestep.Accumulator.init(config.update_hz);
 
     var allocators = allocator_types.RuntimeAllocators.init(config.allocator);
     defer allocators.deinit();
@@ -125,7 +123,6 @@ pub fn run(comptime Game: type, config: Config) !void {
 
     var last_mode = ctx.scale_mode;
     var last_ns = platform.clock.nowNs();
-    var accumulator: f32 = 0;
     var total_frames: u64 = 0;
     var last_draw_calls: u32 = 0;
 
@@ -136,11 +133,11 @@ pub fn run(comptime Game: type, config: Config) !void {
         const frame_zone = profile.zoneNamed(@src(), "frame");
         defer frame_zone.End();
 
-        // Frame timing: seconds since the last frame, capped at max_dt.
+        // Frame timing: seconds since the last frame, capped by the fixed-step accumulator.
         const now_ns = platform.clock.nowNs();
         // The overlay graphs the raw time, so a long stall shows in full. The update loop uses the capped time.
         const frame_seconds = @as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0;
-        const frame_dt = @min(frame_seconds, max_dt);
+        const frame_dt = timestep.addFrameTime(frame_seconds);
         last_ns = now_ns;
         if (gate.enabled) collector.stats.record(.frame, frame_seconds);
 
@@ -165,12 +162,11 @@ pub fn run(comptime Game: type, config: Config) !void {
 
         // Fixed-timestep updates. Run whole steps while the accumulated time covers one, so game
         // logic advances at the same rate on any display. Stop early if the game quits.
-        accumulator += frame_dt;
         var steps: u32 = 0;
         var update_seconds: f32 = 0;
-        while (accumulator >= fixed_dt and ctx.running) {
+        while (timestep.hasStep() and ctx.running) {
             session.input.latch();
-            ctx.dt = fixed_dt;
+            ctx.dt = timestep.fixed_dt;
             const update_start = clockIf();
             {
                 const zone = profile.zoneNamed(@src(), "update");
@@ -178,7 +174,7 @@ pub fn run(comptime Game: type, config: Config) !void {
                 game.update(ctx);
             }
             update_seconds += secondsBetween(update_start, clockIf());
-            accumulator -= fixed_dt;
+            timestep.consumeStep();
             steps += 1;
         }
         if (gate.enabled) collector.stats.record(.update, update_seconds);
@@ -200,7 +196,7 @@ pub fn run(comptime Game: type, config: Config) !void {
         }
 
         // The leftover time as a fraction of a step. Drawing blends between the last two updates by this amount.
-        const alpha = @min(accumulator / fixed_dt, 1.0);
+        const alpha = timestep.interpolationAlpha();
         logging.assert(alpha >= 0.0 and alpha <= 1.0, @src(), "blend factor {d} is outside 0 to 1", .{alpha});
 
         // Window size in pixels, which is also the swapchain size on high-DPI displays.
