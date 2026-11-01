@@ -22,6 +22,7 @@ const settings = @import("settings.zig");
 const application = @import("application.zig");
 const context = @import("context.zig");
 const capability = @import("../capabilities.zig");
+const game_events = @import("game_events.zig");
 
 const Config = application.Config;
 const Context = context.Context;
@@ -33,6 +34,8 @@ pub const Session = struct {
     /// Text of the settings file. It is kept for the whole run, because the game reads from it.
     settings_bytes: ?[]u8 = null,
     engine_allocator: std.mem.Allocator = undefined,
+    game_events: game_events.Queue = undefined,
+    game_events_initialized: bool = false,
     platform_started: bool = false,
     window_created: bool = false,
     gpu_created: bool = false,
@@ -77,6 +80,8 @@ pub const Session = struct {
             return err;
         };
         self.engine_allocator = allocators.engineAllocator();
+        self.game_events = game_events.Queue.init(self.engine_allocator);
+        self.game_events_initialized = true;
         self.settings_bytes = readSettings(self.engine_allocator, config.settings_file);
         const settings_text: []const u8 = self.settings_bytes orelse "";
         applyLogLevel(settings_text);
@@ -140,6 +145,7 @@ pub const Session = struct {
             .gpu_state = @ptrCast(self.gpu.device),
             .allocators = allocators.context(),
             .input = &self.input,
+            .event_reader = self.game_events.reader(),
             .scale_mode = config.scale_mode,
             .zoom_min = config.zoom_min,
             .zoom_max = config.zoom_max,
@@ -148,6 +154,7 @@ pub const Session = struct {
             .audio = &self.audio,
             .immediate_present_supported = self.immediate_present_supported,
             .settings_text = settings_text,
+            .settings_file = config.settings_file,
             .textures = self.textures,
             .diagnostics = &self.collector,
             .reloads = &self.reloads,
@@ -163,6 +170,10 @@ pub const Session = struct {
         if (self.stopped) return;
         self.stopped = true;
 
+        if (self.game_events_initialized) {
+            self.game_events.deinit();
+            self.game_events_initialized = false;
+        }
         if (self.audio_created) {
             self.audio.deinit();
             self.audio_created = false;

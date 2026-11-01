@@ -40,6 +40,7 @@ test {
     _ = @import("engine/ecs/entity.zig");
     _ = @import("engine/core/math.zig");
     _ = @import("engine/core/fixed_timestep.zig");
+    _ = @import("engine/core/game_events.zig");
     _ = @import("engine/core/transform.zig");
     _ = @import("engine/core/allocators.zig");
     _ = @import("engine/renderer/view.zig");
@@ -62,6 +63,7 @@ test {
     _ = @import("engine/physics/shapes.zig");
     _ = @import("engine/physics/collision.zig");
     _ = @import("engine/physics/queries.zig");
+    _ = @import("engine/physics/broad_phase.zig");
     _ = @import("engine/assets/manager.zig");
     _ = @import("engine/scene/scene_manager.zig");
     _ = @import("engine/scene/host.zig");

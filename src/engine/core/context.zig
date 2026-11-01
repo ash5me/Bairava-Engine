@@ -27,6 +27,9 @@ const hot_reload = @import("../assets/hot_reload.zig");
 const validate = @import("../assets/validate.zig");
 const gate = @import("../diagnostics/gate.zig");
 const capability = @import("../capabilities.zig");
+const game_events = @import("game_events.zig");
+const action = @import("../input/action.zig");
+const bindings = @import("../input/mapping.zig");
 
 const ScaleMode = view.ScaleMode;
 const elog = logging.scoped("engine");
@@ -83,6 +86,8 @@ pub const Context = struct {
     allocators: allocator_types.ContextAllocators,
     /// Held keys, presses, releases, and clicks for this update step.
     input: *const Input,
+    /// Ordered translated platform events waiting for game code.
+    event_reader: *game_events.Reader,
     /// Length of one update step in seconds. This is always the fixed step.
     dt: f32 = 0,
     /// Set to false to end the main loop.
@@ -117,6 +122,8 @@ pub const Context = struct {
     /// Text of the settings file, read at startup. Empty when there is no file. The game reads its
     /// key bindings from it in `init`.
     settings_text: []const u8 = "",
+    /// Settings file path, relative to the executable folder.
+    settings_file: []const u8 = "settings.txt",
 
     /// The mouse position in world pixels, as the player sees it. It is the cursor's place in the
     /// view drawn last frame, plus that frame's camera position. Use this in `update` rather than
@@ -128,6 +135,12 @@ pub const Context = struct {
     /// Reports features available to this running game build on the active GPU and audio device.
     pub fn capabilities(self: *const Context) Capabilities {
         return capability.query(contextGpuDevice(self), self.audio.device != null, self.immediate_present_supported);
+    }
+
+    /// Removes the next translated platform event, or returns null when none are queued. Events
+    /// are available only to update code; each value is returned by copy.
+    pub fn pollEvent(self: *Context) ?game_events.Event {
+        return game_events.poll(self.event_reader);
     }
 
     /// Multiplies the zoom target by `factor`, within the zoom bounds. Use a factor above 1 to zoom
@@ -247,6 +260,14 @@ pub const Context = struct {
             error.PathTooLong => error.PathTooLong,
             else => error.WriteFailed,
         };
+    }
+
+    /// Persists an action map in the settings file. Existing comments and non-binding settings are
+    /// kept, while bindings for this action enum are replaced. Writes atomically beside the executable.
+    pub fn saveBindings(self: *const Context, comptime Action: type, map: *const action.ActionMap(Action)) !void {
+        const text = try bindings.serialize(self.allocators.frame, Action, map, self.settings_text);
+        defer self.allocators.frame.free(text);
+        try self.writeFile(self.settings_file, text);
     }
 
     /// Registers a file to watch for changes, so `takeChanged` reports it. Only development builds watch, so a

@@ -1,6 +1,5 @@
-//! Queries and movement against a list of static colliders. Each query scans the slice in order, so
-//! the scene's list of colliders is the broad phase. A spatial index can replace the scan later, once
-//! a profile shows the scan costs too much.
+//! Queries and movement against a list of static colliders. Slice-based queries are linear; use
+//! broad_phase.zig when a static scene needs a spatial index.
 //!
 //! Detection and response are separate. `firstOverlap` and `anyOverlap` only report. `moveBox` reports
 //! where a box ends up, and it never changes a collider.
@@ -46,6 +45,27 @@ pub fn firstOverlap(colliders: []const Collider, box: Box, mask: u32) ?usize {
         if (hits(c, mask) and collision.boxesOverlap(c.box, box)) return i;
     }
     return null;
+}
+
+/// The index of the first collider, in slice order, containing `point` and selected by `mask`.
+pub fn firstAtPoint(colliders: []const Collider, point: Point, mask: u32) ?usize {
+    for (colliders, 0..) |collider, index| {
+        if (hits(collider, mask) and collision.pointInBox(point, collider.box)) return index;
+    }
+    return null;
+}
+
+/// Writes region-overlapping collider indices in slice order. Returns the number written;
+/// additional hits are omitted when `out` is too small.
+pub fn queryRegion(colliders: []const Collider, region: Box, mask: u32, out: []usize) usize {
+    var written: usize = 0;
+    for (colliders, 0..) |collider, index| {
+        if (!hits(collider, mask) or !collision.boxesOverlap(region, collider.box)) continue;
+        if (written == out.len) break;
+        out[written] = index;
+        written += 1;
+    }
+    return written;
 }
 
 /// Moves `box` by (dx, dy) and returns its new top-left corner. Only colliders the mask hits can stop it.
@@ -125,6 +145,23 @@ test "firstOverlap reports the first hit in slice order, and nothing for an empt
     const none = [_]Collider{};
     try expectEqual(@as(?usize, null), firstOverlap(&none, probe, all_layers));
     try expectEqual(false, anyOverlap(&none, probe, all_layers));
+}
+
+test "point and region list queries honor masks, half-open edges, and output capacity" {
+    const colliders = [_]Collider{
+        .{ .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 }, .layer = 1 },
+        .{ .box = .{ .x = 5, .y = 5, .w = 10, .h = 10 }, .layer = 2 },
+        .{ .box = .{ .x = 20, .y = 20, .w = 0, .h = 10 }, .layer = 1 },
+    };
+    try expectEqual(@as(?usize, 0), firstAtPoint(&colliders, .{ .x = 5, .y = 5 }, 1));
+    try expectEqual(@as(?usize, 1), firstAtPoint(&colliders, .{ .x = 10, .y = 10 }, 2));
+    try expectEqual(@as(?usize, null), firstAtPoint(&colliders, .{ .x = 10, .y = 5 }, 1));
+
+    var indices: [1]usize = undefined;
+    const written = queryRegion(&colliders, .{ .x = 4, .y = 4, .w = 8, .h = 8 }, 0b11, &indices);
+    try expectEqual(@as(usize, 1), written);
+    try expectEqual(@as(usize, 0), indices[0]);
+    try expectEqual(@as(usize, 0), queryRegion(&colliders, .{ .x = 100, .y = 100, .w = 1, .h = 1 }, all_layers, &indices));
 }
 
 test "moveBox stops flush against the nearest wall on each side" {

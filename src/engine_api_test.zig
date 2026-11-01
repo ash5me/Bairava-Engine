@@ -1,5 +1,6 @@
 const bairava = @import("bairava");
 const std = @import("std");
+const controls = @import("game/controls.zig");
 
 test "the named Bairava module exports its public engine API" {
     _ = bairava.Config;
@@ -8,6 +9,10 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.ShaderFormats;
     _ = bairava.TextureFormats;
     _ = bairava.PresentationCapabilities;
+    _ = bairava.Event;
+    _ = bairava.Scancode;
+    _ = bairava.GamepadId;
+    _ = bairava.TextInput;
     _ = bairava.run;
     _ = bairava.transform.Transform;
 }
@@ -114,4 +119,30 @@ test "Context exposes an SDL-free runtime capabilities query" {
     try std.testing.expect(@hasField(bairava.TextureFormats, "astc_4x4"));
     try std.testing.expect(@hasField(bairava.TextureFormats, "rgba8"));
     try std.testing.expect(@hasField(bairava.PresentationCapabilities, "immediate"));
+}
+
+test "Context exposes SDL-independent typed game events" {
+    try std.testing.expect(@hasDecl(bairava.Context, "pollEvent"));
+    try std.testing.expect(@typeInfo(bairava.Event) == .@"union");
+    try std.testing.expect(@hasField(bairava.Event, "key_down"));
+    try std.testing.expect(@hasField(bairava.Event, "gamepad_axis"));
+    try std.testing.expect(@hasField(bairava.Event, "text_input"));
+    try std.testing.expect(std.mem.indexOf(u8, @typeName(bairava.Event), "SDL_") == null);
+    expectNoSdlApi(bairava.GamepadId);
+    expectNoSdlApi(bairava.TextInput);
+}
+
+test "game rebinding rolls back when saving settings fails" {
+    var context: bairava.Context = undefined;
+    context.allocators.frame = std.testing.allocator;
+    context.settings_file = "../unsafe.txt";
+    context.settings_text = "resolution = 960x540\n";
+
+    var bindings = controls.load(context.settings_text);
+    const previous = bindings.bindingsOf(.move_left)[0];
+    try std.testing.expectError(
+        error.WriteFailed,
+        controls.rebind(&context, &bindings, .move_left, &.{.{ .key = .q }}),
+    );
+    try std.testing.expectEqual(previous, bindings.bindingsOf(.move_left)[0]);
 }

@@ -44,3 +44,18 @@ pub const Bindings = engine.ActionMap(Action);
 pub fn load(settings_text: []const u8) Bindings {
     return engine.bindings.load(Action, defaults, settings_text);
 }
+
+/// Changes one action and persists the whole map. If writing fails, the previous bindings remain active.
+pub fn rebind(ctx: *const engine.Context, bindings: *Bindings, which: Action, list: []const engine.Binding) !void {
+    if (list.len > engine.bindings.max_bindings) return error.TooManyBindings;
+
+    var previous: [engine.bindings.max_bindings]engine.Binding = undefined;
+    const old = bindings.bindingsOf(which);
+    @memcpy(previous[0..old.len], old);
+
+    bindings.set(which, list);
+    ctx.saveBindings(Action, bindings) catch |err| {
+        bindings.set(which, previous[0..old.len]);
+        return err;
+    };
+}

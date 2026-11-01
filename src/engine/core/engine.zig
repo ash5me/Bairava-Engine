@@ -20,6 +20,11 @@ pub const Capabilities = @import("../capabilities.zig").Capabilities;
 pub const ShaderFormats = @import("../capabilities.zig").ShaderFormats;
 pub const TextureFormats = @import("../capabilities.zig").TextureFormats;
 pub const PresentationCapabilities = @import("../capabilities.zig").PresentationCapabilities;
+/// A translated, SDL-independent platform event delivered through `Context.pollEvent`.
+pub const Event = @import("../platform/types.zig").Event;
+pub const Scancode = @import("../platform/types.zig").Scancode;
+pub const GamepadId = @import("../platform/types.zig").GamepadId;
+pub const TextInput = @import("../platform/types.zig").TextInput;
 pub const DrawContext = @import("context.zig").DrawContext;
 pub const Allocators = @import("allocators.zig").ContextAllocators;
 pub const run = @import("runtime.zig").run;

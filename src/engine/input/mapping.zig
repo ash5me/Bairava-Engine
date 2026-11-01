@@ -2,6 +2,7 @@
 //! replaces the bindings of one action:
 //!
 //!     bind <action> = <binding>, <binding>, ...
+//!     bind <action> = none
 //!
 //! Binding names are the ones below. A name that isn't valid is logged and dropped, and an action
 //! whose names are all invalid keeps its defaults.
@@ -115,6 +116,10 @@ fn bindLine(comptime Action: type, map: *action.ActionMap(Action), number: usize
         log.warn("settings line {d}: '{s}' is not an action", .{ number, name });
         return;
     };
+    if (std.mem.eql(u8, std.mem.trim(u8, value, " \t"), "none")) {
+        map.set(which, &.{});
+        return;
+    }
     const list = parseBindingList(value);
     if (list.skipped > 0) {
         log.warn("settings line {d}: {d} binding name(s) not recognized or past the limit of {d}, so they are dropped", .{ number, list.skipped, max_bindings });
@@ -124,6 +129,95 @@ fn bindLine(comptime Action: type, map: *action.ActionMap(Action), number: usize
         return;
     }
     map.set(which, list.items[0..list.len]);
+}
+
+/// Serializes a map into settings text. Existing comments, window settings, and unrelated game
+/// settings are preserved; bind lines for actions in `Action` are replaced with the map's values.
+pub fn serialize(allocator: std.mem.Allocator, comptime Action: type, map: *const action.ActionMap(Action), existing: []const u8) std.mem.Allocator.Error![]u8 {
+    var preserved_len: usize = 0;
+    var start: usize = 0;
+    while (start < existing.len) {
+        const end = std.mem.indexOfScalarPos(u8, existing, start, '\n') orelse existing.len;
+        const next = if (end < existing.len) end + 1 else end;
+        if (!replacesBindingLine(Action, existing[start..end])) preserved_len += next - start;
+        start = next;
+    }
+    if (existing.len > 0 and existing[existing.len - 1] != '\n') {
+        if (preserved_len > 0) preserved_len += 1;
+    }
+
+    var line_buffer: [512]u8 = undefined;
+    var bindings_len: usize = 0;
+    for (std.enums.values(Action)) |which| {
+        bindings_len += formatBindingLine(&line_buffer, which, map.bindingsOf(which)).len;
+    }
+    const output = try allocator.alloc(u8, preserved_len + bindings_len);
+    errdefer allocator.free(output);
+
+    var cursor: usize = 0;
+    start = 0;
+    while (start < existing.len) {
+        const end = std.mem.indexOfScalarPos(u8, existing, start, '\n') orelse existing.len;
+        const next = if (end < existing.len) end + 1 else end;
+        if (!replacesBindingLine(Action, existing[start..end])) {
+            @memcpy(output[cursor..][0 .. next - start], existing[start..next]);
+            cursor += next - start;
+        }
+        start = next;
+    }
+    if (cursor > 0 and output[cursor - 1] != '\n') {
+        output[cursor] = '\n';
+        cursor += 1;
+    }
+    for (std.enums.values(Action)) |which| {
+        const line = formatBindingLine(&line_buffer, which, map.bindingsOf(which));
+        @memcpy(output[cursor..][0..line.len], line);
+        cursor += line.len;
+    }
+    return output;
+}
+
+fn replacesBindingLine(comptime Action: type, raw: []const u8) bool {
+    const text = std.mem.trim(u8, raw, " \t\r");
+    if (!std.mem.startsWith(u8, text, "bind ")) return false;
+    const name_text = text["bind ".len..];
+    const equals = std.mem.indexOfScalar(u8, name_text, '=') orelse return false;
+    const name = std.mem.trim(u8, name_text[0..equals], " \t");
+    return std.meta.stringToEnum(Action, name) != null;
+}
+
+fn formatBindingLine(buffer: []u8, which: anytype, bindings: []const Binding) []const u8 {
+    var used = (std.fmt.bufPrint(buffer, "bind {s} = ", .{@tagName(which)}) catch unreachable).len;
+    if (bindings.len == 0) {
+        used += (std.fmt.bufPrint(buffer[used..], "none", .{}) catch unreachable).len;
+    } else {
+        for (bindings, 0..) |binding, index| {
+            if (index != 0) {
+                const separator = std.fmt.bufPrint(buffer[used..], ", ", .{}) catch unreachable;
+                used += separator.len;
+            }
+            const name = bindingName(binding, buffer[used..]);
+            used += name.len;
+        }
+    }
+    buffer[used] = '\n';
+    return buffer[0 .. used + 1];
+}
+
+fn bindingName(binding: Binding, output: []u8) []const u8 {
+    return switch (binding) {
+        .key => |key| std.fmt.bufPrint(output, "{s}", .{@tagName(key)}) catch unreachable,
+        .mouse => |button| std.fmt.bufPrint(output, "mouse_{s}", .{@tagName(button)}) catch unreachable,
+        .gamepad_button => |button| std.fmt.bufPrint(output, "pad_{s}", .{@tagName(button)}) catch unreachable,
+        .gamepad_axis => |axis| blk: {
+            const trigger = isTrigger(axis.axis);
+            const suffix: []const u8 = if (trigger) "" else switch (axis.direction) {
+                .negative => "-",
+                .positive => "+",
+            };
+            break :blk std.fmt.bufPrint(output, "pad_{s}{s}", .{ @tagName(axis.axis), suffix }) catch unreachable;
+        },
+    };
 }
 
 const TestAction = enum { jump, pause };
@@ -224,4 +318,31 @@ test "lines that are not actions, window settings, and comments do not change th
     const map = load(TestAction, test_defaults, text);
     try std.testing.expectEqual(Binding{ .key = .w }, map.bindingsOf(.jump)[0]);
     try std.testing.expectEqual(Binding{ .key = .escape }, map.bindingsOf(.pause)[0]);
+}
+
+test "serialized bindings preserve other settings and round trip action values" {
+    const original =
+        \\# user settings
+        \\resolution = 1280x720
+        \\bind jump = left
+        \\custom = value
+        \\bind other_game_action = mouse_right
+        \\
+    ;
+    var map = load(TestAction, test_defaults, original);
+    map.set(.jump, &.{
+        .{ .gamepad_axis = .{ .axis = .left_x, .direction = .negative } },
+        .{ .mouse = .middle },
+    });
+    map.set(.pause, &.{});
+
+    const saved = try serialize(std.testing.allocator, TestAction, &map, original);
+    defer std.testing.allocator.free(saved);
+    try std.testing.expect(std.mem.startsWith(u8, saved, "# user settings\nresolution = 1280x720\ncustom = value\nbind other_game_action = mouse_right\n"));
+    try std.testing.expect(std.mem.indexOf(u8, saved, "bind jump = pad_left_x-, mouse_middle\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, saved, "bind pause = none\n") != null);
+
+    const reloaded = load(TestAction, test_defaults, saved);
+    try std.testing.expectEqualSlices(Binding, map.bindingsOf(.jump), reloaded.bindingsOf(.jump));
+    try std.testing.expectEqual(@as(usize, 0), reloaded.bindingsOf(.pause).len);
 }

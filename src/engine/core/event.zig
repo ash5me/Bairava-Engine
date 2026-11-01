@@ -1,14 +1,16 @@
 //! Drains the platform event queue once per frame. Quit, F11 (fullscreen), F3 (overlay), and F4
-//! (debug geometry) are handled here. Every event also reaches the input state, which keeps presses,
-//! releases, and clicks until the next update step takes them. Gamepads connecting and leaving are
-//! logged here as well.
+//! (debug geometry) are handled here. Unconsumed events are queued for game updates and applied to
+//! input state, which keeps presses, releases, and clicks until the next update step takes them.
+//! Gamepads connecting and leaving are logged here as well.
 
+const std = @import("std");
 const platform = @import("../platform/platform.zig");
 const Input = @import("../input/input.zig").Input;
 const logging = @import("../logging/log.zig");
 const console_mod = @import("../diagnostics/console.zig");
 const collector_mod = @import("../diagnostics/collector.zig");
 const gate = @import("../diagnostics/gate.zig");
+const game_events = @import("game_events.zig");
 const elog = logging.scoped("engine");
 
 /// What the event queue asked the engine to do during one pump.
@@ -28,14 +30,17 @@ pub fn pump(
     console: *console_mod.Console,
     collector: *collector_mod.Collector,
     diagnostics_visible: *bool,
-) Result {
+    events: *game_events.Queue,
+) std.mem.Allocator.Error!Result {
     var result = Result{};
     while (platform.events.poll()) |event| {
         var consumed = false;
+        var publish_to_game = true;
         switch (event) {
             .quit => {
                 elog.info("quit requested by the window", .{});
                 result.quit = true;
+                publish_to_game = false;
             },
             .key_down => |down| {
                 if (!down.repeat) {
@@ -81,11 +86,17 @@ pub fn pump(
                     }
                 }
             },
-            .text_input => |text| if (gate.enabled and console.visible) console.append(text.slice()),
+            .text_input => |text| {
+                if (gate.enabled and console.visible) {
+                    console.append(text.slice());
+                    consumed = true;
+                }
+            },
             .gamepad_added => |id| elog.info("gamepad connected in slot {d}", .{id.slot}),
             .gamepad_removed => |id| elog.info("gamepad removed from slot {d}", .{id.slot}),
             else => {},
         }
+        if (!consumed and publish_to_game) try events.append(event);
         if (!consumed) input.apply(event);
     }
     return result;

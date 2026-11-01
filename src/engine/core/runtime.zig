@@ -146,7 +146,7 @@ pub fn run(comptime Game: type, config: Config) !void {
         {
             const zone = profile.zoneNamed(@src(), "events");
             defer zone.End();
-            const pumped = event.pump(session.window, &session.input, &dev_console, collector, &overlay.visible);
+            const pumped = try event.pump(session.window, &session.input, &dev_console, collector, &overlay.visible, &session.game_events);
             if (pumped.quit) ctx.running = false;
             if (pumped.toggle_overlay) overlay.toggle();
             if (gate.enabled and pumped.toggle_geometry) collector.toggleGeometry();
