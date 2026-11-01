@@ -18,6 +18,8 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.transform.Transform;
     _ = bairava.ui.TextLayout;
     _ = bairava.ui.TextAlignment;
+    _ = bairava.localization.LocaleId;
+    _ = bairava.localization.Catalog;
 }
 
 test "the public engine version is the initial semantic API version" {

@@ -106,6 +106,8 @@ pub const animation = @import("../animation/animation.zig");
 pub const audio = @import("../audio/audio.zig");
 /// The settings file: `name = value` lines, and the window settings the engine reads from them.
 pub const settings = @import("settings.zig");
+/// Locale IDs, translated string lookup, and fallback locale resolution.
+pub const localization = @import("../localization.zig");
 /// Diagnostics: the text lines and debug shapes a game adds, and the frame snapshot. See docs/diagnostics.md.
 pub const diagnostics = @import("../diagnostics/diagnostics.zig");
 /// Bounded, development-only command registry and parser. See docs/developer-console.md.

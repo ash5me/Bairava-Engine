@@ -56,6 +56,7 @@ pub const tilemap_draw = engine.tilemap_draw;
 pub const animation = engine.animation;
 pub const audio = engine.audio;
 pub const settings = engine.settings;
+pub const localization = engine.localization;
 pub const ui = engine.ui;
 pub const diagnostics = engine.diagnostics;
 pub const console = engine.console;
