@@ -9,6 +9,7 @@ pub const AssetError = engine.AssetError;
 pub const Capabilities = engine.Capabilities;
 pub const ShaderFormats = engine.ShaderFormats;
 pub const TextureFormats = engine.TextureFormats;
+pub const PresentationCapabilities = engine.PresentationCapabilities;
 pub const DrawContext = engine.DrawContext;
 pub const Allocators = engine.Allocators;
 pub const run = engine.run;

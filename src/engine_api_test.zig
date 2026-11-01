@@ -7,6 +7,7 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.Capabilities;
     _ = bairava.ShaderFormats;
     _ = bairava.TextureFormats;
+    _ = bairava.PresentationCapabilities;
     _ = bairava.run;
     _ = bairava.transform.Transform;
 }
@@ -31,6 +32,7 @@ test "Context does not expose a device field or SDL types" {
     }
     expectNoSdlApi(bairava.Context);
     expectNoSdlApi(bairava.Capabilities);
+    expectNoSdlApi(bairava.PresentationCapabilities);
 }
 
 test "engine resource fields do not expose SDL types" {
@@ -107,6 +109,9 @@ test "Context exposes an SDL-free runtime capabilities query" {
     try std.testing.expect(@hasField(bairava.Capabilities, "audio_playback"));
     try std.testing.expect(@hasField(bairava.Capabilities, "shader_formats"));
     try std.testing.expect(@hasField(bairava.Capabilities, "texture_formats"));
+    try std.testing.expect(@hasField(bairava.Capabilities, "presentation"));
     try std.testing.expect(@hasField(bairava.ShaderFormats, "spirv"));
     try std.testing.expect(@hasField(bairava.TextureFormats, "astc_4x4"));
+    try std.testing.expect(@hasField(bairava.TextureFormats, "rgba8"));
+    try std.testing.expect(@hasField(bairava.PresentationCapabilities, "immediate"));
 }

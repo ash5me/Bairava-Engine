@@ -11,7 +11,7 @@ const window_backend = @import("window.zig");
 pub const Device = c.SDL_GPUDevice;
 pub const TextureFormat = c.SDL_GPUTextureFormat;
 
-pub const GpuInitError = error{CreateGpuFailed, ClaimWindowFailed};
+pub const GpuInitError = error{ CreateGpuFailed, ClaimWindowFailed };
 
 pub fn waitIdle(device: *Device) void {
     _ = c.SDL_WaitForGPUIdle(device);
@@ -80,11 +80,15 @@ pub const Gpu = struct {
         return c.SDL_GetGPUSwapchainTextureFormat(self.device, self.window);
     }
 
+    pub fn supportsImmediatePresent(self: *const Gpu) bool {
+        return c.SDL_WindowSupportsGPUPresentMode(self.device, self.window, c.SDL_GPU_PRESENTMODE_IMMEDIATE);
+    }
+
     /// Sets vsync. On is the default, so it changes nothing. Off presents frames as soon as they are
     /// ready, which can tear. Returns false when the window can't present without vsync, and vsync stays on.
     pub fn setVsync(self: *Gpu, vsync: bool) bool {
         if (vsync) return true;
-        if (!c.SDL_WindowSupportsGPUPresentMode(self.device, self.window, c.SDL_GPU_PRESENTMODE_IMMEDIATE)) return false;
+        if (!self.supportsImmediatePresent()) return false;
         return c.SDL_SetGPUSwapchainParameters(self.device, self.window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, c.SDL_GPU_PRESENTMODE_IMMEDIATE);
     }
 

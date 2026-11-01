@@ -41,6 +41,10 @@ pub fn supportsCompression(device: *backend.Device, compression: image.Compressi
     return backend.texture.supportsCompression(device, compression);
 }
 
+pub fn supportsRgba8Sampling(device: *backend.Device) bool {
+    return backend.texture.supportsRgba8Sampling(device);
+}
+
 pub fn createCompressed(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, compression: image.Compression, blocks: []const u8) Texture {
     return wrap(backend.texture.uploadCompressed(allocator, device, width, height, compression, blocks), width, height);
 }

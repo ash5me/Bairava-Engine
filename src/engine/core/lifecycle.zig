@@ -21,6 +21,7 @@ const Texture = @import("../renderer/texture.zig").Texture;
 const settings = @import("settings.zig");
 const application = @import("application.zig");
 const context = @import("context.zig");
+const capability = @import("../capabilities.zig");
 
 const Config = application.Config;
 const Context = context.Context;
@@ -35,6 +36,7 @@ pub const Session = struct {
     platform_started: bool = false,
     window_created: bool = false,
     gpu_created: bool = false,
+    immediate_present_supported: bool = false,
     target_created: bool = false,
     world_batch_created: bool = false,
     screen_batch_created: bool = false,
@@ -100,6 +102,12 @@ pub const Session = struct {
         self.stage = .gpu;
         self.gpu = try platform.gpu.Gpu.init(self.window, build_options.gpu_debug);
         self.gpu_created = true;
+        self.immediate_present_supported = self.gpu.supportsImmediatePresent();
+        const gpu_capabilities = capability.queryGpu(self.gpu.device, self.immediate_present_supported);
+        if (capability.missingRequiredGpuFeature(gpu_capabilities)) |missing| {
+            elog.err("GPU is missing required capability: {s}", .{@tagName(missing)});
+            return error.UnsupportedGpuCapabilities;
+        }
         if (!self.gpu.setVsync(window_settings.vsync)) elog.warn("immediate present is not available on this display, so vsync stays on", .{});
         const vsync_label: []const u8 = if (window_settings.vsync) "on" else "off";
         elog.info("vsync {s}", .{vsync_label});
@@ -138,6 +146,7 @@ pub const Session = struct {
             .layout = .{ .dst_w = native_wf, .dst_h = native_hf, .view_w = native_wf, .view_h = native_hf },
             .camera = &self.cam,
             .audio = &self.audio,
+            .immediate_present_supported = self.immediate_present_supported,
             .settings_text = settings_text,
             .textures = self.textures,
             .diagnostics = &self.collector,

@@ -74,6 +74,7 @@ pub const TextureHandle = TextureStore.Handle;
 /// so a handle never has to move when more textures are loaded.
 pub const max_registered_textures: u32 = 256;
 pub const Capabilities = capability.Capabilities;
+pub const PresentationCapabilities = capability.PresentationCapabilities;
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
 pub const Context = struct {
@@ -102,6 +103,8 @@ pub const Context = struct {
     /// Sound output. Load sounds with `loadSound` and play them through this. It stays silent when
     /// no playback device could be opened.
     audio: *audio.Audio,
+    /// Whether the active window supports immediate presentation without vsync.
+    immediate_present_supported: bool = false,
     /// Textures registered by name and loaded on first use. The texture functions below use it.
     textures: *TextureStore,
     /// The diagnostics collector. Game code may add its own counters to it in development builds. See
@@ -124,7 +127,7 @@ pub const Context = struct {
 
     /// Reports features available to this running game build on the active GPU and audio device.
     pub fn capabilities(self: *const Context) Capabilities {
-        return capability.query(contextGpuDevice(self), self.audio.device != null);
+        return capability.query(contextGpuDevice(self), self.audio.device != null, self.immediate_present_supported);
     }
 
     /// Multiplies the zoom target by `factor`, within the zoom bounds. Use a factor above 1 to zoom

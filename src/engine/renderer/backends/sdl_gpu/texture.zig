@@ -33,9 +33,17 @@ pub fn createTarget(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, widt
     return wrap(allocator, device, texture, createSampler(device, false), null);
 }
 
-/// True when the device can sample the block-compressed format. RGBA8 is always supported.
+/// True when the device can sample the block-compressed format.
 pub fn supportsCompression(device: *c.SDL_GPUDevice, compression: image.Compression) bool {
     const format = gpuFormat(compression) orelse return true;
+    return supportsSampledFormat(device, format);
+}
+
+pub fn supportsRgba8Sampling(device: *c.SDL_GPUDevice) bool {
+    return supportsSampledFormat(device, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
+}
+
+fn supportsSampledFormat(device: *c.SDL_GPUDevice, format: c.SDL_GPUTextureFormat) bool {
     return c.SDL_GPUTextureSupportsFormat(device, format, c.SDL_GPU_TEXTURETYPE_2D, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
 }
 

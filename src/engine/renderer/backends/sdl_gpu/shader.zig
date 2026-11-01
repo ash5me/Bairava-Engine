@@ -39,6 +39,12 @@ pub const Format = enum {
     }
 };
 
+pub const SupportedFormats = struct {
+    spirv: bool,
+    dxil: bool,
+    msl: bool,
+};
+
 /// Resource counts a shader declares. SDL_GPU needs these when the shader is created.
 pub const Resources = struct {
     samplers: u32 = 0,
@@ -77,9 +83,16 @@ pub fn pickFormat(device: *c.SDL_GPUDevice) Format {
     );
 }
 
-/// Whether the active device accepts this format. Build-time embedding is checked separately.
-pub fn supportsFormat(device: *c.SDL_GPUDevice, format: Format) bool {
-    return (c.SDL_GetGPUShaderFormats(device) & format.sdlFlag()) != 0;
+pub fn supportedFormats(device: *c.SDL_GPUDevice) SupportedFormats {
+    return supportedFormatsFromFlags(c.SDL_GetGPUShaderFormats(device));
+}
+
+fn supportedFormatsFromFlags(flags: c.SDL_GPUShaderFormat) SupportedFormats {
+    return .{
+        .spirv = (flags & Format.spirv.sdlFlag()) != 0,
+        .dxil = (flags & Format.dxil.sdlFlag()) != 0,
+        .msl = (flags & Format.msl.sdlFlag()) != 0,
+    };
 }
 
 /// Selects the first supported format in the engine's preference order. Kept separate from the SDL
@@ -120,6 +133,16 @@ test "shader format selection prefers SPIR-V, then DXIL, then MSL" {
     ).?);
     try std.testing.expectEqual(Format.msl, pickFormatFromFlags(c.SDL_GPU_SHADERFORMAT_MSL).?);
     try std.testing.expectEqual(@as(?Format, null), pickFormatFromFlags(0));
+}
+
+test "device shader support is reported per format" {
+    const supported = supportedFormatsFromFlags(c.SDL_GPU_SHADERFORMAT_DXIL | c.SDL_GPU_SHADERFORMAT_MSL);
+    try std.testing.expect(!supported.spirv);
+    try std.testing.expect(supported.dxil);
+    try std.testing.expect(supported.msl);
+
+    const none = supportedFormatsFromFlags(0);
+    try std.testing.expect(!none.spirv and !none.dxil and !none.msl);
 }
 
 test "MSL shaders use their source entry point and embedded source" {
