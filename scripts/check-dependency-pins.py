@@ -87,11 +87,18 @@ def files_for(paths: list[str]) -> list[Path]:
     return sorted(set(files), key=lambda item: item.relative_to(ROOT).as_posix())
 
 
+def canonical_content(path: Path) -> bytes:
+    content = path.read_bytes()
+    if b"\0" not in content[:8000]:
+        content = content.replace(b"\r\n", b"\n")
+    return content
+
+
 def tree_hash(paths: list[str]) -> str:
     digest = hashlib.sha256()
     for path in files_for(paths):
         relative = path.relative_to(ROOT).as_posix().encode("utf-8")
-        content = path.read_bytes()
+        content = canonical_content(path)
         digest.update(len(relative).to_bytes(8, "big"))
         digest.update(relative)
         digest.update(len(content).to_bytes(8, "big"))

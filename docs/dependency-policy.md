@@ -29,7 +29,10 @@ run the checker and full CI suite.
 Vendored tree hashes include every file under directory entries and every
 explicitly listed file. The checker sorts by repository-relative POSIX path and
 feeds SHA-256 the 8-byte big-endian path length, UTF-8 path, 8-byte big-endian
-file length, and file bytes for each entry.
+file length, and file bytes for each entry. To keep pins identical across
+Windows and Unix checkouts, text files (no NUL byte in the first 8 KiB) have
+CRLF line endings normalized to LF before hashing; binary files are hashed
+byte-for-byte.
 
 For Zig packages, update the reviewed URL/commit and content hash together in
 `build.zig.zon` (for example with `zig fetch --save`) and mirror both in the

@@ -36,7 +36,7 @@
       "version": "2.15.0",
       "source": "https://gitlab.freedesktop.org/freetype/freetype",
       "paths": ["vendor/freetype-2.15.0"],
-      "sha256": "7ce272eca26563e6bd4b520c62ead04eac60e5fa773159d1f822cf0ee02bdfce"
+      "sha256": "1bfbfc08d56f1cf03fc20fe249c6c518502ba47dfd0ed0794088f55bf54d4a12"
     },
     {
       "name": "stb",
@@ -50,7 +50,7 @@
         "vendor/stb_image_impl.c",
         "vendor/stb_truetype_impl.c"
       ],
-      "sha256": "8e60220c1e57fb64967ca9e447be621490d50c58e7cea0b3cf7b883e2d18667f"
+      "sha256": "bb97d75f3e14eae7448a3c50308d0f525344b764eb20c26b2b2ff1a980b55f71"
     },
     {
       "name": "rxi/log.c",
