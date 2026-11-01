@@ -41,6 +41,7 @@ test {
     _ = @import("engine/core/math.zig");
     _ = @import("engine/core/fixed_timestep.zig");
     _ = @import("engine/core/game_events.zig");
+    _ = @import("engine/text/layout.zig");
     _ = @import("engine/core/transform.zig");
     _ = @import("engine/core/allocators.zig");
     _ = @import("engine/renderer/view.zig");

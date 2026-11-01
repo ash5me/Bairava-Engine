@@ -15,6 +15,8 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.TextInput;
     _ = bairava.run;
     _ = bairava.transform.Transform;
+    _ = bairava.ui.TextLayout;
+    _ = bairava.ui.TextAlignment;
 }
 
 test "transforms compose through an entity hierarchy" {
@@ -145,4 +147,18 @@ test "game rebinding rolls back when saving settings fails" {
         controls.rebind(&context, &bindings, .move_left, &.{.{ .key = .q }}),
     );
     try std.testing.expectEqual(previous, bindings.bindingsOf(.move_left)[0]);
+}
+
+test "Canvas text layout validates dimensions through the public UI API" {
+    var font = bairava.ui.Font{
+        .baked = .{ .line_height = 10 },
+        .texture = undefined,
+        .uploaded_generation = 0,
+    };
+    const canvas = bairava.ui.Canvas{
+        .allocator = std.testing.allocator,
+        .font = &font,
+        .list = undefined,
+    };
+    try std.testing.expectError(error.InvalidWidth, canvas.layoutText(std.testing.allocator, "text", 0, .left));
 }

@@ -31,7 +31,7 @@ const pad: f32 = 3;
 const margin: f32 = 4;
 
 /// Lines the engine writes, then the game's lines. Each line's buffer is `line_capacity` bytes.
-const engine_lines = 10;
+const engine_lines = 12;
 const max_lines = engine_lines + text_mod.max_lines;
 const line_capacity = text_mod.max_line_len;
 
@@ -161,6 +161,24 @@ fn buildLines(store: *[max_lines][line_capacity]u8, lines: *[max_lines][]const u
     count += 1;
     lines[count] = formatLine(&store[count], "assets: loaded {d}  hits {d}  misses {d}  failed {d}", .{
         snap.assets.loaded, snap.assets.hits, snap.assets.misses, snap.assets.failed,
+    });
+    count += 1;
+    lines[count] = formatLine(&store[count], "memory live E/G/A/F {d}/{d}/{d}/{d} KiB; peak {d}/{d}/{d}/{d} KiB", .{
+        snap.memory.engine.live_bytes / 1024,
+        snap.memory.game.live_bytes / 1024,
+        snap.memory.asset.live_bytes / 1024,
+        snap.memory.frame.live_bytes / 1024,
+        snap.memory.engine.high_water_bytes / 1024,
+        snap.memory.game.high_water_bytes / 1024,
+        snap.memory.asset.high_water_bytes / 1024,
+        snap.memory.frame.high_water_bytes / 1024,
+    });
+    count += 1;
+    lines[count] = formatLine(&store[count], "arena E/G/A/F {d}/{d}/{d}/{d} KiB", .{
+        snap.memory.engine.arena_capacity_bytes / 1024,
+        snap.memory.game.arena_capacity_bytes / 1024,
+        snap.memory.asset.arena_capacity_bytes / 1024,
+        snap.memory.frame.arena_capacity_bytes / 1024,
     });
     count += 1;
     lines[count] = formatLine(&store[count], "map {d}x{d}  cursor cell {d},{d}  tile {d}  solid {d}", .{

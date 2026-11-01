@@ -13,9 +13,10 @@
 
 const std = @import("std");
 const validate = @import("validate.zig");
+const dependency_graph = @import("dependency_graph.zig");
 
-/// Most files one watcher follows.
-pub const max_watched = 32;
+/// Capacity for every indexed asset plus a small set of explicit, non-indexed files.
+pub const max_watched = dependency_graph.max_assets + 32;
 /// Time between two looks at the file system, in nanoseconds.
 pub const default_interval_ns: u64 = 250_000_000;
 
@@ -25,15 +26,19 @@ pub const Kind = enum {
     atlas,
     /// A sprite-animation definition, read by the animation loader.
     animation,
+    /// A runtime output registered from the generated asset index.
+    asset,
 };
 
 pub const WatchError = error{ Full, InvalidPath, Duplicate };
+pub const WatchIndexError = WatchError || dependency_graph.Error;
 
 /// Returns a file's last modification time in nanoseconds, or null when the file can't be examined.
 pub const StampFn = *const fn (path: []const u8) ?i64;
 
 const Entry = struct {
     path: []const u8,
+    graph_index: ?usize = null,
     kind: Kind,
     /// The modification time the game last reloaded from. Null until the first look.
     stamp: ?i64 = null,
@@ -46,6 +51,8 @@ const Entry = struct {
 pub const Watcher = struct {
     entries: [max_watched]Entry = undefined,
     count: usize = 0,
+    graph: dependency_graph.Graph = .{},
+    graph_loaded: bool = false,
     /// How a modification time is read. The engine sets it at startup, and nothing is polled without it.
     stat: ?StampFn = null,
     interval_ns: u64 = default_interval_ns,
@@ -55,11 +62,37 @@ pub const Watcher = struct {
     pub fn watch(self: *Watcher, path: []const u8, kind: Kind) WatchError!void {
         if (!validate.isSafePath(path)) return error.InvalidPath;
         for (self.entries[0..self.count]) |entry| {
-            if (std.mem.eql(u8, entry.path, path)) return error.Duplicate;
+            if (std.mem.eql(u8, self.entryPath(entry), path)) return error.Duplicate;
         }
         if (self.count == max_watched) return error.Full;
         self.entries[self.count] = .{ .path = path, .kind = kind };
         self.count += 1;
+    }
+
+    /// Loads the generated asset index and watches every runtime output path. The graph owns copies
+    /// of names and paths, so the index buffer can be released immediately after this call.
+    pub fn watchIndex(self: *Watcher, index_path: []const u8, text: []const u8) WatchIndexError!void {
+        if (self.graph_loaded) return error.Duplicate;
+        if (!validate.isSafePath(index_path)) return error.InvalidPath;
+        var graph = try dependency_graph.Graph.parse(text);
+        try graph.resolvePaths(index_path);
+        if (graph.len > max_watched - self.count) return error.Full;
+        for (0..graph.len) |index| {
+            const path = graph.nodes[index].path.slice();
+            for (self.entries[0..self.count]) |entry| {
+                if (std.mem.eql(u8, self.entryPath(entry), path)) return error.Duplicate;
+            }
+            for (graph.nodes[0..index]) |previous| {
+                if (std.mem.eql(u8, previous.path.slice(), path)) return error.Duplicate;
+            }
+        }
+
+        self.graph = graph;
+        self.graph_loaded = true;
+        for (0..self.graph.len) |index| {
+            self.entries[self.count] = .{ .path = "", .graph_index = index, .kind = .asset };
+            self.count += 1;
+        }
     }
 
     /// Looks at every watched file, if the interval has passed. The engine calls this once per frame,
@@ -69,7 +102,7 @@ pub const Watcher = struct {
         if (now_ns < self.next_look_ns) return;
         self.next_look_ns = now_ns + self.interval_ns;
         for (self.entries[0..self.count]) |*entry| {
-            examine(entry, look(entry.path));
+            examine(entry, look(self.entryPath(entry.*)));
         }
     }
 
@@ -77,7 +110,7 @@ pub const Watcher = struct {
     /// the file changes again. An unwatched path always returns false.
     pub fn take(self: *Watcher, path: []const u8) bool {
         for (self.entries[0..self.count]) |*entry| {
-            if (std.mem.eql(u8, entry.path, path)) {
+            if (std.mem.eql(u8, self.entryPath(entry.*), path)) {
                 const was = entry.changed;
                 entry.changed = false;
                 return was;
@@ -86,12 +119,32 @@ pub const Watcher = struct {
         return false;
     }
 
+    /// Consumes settled changes to `name` or any transitive dependency of that asset.
+    pub fn takeAssetChanged(self: *Watcher, name: []const u8) bool {
+        if (!self.graph_loaded or self.graph.find(name) == null) return false;
+        var affected = false;
+        for (self.entries[0..self.count]) |*entry| {
+            if (!entry.changed) continue;
+            const changed_name = if (entry.graph_index) |index| self.graph.nodes[index].name.slice() else self.graph.nameAtPath(entry.path) orelse continue;
+            if (self.graph.isAffected(name, changed_name)) {
+                entry.changed = false;
+                affected = true;
+            }
+        }
+        return affected;
+    }
+
     /// The kind a path was watched as, or null when it isn't watched.
     pub fn kindOf(self: *const Watcher, path: []const u8) ?Kind {
         for (self.entries[0..self.count]) |entry| {
-            if (std.mem.eql(u8, entry.path, path)) return entry.kind;
+            if (std.mem.eql(u8, self.entryPath(entry), path)) return entry.kind;
         }
         return null;
+    }
+
+    fn entryPath(self: *const Watcher, entry: Entry) []const u8 {
+        if (entry.graph_index) |index| return self.graph.nodes[index].path.slice();
+        return entry.path;
     }
 };
 
@@ -206,11 +259,60 @@ test "unsafe paths, duplicates, and a full list are refused" {
     try std.testing.expectError(error.Duplicate, watcher.watch("assets/atlas.txt", .animation));
     try std.testing.expectEqual(Kind.atlas, watcher.kindOf("assets/atlas.txt").?);
 
-    var names: [max_watched][16]u8 = undefined;
+    var names: [max_watched][24]u8 = undefined;
     var i: usize = 1;
     while (i < max_watched) : (i += 1) {
         const path = try std.fmt.bufPrint(&names[i], "assets/f{d}.txt", .{i});
         try watcher.watch(path, .animation);
     }
     try std.testing.expectError(error.Full, watcher.watch("assets/one_more.txt", .animation));
+}
+
+var graph_source_stamp: i64 = 100;
+
+fn graphFakeStat(path: []const u8) ?i64 {
+    if (std.mem.eql(u8, path, "assets/source.png")) return graph_source_stamp;
+    return 100;
+}
+
+test "indexed changes invalidate transitive dependents once" {
+    const index =
+        \\# asset-index-v1
+        \\source image source.png source.png -
+        \\map file map.txt map.txt source
+        \\spawn file spawn.txt spawn.txt map
+        \\other file other.txt other.txt -
+        \\
+    ;
+    var watcher = Watcher{ .stat = &graphFakeStat, .interval_ns = 0 };
+    try watcher.watchIndex("assets/asset-index.txt", index);
+    try std.testing.expectEqual(Kind.asset, watcher.kindOf("assets/source.png").?);
+
+    graph_source_stamp = 100;
+    watcher.poll(1);
+    graph_source_stamp = 200;
+    watcher.poll(2);
+    watcher.poll(3);
+
+    try std.testing.expect(watcher.takeAssetChanged("spawn"));
+    try std.testing.expect(!watcher.takeAssetChanged("spawn"));
+    try std.testing.expect(!watcher.takeAssetChanged("other"));
+}
+
+test "asset index registration rejects duplicate watched paths and capacity overflow" {
+    var watcher = Watcher{};
+    try watcher.watch("assets/source.png", .atlas);
+    try std.testing.expectError(error.Duplicate, watcher.watchIndex("assets/asset-index.txt",
+        \\source image source.png source.png -
+    ));
+
+    var full = Watcher{};
+    var paths: [max_watched][24]u8 = undefined;
+    for (0..max_watched) |i| {
+        const path = try std.fmt.bufPrint(&paths[i], "assets/f{d}.txt", .{i});
+        try full.watch(path, .asset);
+    }
+    try std.testing.expectError(error.Full, full.watchIndex("assets/asset-index.txt",
+        \\asset file assets/extra.txt extra.txt -
+    ));
 }

@@ -7,7 +7,7 @@ const Phase = @import("frame_stats.zig").Phase;
 pub const max_input = 128;
 pub const max_output = 512;
 
-const Command = enum { help, scene, entities, assets, performance, tile, diagnostics, collision, tiles, layer };
+const Command = enum { help, scene, entities, assets, memory, performance, tile, diagnostics, collision, tiles, layer };
 
 pub const CommandInfo = struct {
     name: []const u8,
@@ -20,6 +20,7 @@ pub const registry = [_]CommandInfo{
     .{ .name = "scene", .usage = "scene", .command = .scene },
     .{ .name = "entities", .usage = "entities", .command = .entities },
     .{ .name = "assets", .usage = "assets", .command = .assets },
+    .{ .name = "memory", .usage = "memory", .command = .memory },
     .{ .name = "performance", .usage = "performance [frame|events|asset|update|audio|draw|present]", .command = .performance },
     .{ .name = "tile", .usage = "tile", .command = .tile },
     .{ .name = "diagnostics", .usage = "diagnostics on|off|toggle", .command = .diagnostics },
@@ -127,6 +128,22 @@ pub const Console = struct {
                     self.setOutput("loaded {d}, {d} bytes; hits {d}, misses {d}, failed {d}", .{
                         assets.loaded, assets.bytes, assets.hits, assets.misses, assets.failed,
                     });
+                },
+                .memory => {
+                    if (count != 1) return self.usage(entry);
+                    const memory = collector.snapshot.memory;
+                    self.setOutput(
+                        "engine: {d} alloc/{d} free/{d} fail, live {d} B, peak {d} B, arena {d} B\n" ++
+                            "game: {d} alloc/{d} free/{d} fail, live {d} B, peak {d} B, arena {d} B\n" ++
+                            "asset: {d} alloc/{d} free/{d} fail, live {d} B, peak {d} B, arena {d} B\n" ++
+                            "frame: {d} alloc/{d} free/{d} fail, live {d} B, peak {d} B, arena {d} B",
+                        .{
+                            memory.engine.allocation_count, memory.engine.free_count, memory.engine.failed_allocations, memory.engine.live_bytes, memory.engine.high_water_bytes, memory.engine.arena_capacity_bytes,
+                            memory.game.allocation_count,   memory.game.free_count,   memory.game.failed_allocations,   memory.game.live_bytes,   memory.game.high_water_bytes,   memory.game.arena_capacity_bytes,
+                            memory.asset.allocation_count,  memory.asset.free_count,  memory.asset.failed_allocations,  memory.asset.live_bytes,  memory.asset.high_water_bytes,  memory.asset.arena_capacity_bytes,
+                            memory.frame.allocation_count,  memory.frame.free_count,  memory.frame.failed_allocations,  memory.frame.live_bytes,  memory.frame.high_water_bytes,  memory.frame.arena_capacity_bytes,
+                        },
+                    );
                 },
                 .performance => {
                     if (count > 2) return self.usage(entry);
@@ -289,6 +306,12 @@ test "registry commands inspect published state and reject invalid arguments" {
         snapshot: struct {
             scene: struct { name: []const u8 = "test", pending: ?[]const u8 = null } = .{},
             assets: struct { loaded: usize = 2, bytes: usize = 1024, hits: u64 = 3, misses: u64 = 1, failed: u64 = 0 } = .{},
+            memory: struct {
+                engine: struct { allocation_count: u64 = 2, free_count: u64 = 1, failed_allocations: u64 = 0, live_bytes: usize = 64, high_water_bytes: usize = 96, arena_capacity_bytes: usize = 128 } = .{},
+                game: struct { allocation_count: u64 = 3, free_count: u64 = 1, failed_allocations: u64 = 0, live_bytes: usize = 128, high_water_bytes: usize = 256, arena_capacity_bytes: usize = 256 } = .{},
+                asset: struct { allocation_count: u64 = 4, free_count: u64 = 0, failed_allocations: u64 = 1, live_bytes: usize = 512, high_water_bytes: usize = 512, arena_capacity_bytes: usize = 512 } = .{},
+                frame: struct { allocation_count: u64 = 5, free_count: u64 = 3, failed_allocations: u64 = 0, live_bytes: usize = 32, high_water_bytes: usize = 80, arena_capacity_bytes: usize = 128 } = .{},
+            } = .{},
             world: struct {
                 entities: u32 = 4,
                 map_cols: u32 = 1,
@@ -325,6 +348,8 @@ test "registry commands inspect published state and reject invalid arguments" {
     var overlay = true;
     console.execute("entities", &collector, &overlay);
     try std.testing.expectEqualStrings("entities: 4", console.outputText());
+    console.execute("memory", &collector, &overlay);
+    try std.testing.expect(std.mem.indexOf(u8, console.outputText(), "asset: 4 alloc/0 free/1 fail, live 512 B, peak 512 B, arena 512 B") != null);
     console.execute("collision toggle", &collector, &overlay);
     try std.testing.expect(collector.geometry.collision);
     console.execute("layer ground off", &collector, &overlay);

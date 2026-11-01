@@ -48,14 +48,27 @@ The engine polls watched files once per frame, before the update steps, at most 
 change is reported once, and only after the new modification time holds for two looks. A file that
 is still being written is therefore not read half-done.
 
-Games register files and then ask for changes in `update`:
+Games can register individual files and then ask for changes in `update`:
 
-    ctx.watchAsset("assets/atlas.txt", .atlas) catch {};   // in init; a no-op in release builds
+    ctx.watchAsset("assets/atlas.txt", .atlas) catch |err| log.warn("asset watch failed: {s}", .{@errorName(err)});
     if (ctx.takeChanged("assets/atlas.txt")) { ... }       // in update
 
-Kinds that can be watched are `atlas` (the index and image, reloaded together) and `animation`.
-Any other type is refused, so nothing reloads before its dependencies and destruction order are
-defined.
+For assets produced by `asset-build`, `ctx.watchAssetGraph("assets/asset-index.txt")` loads the
+generated index and watches each indexed output relative to the index file's directory.
+`ctx.takeAssetChanged("level1")` then reports a
+settled change to that asset or any transitive dependency, once per changed output. The watcher
+accepts the index's `asset-index-v1` format, normalizes Windows output separators, and rejects
+unknown dependencies, duplicate names or paths, unsafe paths, and unsupported index versions.
+
+The atlas image is an indexed output, while the packer's `atlas.txt` is generated separately, so the
+game watches both: it queries `takeAssetChanged("atlas")` and separately checks
+`takeChanged("assets/atlas.txt")`. If the generated dependency index cannot be loaded, the game logs
+the reason and falls back to watching the atlas image and index directly.
+
+Kinds that can be watched explicitly are `atlas` (the index and image, reloaded together) and
+`animation`. Indexed outputs are watched as generic assets; the game decides what to reload by asking
+about the affected asset name. Explicit watches and indexed outputs share a bounded watcher (256
+indexed assets plus 32 additional files).
 
 A reload follows the order that keeps the GPU safe:
 
@@ -69,5 +82,5 @@ resource it has not checked.
 
 ## Release builds
 
-`Context.watchAsset` accepts the call and watches nothing. The runtime never polls. The check tool
-is a build step and is not part of the game.
+`Context.watchAsset` and `Context.watchAssetGraph` accept the call and watch nothing. The runtime
+never polls. The check tool is a build step and is not part of the game.

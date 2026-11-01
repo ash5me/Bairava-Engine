@@ -277,9 +277,23 @@ pub const Context = struct {
         try self.reloads.watch(path, kind);
     }
 
+    /// Loads the generated asset index and watches all of its runtime outputs for dependency-aware
+    /// invalidation. The index is read only in development builds.
+    pub fn watchAssetGraph(self: *const Context, index_path: []const u8) (AssetError || hot_reload.WatchIndexError)!void {
+        if (!gate.enabled) return;
+        const text = try self.readFile(self.allocators.asset, index_path);
+        defer self.allocators.asset.free(text);
+        try self.reloads.watchIndex(index_path, text);
+    }
+
     /// True once after a watched file has changed. Call it in `update`, the safe point for reloading.
     pub fn takeChanged(self: *const Context, path: []const u8) bool {
         return self.reloads.take(path);
+    }
+
+    /// True once when an indexed asset or any transitive dependency has changed.
+    pub fn takeAssetChanged(self: *const Context, name: []const u8) bool {
+        return self.reloads.takeAssetChanged(name);
     }
 
     /// Waits until the GPU has finished the frames it was given. Call it before releasing a resource the GPU

@@ -10,9 +10,12 @@ const c = @import("c.zig").c;
 const input = @import("../input/input.zig");
 const sprite = @import("../renderer/sprite.zig");
 const view = @import("../renderer/view.zig");
+const text_layout = @import("../text/layout.zig");
 
 /// A font on the GPU. See text/font.zig.
 pub const Font = @import("../text/font.zig").Font;
+pub const TextAlignment = text_layout.Alignment;
+pub const TextLayout = text_layout.Layout;
 
 /// An RGBA color, each channel from 0 to 1.
 pub const Color = struct {
@@ -21,7 +24,6 @@ pub const Color = struct {
     b: f32,
     a: f32,
 };
-
 
 /// Where a UI panel is anchored inside the logical viewport.
 pub const Anchor = enum {
@@ -101,6 +103,32 @@ pub const Canvas = struct {
         return c.ui_font_text_width(&self.font.baked, str.ptr, str.len);
     }
 
+    /// Builds a wrapped, aligned text block. Line slices borrow `str`; release the result with
+    /// `TextLayout.deinit` and the allocator used here.
+    pub fn layoutText(self: *const Canvas, allocator: std.mem.Allocator, str: []const u8, max_width: f32, alignment: TextAlignment) text_layout.LayoutError!TextLayout {
+        return text_layout.layout(
+            allocator,
+            str,
+            max_width,
+            @floatFromInt(self.font.baked.line_height),
+            alignment,
+            self,
+            measureCanvasText,
+        );
+    }
+
+    /// Adds each line of a previously measured text block at `(x, y)`.
+    pub fn drawTextLayout(self: *Canvas, x: f32, y: f32, layout: *const TextLayout, color: Color) void {
+        for (layout.lines, 0..) |line, index| {
+            self.text(
+                x + line.x_offset,
+                y + @as(f32, @floatFromInt(index)) * layout.line_height,
+                line.text,
+                color,
+            );
+        }
+    }
+
     /// Adds `str` with its top-left corner at (x, y), in pixels.
     pub fn text(self: *Canvas, x: f32, y: f32, str: []const u8, color: Color) void {
         c.ui_font_draw_text(&self.font.baked, self.list, x, y, str.ptr, str.len, toC(color));
@@ -128,6 +156,11 @@ pub const Canvas = struct {
         queueQuads(batch, self.font, self.list, z);
     }
 };
+
+fn measureCanvasText(context: *const anyopaque, str: []const u8) f32 {
+    const canvas: *const Canvas = @ptrCast(@alignCast(context));
+    return canvas.textWidth(str);
+}
 
 /// Immediate-mode widgets. The C side keeps the layout and the widget state, and this wrapper hands
 /// it Zig values. Labels are copied into a buffer for the length of each call, because the C side

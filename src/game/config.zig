@@ -46,6 +46,8 @@ comptime {
 /// must be in atlas_sprites in build.zig, or the game panics at startup.
 pub const atlas_image_path = "assets/atlas.png";
 pub const atlas_index_path = "assets/atlas.txt";
+/// Generated runtime asset index, including output paths and dependency edges.
+pub const asset_index_path = "assets/asset-index.txt";
 
 /// The tile map the game loads at startup, relative to the executable's folder.
 pub const level_path = "assets/maps/level1.txt";

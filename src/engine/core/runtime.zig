@@ -83,8 +83,19 @@ pub fn run(comptime Game: type, config: Config) !void {
 
     var timestep = fixed_timestep.Accumulator.init(config.update_hz);
 
-    var allocators = allocator_types.RuntimeAllocators.init(config.allocator);
-    defer allocators.deinit();
+    var allocators = allocator_types.RuntimeAllocators.init(config.allocator, gate.enabled);
+    defer {
+        if (gate.enabled) {
+            const memory = allocators.stats();
+            elog.info("arena shutdown outstanding allocations: engine {d}/{d} B, game {d}/{d} B, asset {d}/{d} B, frame {d}/{d} B", .{
+                memory.engine.live_allocations, memory.engine.live_bytes,
+                memory.game.live_allocations,   memory.game.live_bytes,
+                memory.asset.live_allocations,  memory.asset.live_bytes,
+                memory.frame.live_allocations,  memory.frame.live_bytes,
+            });
+        }
+        allocators.deinit();
+    }
 
     var session = lifecycle.Session{};
     session.start(config, &allocators) catch |err| {
@@ -282,6 +293,7 @@ pub fn run(comptime Game: type, config: Config) !void {
                 .failed = textures.failed_loads,
                 .bytes = textures.bytes,
             };
+            collector.snapshot.memory = allocators.stats();
             collector.snapshot.input = .{
                 .held = session.input.heldCount(),
                 .pressed = session.input.pressedCount(),

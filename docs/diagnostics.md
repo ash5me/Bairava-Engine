@@ -29,6 +29,7 @@ F4 has no effect in a release build, because the geometry switches are never rea
 - Sprites and draw calls, the zoom, the view size, and the camera position.
 - Held and pressed key counts, and the mouse position in window points.
 - Texture store counters: loaded, hits, misses, and failed loads.
+- Requested live and peak bytes for the engine, game, asset, and frame allocator scopes.
 - Shapes queued this frame, and shapes dropped because the list was full.
 - The game's own lines (see below).
 - Frame-time average, p95, and maximum over the retained sample window.
@@ -60,6 +61,22 @@ engine when `dc.show.camera` is on.
 The shape list holds `diagnostics.debug_draw.max_shapes` shapes per frame. Extra shapes are counted in
 `dropped` and not drawn.
 
+## Memory accounting
+
+The `memory` console command reports allocation and free calls, failed allocations, live requested
+bytes, request high-water marks, and arena capacity for each scope. The overlay shows live/peak
+requested bytes and arena capacity in KiB. Requested bytes are not GPU memory usage; arena capacity
+is the backing storage retained by the arena and can exceed the currently live requests. Frame live
+counts reset when the frame arena resets; its allocation and peak counters remain cumulative for the
+run.
+
+At shutdown, development builds log outstanding counts and requested bytes after the game and engine
+resources have been released. These are allocations retained by an arena until its teardown, not
+proof of an individual leak: the game and asset arenas intentionally keep their allocations for the
+run, and the asset arena currently releases its memory at shutdown. The allocator tests use
+`std.testing.allocator` as the parent, which checks that the arenas themselves release their backing
+allocations.
+
 ## Layering
 
 - `src/engine/diagnostics/*.zig` (except `gate.zig`) and `src/engine/renderer/debug_geometry.zig` are
@@ -70,6 +87,6 @@ The shape list holds `diagnostics.debug_draw.max_shapes` shapes per frame. Extra
 
 ## Cost
 
-With diagnostics off, the runtime does not read the clock for timing, record samples, build the
-snapshot, or create the overlay's font. Each per-frame call site is guarded by the gate, so the check
-is a compile-time constant.
+With diagnostics off, the runtime does not read the clock for timing, record samples, track arena
+allocations, build the snapshot, or create the overlay's font. Each per-frame call site is guarded by
+the gate, so the check is a compile-time constant.

@@ -300,6 +300,7 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │   └── tilemap.zig    Tile map format, layers, solid tiles, and box movement against tiles
 │   │   ├── text/
 │   │   │   ├── font.zig       Font on the GPU: prebaked sidecar or TTF baking, lazy glyph growth
+│   │   │   ├── layout.zig     Pure UTF-8 line wrapping and horizontal alignment over font metrics
 │   │   │   ├── text.h         Font baking and text drawing API. Does not include rasterizer headers
 │   │   │   └── text.c         stb_truetype and FreeType baking, BFNT metadata, one quad per glyph
 │   │   ├── ui/
@@ -465,6 +466,7 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 - TrueType fonts are preprocessed at build time into compact `.bfnt` v2 bitmap sidecars containing the glyph atlas, metrics, codepoint range, and kerning pairs. FreeType handles CFF-based OpenType fonts. The runtime still accepts v1 sidecars and expands sidecars to RGBA for GPU upload. It falls back to source-font baking if a sidecar is unavailable or incompatible.
 - Font manifest entries can opt into `.bfnt` v3 SDF atlases by appending `sdf`; bitmap output stays the default. `Font.bakeSdf` is also available for runtime baking, and `ui_font_draw_text_scaled` scales glyph quads while the sprite shader reconstructs smooth coverage.
 - Text becomes one quad per glyph, decoded from UTF-8. `Font.load` lazily rasterizes and caches codepoints outside the baked range from the retained font source; unsupported glyphs draw as `?`.
+- `Canvas.layoutText(allocator, text, max_width, alignment)` wraps words at spaces/tabs, preserves blank lines, splits overlong words at codepoint boundaries, and reports line widths and total height. Draw it with `drawTextLayout`; the layout owns its line array but borrows the source text, and must be released with `deinit`.
 - Immediate-mode widgets in `src/engine/ui/imgui.c`: label, button, and slider. Hover and press are tracked through two ids, and a `##` suffix tells duplicate labels apart without drawing the suffix.
 - `src/engine/ui/ui.zig` uploads the font and queues the UI quads as sprites at z 1000, so they draw above the world.
 - Input tracks the held state of keys and all three mouse buttons, and each press and release reaches one update step.
@@ -528,7 +530,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Debug overlay | `profiling/debug_overlay.zig`, `profiling/frame_history.zig` | Early | 40% | Frame-time graph and frame stats drawn in the native view, toggled with F3. Replaces the title stats. The frame history is unit tested. The overlay has not yet been checked in the running game. Missing: CPU split of update, draw, and present time, and a record of past spikes. |
 | Collision | `physics/shapes.zig`, `physics/collision.zig`, `physics/queries.zig`, `physics/broad_phase.zig` | Early | 50% | Point, box, and circle overlap tests; layer-filtered point, region, and movement queries; and an optional uniform-grid broad phase for static collider slices. Geometry and layers must stay fixed while indexed. There is no swept test. The player still moves through the tile map, which has its own movement. |
 | Audio | `audio/audio.zig`, `audio/voices.zig`, `audio/ima.zig`, `platform/sdl/audio.zig` | Early | 45% | Engine audio owns sounds and voices; the SDL backend owns the optional playback device, streams, WAV byte decoding, and format conversion. Build-generated IMA sidecars decode in the platform-independent engine module. The game loops `wind1.wav`, controlled by the demo volume slider. Missing: streaming long music from disk, positional audio, volume categories, reacting to device changes. |
-| Text | `text/text.c`, `text/text.h`, `ui/ui.zig` | Early | 45% | Build-time TTF/CFF preprocessing into `.bfnt` v2 bitmap or v3 SDF sidecars with glyph atlas, metrics, codepoint range, and kerning pairs; v1 sidecars remain readable. `Font.load` lazily rasterizes and caches missing codepoints, growing the atlas and refreshing its GPU texture. One quad per glyph, UTF-8 input. Missing: shaping for Tamil and other complex scripts. |
+| Text | `text/text.c`, `text/text.h`, `text/layout.zig`, `ui/ui.zig` | Early | 45% | Build-time TTF/CFF preprocessing into `.bfnt` v2 bitmap or v3 SDF sidecars with glyph atlas, metrics, codepoint range, and kerning pairs; v1 sidecars remain readable. `Font.load` lazily rasterizes and caches missing codepoints, growing the atlas and refreshing its GPU texture. `Canvas.layoutText` wraps at spaces/tabs, handles explicit newlines, splits long words on UTF-8 boundaries, and aligns each line. One quad per glyph, UTF-8 input. Missing: shaping for Tamil and other complex scripts. |
 | UI widgets | `ui/imgui.c`, `ui/imgui.h` | Early | 35% | Label, button, and slider with hot and active ids and `##` suffixes. Tested with the C harness using scripted input. Not yet checked in the running game. Missing: checkbox, panels and layouts beyond one column, text input, keyboard focus, scrolling. |
 | Scenes | `engine/scene/scene.zig`, `engine/scene/scene_manager.zig`, `engine/scene/host.zig` | Early | 50% | Scene contract and a manager that keeps one scene active. `SceneHost` runs scenes as a game, and switches apply after the update that asked for them. A failed `init` keeps the current scene. The sample game and Semkootru both run through it. |
 
@@ -582,7 +584,7 @@ These are the natural extension points. Each one reuses existing code.
 
 12. **Zoom recreates the native target.** A zoom step that changes the view size rebuilds the native target and waits for the GPU to go idle, as a window resize does. Zoom eases over a fraction of a second, so one zoom can cause several rebuilds. The target is small, so this should be cheap, but it has not been measured. In fit mode a fractional zoom leaves some native pixels one screen pixel larger than others, as fit mode already does. Integer mode rounds zoom to whole scales, so its steps are coarser than fit mode's, and at a base scale of 1 it cannot zoom out at all.
 
-13. **Complex shaping isn't supported.** TrueType and OpenType CFF outlines can be rasterized and kerning is applied, but text is laid out one Unicode codepoint per glyph. Tamil and other complex scripts that need substitutions or contextual positioning won't render correctly.
+13. **Complex shaping isn't supported.** TrueType and OpenType CFF outlines can be rasterized and kerning is applied, and `Canvas.layoutText` provides wrapping and line alignment, but glyph placement remains one Unicode codepoint per glyph. Tamil and other complex scripts that need substitutions or contextual positioning won't render correctly.
 
 ## Roadmap
 

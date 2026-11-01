@@ -7,6 +7,7 @@ pub const Color = @import("debug_draw.zig").Color;
 pub const Collector = @import("collector.zig").Collector;
 pub const Geometry = @import("collector.zig").Geometry;
 pub const Snapshot = @import("collector.zig").Snapshot;
+pub const Memory = @import("collector.zig").Memory;
 pub const FrameStats = @import("frame_stats.zig").Stats;
 pub const Phase = @import("frame_stats.zig").Phase;
 pub const Console = @import("console.zig").Console;

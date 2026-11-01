@@ -7,6 +7,7 @@ const std = @import("std");
 const frame_stats = @import("frame_stats.zig");
 const text = @import("text.zig");
 const debug_draw = @import("debug_draw.zig");
+const allocator_types = @import("../core/allocators.zig");
 
 pub const Text = text.Text;
 pub const Draw = debug_draw.Draw;
@@ -64,6 +65,10 @@ pub const Assets = struct {
     bytes: usize = 0,
 };
 
+/// Requested allocations measured at each arena-facing allocator. High-water marks are lifetime
+/// peaks; frame live counts reset with the frame arena.
+pub const Memory = allocator_types.Stats;
+
 /// Input state, from the input module.
 pub const Input = struct {
     held: u32 = 0,
@@ -101,6 +106,7 @@ pub const World = struct {
 pub const Snapshot = struct {
     scene: Scene = .{},
     assets: Assets = .{},
+    memory: Memory = .{},
     input: Input = .{},
     world: World = .{},
     /// Loop iterations since the run started.

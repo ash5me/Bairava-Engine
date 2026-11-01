@@ -43,6 +43,8 @@ pub const Game = struct {
     ambient_attempted: bool,
     /// Key bindings from the settings file, with the defaults for anything it leaves out.
     bindings: controls.Bindings,
+    /// True when indexed assets, including the atlas image, are watched by the dependency graph.
+    asset_graph_watched: bool,
     /// Held keys, for the debug lines and the actions. It lives as long as the session.
     input: *const engine.Input,
 
@@ -54,7 +56,7 @@ pub const Game = struct {
             return err;
         };
         errdefer atlas.deinit();
-        watchAtlas(ctx);
+        const asset_graph_watched = watchAtlas(ctx);
         log.info("atlas {d}x{d} with {d} sprites", .{ atlas.texture.width, atlas.texture.height, atlas.index.len });
 
         const tile = atlas.region("tile");
@@ -107,6 +109,7 @@ pub const Game = struct {
             .ambient_voice = null,
             .ambient_attempted = false,
             .bindings = bindings,
+            .asset_graph_watched = asset_graph_watched,
             .input = ctx.input,
         };
         game.loadSave(ctx);
@@ -184,10 +187,17 @@ pub const Game = struct {
 
     /// Registers the atlas files for hot reload. In a release build this watches nothing. A file that cannot
     /// be watched only means that its changes are not picked up, so it is logged and startup goes on.
-    fn watchAtlas(ctx: *engine.Context) void {
-        inline for (.{ config.atlas_image_path, config.atlas_index_path }) |path| {
-            ctx.watchAsset(path, .atlas) catch |err| log.warn("'{s}' is not watched for reload: {s}", .{ path, @errorName(err) });
+    fn watchAtlas(ctx: *engine.Context) bool {
+        var graph_watched = true;
+        ctx.watchAssetGraph(config.asset_index_path) catch |err| {
+            graph_watched = false;
+            log.warn("asset dependency index '{s}' is not watched for reload: {s}", .{ config.asset_index_path, @errorName(err) });
+        };
+        if (!graph_watched) {
+            ctx.watchAsset(config.atlas_image_path, .atlas) catch |err| log.warn("'{s}' is not watched for reload: {s}", .{ config.atlas_image_path, @errorName(err) });
         }
+        ctx.watchAsset(config.atlas_index_path, .atlas) catch |err| log.warn("'{s}' is not watched for reload: {s}", .{ config.atlas_index_path, @errorName(err) });
+        return graph_watched;
     }
 
     /// Reloads the atlas when its image or index changed on disk. The replacement is loaded and checked first,
@@ -195,7 +205,10 @@ pub const Game = struct {
     /// released, so the old one goes last. A rejected reload keeps the atlas the game already has, and logs why.
     fn reloadAtlasIfChanged(self: *Game, ctx: *engine.Context) void {
         const index_changed = ctx.takeChanged(config.atlas_index_path);
-        const image_changed = ctx.takeChanged(config.atlas_image_path);
+        const image_changed = if (self.asset_graph_watched)
+            ctx.takeAssetChanged("atlas")
+        else
+            ctx.takeChanged(config.atlas_image_path);
         if (!index_changed and !image_changed) return;
 
         var fresh = ctx.loadAtlas(config.atlas_image_path, config.atlas_index_path) catch |err| {
