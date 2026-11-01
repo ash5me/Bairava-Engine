@@ -16,6 +16,7 @@ const fixed_timestep = @import("fixed_timestep.zig");
 const lifecycle = @import("lifecycle.zig");
 const startup = @import("startup.zig");
 const logging = @import("../logging/log.zig");
+const crash = @import("../logging/crash.zig");
 const profile = @import("../profiling/profile.zig");
 const debug_overlay = @import("../profiling/debug_overlay.zig");
 const debug_geometry = @import("../renderer/debug_geometry.zig");
@@ -165,6 +166,8 @@ pub fn run(comptime Game: type, config: Config) !void {
             session.input.sampleHeld(platform.events.isHeld);
         }
         if (gate.enabled) collector.stats.record(.events, secondsBetween(events_start, clockIf()));
+        // What this frame starts with. A crash report written if the frame panics reads it.
+        crash.note(total_frames, if (comptime @hasDecl(@TypeOf(game), "sceneInfo")) game.sceneInfo().name else "none", session.input.heldMask(), session.input.mouse_x, session.input.mouse_y);
         // Hot reload looks at watched files here, before the updates, so a reload never runs during an update.
         if (gate.enabled) {
             const asset_start = clockIf();

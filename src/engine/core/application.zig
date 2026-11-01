@@ -41,6 +41,9 @@ pub const Config = struct {
     /// Name of the log file, written beside the executable. Each run replaces the file from the
     /// last run. Null logs to the terminal only.
     log_file: ?[:0]const u8 = null,
+    /// Name of the crash report, written beside the executable when the game panics. Each run clears the report
+    /// from the last run. Null writes no report; the log still records the panic.
+    crash_file: ?[:0]const u8 = null,
     /// Settings file, beside the executable. Its window settings override `window_w`, `window_h`,
     /// `fullscreen`, and `vsync`. A missing file keeps these values.
     settings_file: []const u8 = "settings.txt",

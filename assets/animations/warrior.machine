@@ -1,0 +1,21 @@
+# Warrior animation machine. The game sets two parameters each update:
+#   moving: 1 while the player moves, 0 while it stands still
+#   facing: 0 down, 1 right, 2 up, 3 left
+# A state plays the first clip variant whose condition holds. A transition fires when its condition holds and
+# crossfades the clips it leaves over its blend time, in seconds. Clip names come from warrior.anim.
+machine 1
+param moving
+param facing
+state idle
+clip idle_down when facing == 0
+clip idle_right when facing == 1
+clip idle_up when facing == 2
+clip idle_left when facing == 3
+state walk
+clip walk_down when facing == 0
+clip walk_right when facing == 1
+clip walk_up when facing == 2
+clip walk_left when facing == 3
+start idle
+transition idle -> walk when moving == 1 blend 0.1
+transition walk -> idle when moving == 0 blend 0.1

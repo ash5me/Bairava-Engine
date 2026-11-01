@@ -6,12 +6,13 @@ const engine = @import("bairava");
 const config = @import("game/config.zig");
 const Game = @import("game/game.zig").Game;
 
-/// Panics are recorded in the log file before Zig prints them, so a crash leaves its reason behind.
+/// Panics are recorded in the log file, and a crash report is written beside the executable, before Zig prints
+/// them, so a crash leaves its reason and the frame it happened in behind.
 /// Zig's default handler then prints the message and a stack trace to the terminal and aborts.
 pub const panic = std.debug.FullPanic(panicWithLog);
 
 fn panicWithLog(msg: []const u8, first_trace_addr: ?usize) noreturn {
-    engine.log.recordPanic(msg);
+    engine.crash.report(msg);
     std.debug.defaultPanic(msg, first_trace_addr);
 }
 
@@ -31,6 +32,7 @@ pub fn main() !void {
         .debug_font_path = config.ui_font_path,
         .debug_font_px = config.ui_font_px,
         .log_file = config.log_file_name,
+        .crash_file = config.crash_file_name,
         .settings_file = config.settings_file_name,
         .fullscreen = config.fullscreen,
         .vsync = config.vsync,

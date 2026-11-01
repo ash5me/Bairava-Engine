@@ -1,6 +1,6 @@
-//! The player: position, facing, walk animation, and drawing. This is gameplay code. The engine
-//! sees only the sprites it queues, the tile map that the player collides with, and the animation
-//! clips the player plays.
+//! The player: position, facing, the animation machine, and drawing. This is gameplay code. Each update it sets the
+//! machine's `moving` and `facing` parameters, and the machine chooses the clips (assets/animations/warrior.machine).
+//! The engine sees only the sprites it queues, the tile map that the player collides with, and the machine.
 
 const std = @import("std");
 const engine = @import("bairava");
@@ -14,27 +14,14 @@ const collide_top: f32 = 16.0;
 const collide_h: f32 = 16.0;
 /// Player speed, in native pixels per second.
 const speed: f32 = 80.0;
-/// Which way the player faces.
+
+/// Which way the player faces. The values are the `facing` parameter the machine file reads.
 pub const Facing = enum(u32) {
     down,
     right,
     up,
     left,
 };
-
-/// Gameplay selects named clips; frame timing and rectangles come from the engine's animation data.
-fn clipFor(library: *const engine.animation.Library, facing: Facing, moving: bool) *const engine.animation.DataClip {
-    const prefix: []const u8 = if (moving) "walk_" else "idle_";
-    const direction = switch (facing) {
-        .down => "down",
-        .up => "up",
-        .left => "left",
-        .right => "right",
-    };
-    var name: [16]u8 = undefined;
-    const clip_name = std.fmt.bufPrint(&name, "{s}{s}", .{ prefix, direction }) catch unreachable;
-    return library.find(clip_name) orelse unreachable;
-}
 
 /// A point in native pixels.
 pub const Point = struct {
@@ -50,8 +37,13 @@ pub const Player = struct {
     prev_y: f32,
     /// Direction the player last moved in. It stays put when the player stops.
     facing: Facing = .down,
-    /// Plays the walk and idle clips.
-    anim: engine.animation.Timeline,
+    /// Whether the player moved on the last update.
+    moving: bool = false,
+    /// Chooses the clips for the idle and walk animations. The player owns the machine's definition.
+    machine: engine.animation.Machine,
+    /// Where the machine keeps its `moving` and `facing` parameters.
+    moving_param: engine.animation.machine.ParamId,
+    facing_param: engine.animation.machine.ParamId,
 
     /// Sprite size in native pixels, so game code can check a position against the level.
     pub const sprite_w: f32 = width;
@@ -62,19 +54,24 @@ pub const Player = struct {
         return .{ .x = x, .y = y + collide_top, .w = width, .h = collide_h };
     }
 
-    /// A player whose feet fill the given tile. The game starts the player on the map's spawn cell.
-    pub fn standingOn(col: u32, row: u32, animations: *const engine.animation.Library) Player {
+    /// A player whose feet fill the given tile, standing still in the machine's start state. The player takes
+    /// ownership of `definition`; `deinit` frees it. The game checks that the definition has both parameters.
+    pub fn standingOn(col: u32, row: u32, animations: *const engine.animation.Library, definition: engine.animation.MachineDefinition) Player {
         const x = @as(f32, @floatFromInt(col)) * engine.tilemap.tile_px;
         const y = @as(f32, @floatFromInt(row)) * engine.tilemap.tile_px - collide_top;
+        const machine = engine.animation.Machine.init(definition, animations);
         return .{
             .transform = .{ .position = .{ x, y, 0.0 } },
             .prev_x = x,
             .prev_y = y,
-            .anim = engine.animation.Timeline.init(clipFor(animations, .down, false)),
+            .machine = machine,
+            .moving_param = machine.paramId("moving") orelse engine.log.fail(@src(), "animation machine has no 'moving' parameter", .{}),
+            .facing_param = machine.paramId("facing") orelse engine.log.fail(@src(), "animation machine has no 'facing' parameter", .{}),
         };
     }
 
-    /// Restores persisted movement state without interpolating from an unrelated previous frame.
+    /// Restores persisted movement state without interpolating from an unrelated previous frame. The machine
+    /// settles into the state the saved movement implies, and seeks its clip to `elapsed` seconds.
     pub fn restore(self: *Player, transform: engine.transform.Transform, facing: Facing, moving: bool, elapsed: f32, animations: *const engine.animation.Library) void {
         self.transform = transform;
         const x = transform.position[0];
@@ -82,8 +79,9 @@ pub const Player = struct {
         self.prev_x = x;
         self.prev_y = y;
         self.facing = facing;
-        self.anim.play(clipFor(animations, facing, moving));
-        self.anim.time = @mod(@max(elapsed, 0), self.anim.clip.duration());
+        self.moving = moving;
+        self.setParameters();
+        self.machine.restore(animations, elapsed);
     }
 
     /// Top-left corner to draw at, blended between the last two updates. `alpha` is 0 at the
@@ -122,11 +120,11 @@ pub const Player = struct {
             self.facing = .down;
         }
 
-        // Switching clips restarts them, so a new walk begins at its first frame. Holding the same
+        // The machine chooses the clip from these parameters. A clip change restarts it, and holding the same
         // clip keeps its place.
-        const moving = dx != 0 or dy != 0;
-        self.anim.play(clipFor(animations, self.facing, moving));
-        self.anim.update(dt);
+        self.moving = dx != 0 or dy != 0;
+        self.setParameters();
+        self.machine.update(dt, animations);
 
         // Diagonal input is normalized so it isn't faster. Cardinal input already has length 1,
         // and zero input stays zero.
@@ -142,14 +140,26 @@ pub const Player = struct {
         engine.log.assert(std.math.isFinite(self.transform.position[0]) and std.math.isFinite(self.transform.position[1]), @src(), "player position is not finite: ({d}, {d})", .{ self.transform.position[0], self.transform.position[1] });
     }
 
+    /// Writes the player's movement state into the machine's parameters.
+    fn setParameters(self: *Player) void {
+        self.machine.set(self.moving_param, @intFromBool(self.moving));
+        self.machine.set(self.facing_param, @intCast(@intFromEnum(self.facing)));
+    }
+
     /// The collision box (the feet) at the blended position, in world pixels. Debug geometry draws it.
     pub fn collisionBox(self: *const Player, alpha: f32) engine.tilemap.Box {
         const pos = self.drawPosition(alpha);
         return feetAt(pos.x, pos.y);
     }
 
-    /// Queues the current frame at the blended position, relative to the camera. `atlas` is the
-    /// texture that holds every sprite, and `sheet` is the warrior's region of it.
+    /// Frees the machine's definition. The player must not be used afterwards.
+    pub fn deinit(self: *Player) void {
+        self.machine.deinit();
+    }
+
+    /// Queues the current frame at the blended position, relative to the camera. While the machine blends two clips,
+    /// the earlier clip's frame is drawn first and the current one over it at its blend weight. `atlas` is the texture
+    /// that holds every sprite, and `sheet` is the warrior's region of it.
     pub fn draw(
         self: *const Player,
         batch: *engine.SpriteBatch,
@@ -159,20 +169,28 @@ pub const Player = struct {
         alpha: f32,
     ) void {
         const pos = self.drawPosition(alpha);
-        const frame = self.anim.frame();
-        const src = engine.Rect{
-            .x = @floatFromInt(sheet.x + frame.x),
-            .y = @floatFromInt(sheet.y + frame.y),
-            .w = @floatFromInt(frame.w),
-            .h = @floatFromInt(frame.h),
-        };
-        // Whole native pixels keep the edges of the sprite sharp. The camera rounds once per sprite.
-        const dst = engine.Rect{
-            .x = cam.screenX(pos.x),
-            .y = cam.screenY(pos.y),
-            .w = @floatFromInt(frame.w),
-            .h = @floatFromInt(frame.h),
-        };
-        batch.drawSprite(atlas, src, dst, .{});
+        const x = cam.screenX(pos.x);
+        const y = cam.screenY(pos.y);
+        const pose = self.machine.pose();
+        if (pose.previous) |previous| drawFrame(batch, atlas, sheet, previous, x, y, 1);
+        drawFrame(batch, atlas, sheet, pose.frame, x, y, pose.weight);
     }
 };
+
+/// Queues one animation frame at (x, y), in view pixels, at `alpha`.
+fn drawFrame(batch: *engine.SpriteBatch, atlas: *const engine.Texture, sheet: engine.atlas.Region, frame: *const engine.animation.Frame, x: f32, y: f32, alpha: f32) void {
+    const src = engine.Rect{
+        .x = @floatFromInt(sheet.x + frame.x),
+        .y = @floatFromInt(sheet.y + frame.y),
+        .w = @floatFromInt(frame.w),
+        .h = @floatFromInt(frame.h),
+    };
+    // Whole native pixels keep the edges of the sprite sharp. The camera rounds once per sprite.
+    const dst = engine.Rect{
+        .x = x,
+        .y = y,
+        .w = @floatFromInt(frame.w),
+        .h = @floatFromInt(frame.h),
+    };
+    batch.drawSprite(atlas, src, dst, .{ .alpha = alpha });
+}

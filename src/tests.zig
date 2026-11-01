@@ -22,6 +22,7 @@ test {
     _ = @import("engine/diagnostics/collector.zig");
     _ = @import("engine/diagnostics/console.zig");
     _ = @import("engine/animation/data.zig");
+    _ = @import("engine/animation/machine.zig");
     _ = @import("game/level_data.zig");
     _ = @import("game/save.zig");
     _ = @import("engine/renderer/debug_geometry.zig");
@@ -59,6 +60,7 @@ test {
     _ = @import("engine/platform/sdl/clock.zig");
     _ = @import("engine/platform/sdl/files.zig");
     _ = @import("engine/logging/log.zig");
+    _ = @import("engine/logging/crash.zig");
     _ = @import("engine/core/startup.zig");
     _ = @import("engine/platform/sdl/window.zig");
     _ = @import("engine/physics/shapes.zig");

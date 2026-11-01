@@ -80,7 +80,19 @@ pub const Game = struct {
         checkTileset(&level, tile);
 
         const spawn = level.spawn;
-        const player = Player.standingOn(spawn.col, spawn.row, &animations);
+        var machine_def = loadMachine(ctx, config.machine_path, &animations) catch |err| {
+            log.err("required animation machine '{s}' failed to load: {s}", .{ config.machine_path, @errorName(err) });
+            return err;
+        };
+        inline for (.{ "moving", "facing" }) |name| {
+            if (machine_def.findParam(name) == null) {
+                log.err("animation machine '{s}' is missing required parameter '{s}'", .{ config.machine_path, name });
+                machine_def.deinit();
+                return error.InvalidAnimation;
+            }
+        }
+        var player = Player.standingOn(spawn.col, spawn.row, &animations, machine_def);
+        errdefer player.deinit();
         log.info("map {d}x{d} tiles, player starts on tile ({d}, {d})", .{ level.map.cols, level.map.rows, spawn.col, spawn.row });
 
         const ui_font = ctx.loadFont(config.ui_font_path, config.ui_font_px) catch |err| {
@@ -138,6 +150,7 @@ pub const Game = struct {
         if (self.ambient_voice) |voice| self.audio.stop(voice);
         if (self.ambient_sound) |*sound| sound.deinit();
         self.level.deinit();
+        self.player.deinit();
         self.animations.deinit();
         self.atlas.deinit();
         self.ui.deinit();
@@ -204,10 +217,11 @@ pub const Game = struct {
             log.warn("entity diagnostics facing was not formatted: {s}", .{@errorName(err)});
             return;
         };
-        const animation = std.fmt.bufPrint(&values[2], "{s} frame={d} time={d:.2}", .{
-            self.player.anim.clip.name,
-            self.player.anim.frameIndex(),
-            self.player.anim.time,
+        const animation = std.fmt.bufPrint(&values[2], "{s}/{s} frame={d} time={d:.2}", .{
+            self.player.machine.stateName(),
+            self.player.machine.clipName(),
+            self.player.machine.frameIndex(),
+            self.player.machine.clipTime(),
         }) catch |err| {
             log.warn("entity diagnostics animation was not formatted: {s}", .{@errorName(err)});
             return;
@@ -311,8 +325,8 @@ pub const Game = struct {
                 .scale = self.player.transform.scale,
             },
             .facing = self.player.facing,
-            .moving = self.player.anim.clip.frames.len > 1,
-            .animation_time = self.player.anim.time,
+            .moving = self.player.moving,
+            .animation_time = self.player.machine.clipTime(),
             .clicks = self.clicks,
             .volume = self.volume,
             .scale_mode = if (ctx.scale_mode == .integer) .integer else .fit,
@@ -429,6 +443,25 @@ pub const Game = struct {
         ui.end();
     }
 };
+
+/// Reads the animation machine's text and checks it against the clips in `animations`.
+fn loadMachine(ctx: *const engine.Context, path: []const u8, animations: *const engine.animation.Library) engine.AssetError!engine.animation.MachineDefinition {
+    const source = ctx.readFile(ctx.allocators.asset, path) catch |err| {
+        return switch (err) {
+            error.FileNotFound => error.FileNotFound,
+            error.PathTooLong => error.PathTooLong,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.ReadFailed,
+        };
+    };
+    defer ctx.allocators.asset.free(source);
+    return engine.animation.MachineDefinition.parse(ctx.allocators.asset, source, animations) catch |err| {
+        return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.InvalidAnimation,
+        };
+    };
+}
 
 fn loadAnimations(ctx: *const engine.Context, path: []const u8, width_px: u32, height_px: u32) engine.AssetError!engine.animation.Library {
     const source = ctx.readFile(ctx.allocators.asset, path) catch |err| {

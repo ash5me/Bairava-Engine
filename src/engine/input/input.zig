@@ -196,6 +196,15 @@ pub const Input = struct {
         }
     }
 
+    /// One bit per key in `Key` order, set for each key held now. The crash report reads it.
+    pub fn heldMask(self: *const Input) u64 {
+        var mask: u64 = 0;
+        for (std.enums.values(Key)) |key| {
+            if (self.held(key)) mask |= @as(u64, 1) << @as(u6, @intCast(@intFromEnum(key)));
+        }
+        return mask;
+    }
+
     /// How many keys were pressed in the update step that is running. The diagnostics overlay shows it.
     pub fn pressedCount(self: *const Input) u32 {
         var count: u32 = 0;

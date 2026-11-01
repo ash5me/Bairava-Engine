@@ -55,6 +55,7 @@ pub const level_path = "assets/maps/level1.txt";
 pub const level_spawn_path = "assets/maps/level1.spawn";
 /// Versioned, validated sprite animation definitions.
 pub const animation_path = "assets/animations/warrior.anim";
+pub const machine_path = "assets/animations/warrior.machine";
 
 /// Looping ambience, relative to the executable's folder.
 pub const ambient_sound_path = "assets/wind1.wav";
@@ -70,3 +71,4 @@ pub const ui_font_px: f32 = 10;
 
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.
 pub const log_file_name: ?[:0]const u8 = "Semkootru.log";
+pub const crash_file_name: ?[:0]const u8 = "Semkootru.crash.txt";

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <wchar.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -84,4 +85,41 @@ void log_file_write(int level, const char *text) {
   if (level > 4) level = 4;
   /* The text goes through "%s", so a '%' in a message is printed, not read as a format. */
   log_log(log_levels[level], "", 0, "%s", text);
+}
+
+/* Removes a file by path. Used for a crash report left by an earlier run. */
+#ifdef _WIN32
+static int remove_file(const char *path) {
+  int needed = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+  wchar_t *wide;
+  int result;
+  if (needed <= 0) return -1;
+  wide = (wchar_t *) malloc((size_t) needed * sizeof(wchar_t));
+  if (!wide) return -1;
+  MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, needed);
+  result = _wremove(wide);
+  free(wide);
+  return result;
+}
+#else
+static int remove_file(const char *path) {
+  return remove(path);
+}
+#endif
+
+void crash_file_remove(const char *path) {
+  remove_file(path);
+}
+
+int crash_file_write(const char *path, const char *text) {
+  char when[32] = "unknown time";
+  time_t now = time(NULL);
+  struct tm *local = localtime(&now);
+  FILE *fp;
+  if (local) strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", local);
+  fp = open_for_write(path);
+  if (!fp) return -1;
+  fprintf(fp, "written %s\n%s", when, text);
+  fclose(fp);
+  return 0;
 }

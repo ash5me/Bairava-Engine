@@ -17,4 +17,11 @@ void log_file_close(void);
  * order as engine/logging/log.zig's Level. Nothing is written while no file is open. */
 void log_file_write(int level, const char *text);
 
+/* Writes a crash report to `path`, replacing any report already there. The file starts with the time it
+ * was written, then `text`. Returns 0 on success and -1 if the file can't be written. */
+int crash_file_write(const char *path, const char *text);
+
+/* Removes the crash report at `path`, if there is one. */
+void crash_file_remove(const char *path);
+
 #endif

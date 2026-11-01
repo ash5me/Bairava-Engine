@@ -77,6 +77,11 @@ pub const Library = data.Library;
 pub const Frame = data.Frame;
 pub const DataClip = data.Clip;
 
+/// The state machine that chooses clips: states, transitions, conditions, blending, and events.
+pub const machine = @import("machine.zig");
+pub const Machine = machine.Machine;
+pub const MachineDefinition = machine.Definition;
+
 /// Plays a validated variable-duration clip using fixed engine update steps.
 pub const Timeline = struct {
     clip: *const DataClip,

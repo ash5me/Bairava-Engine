@@ -68,6 +68,19 @@ previous file.
 
 The C sink maps `trace` to `LOG_TRACE` in log.c, and it clamps any level outside 0 to 4.
 
+## Crash reports
+
+A panic writes a crash report beside the executable, as `Semkootru.crash.txt`, before Zig prints the stack
+trace. The report holds the panic message, the frame number, the scene name, the mouse position in window
+points, and the held keys. Each run removes the report left by the run before it, at startup, so a report
+always belongs to the run that wrote it. The stack trace goes to the terminal only.
+
+The frame loop records the frame, scene, and input once per frame with a few stores. That happens in every
+build, so a release crash has the same context as a debug one.
+
+The game sets the report file name with `crash_file` in its config. Null writes no report, and the log
+still records the panic.
+
 ## Not done
 
 - No log rotation, and no logs kept from earlier runs. Both are listed as open items in the README.

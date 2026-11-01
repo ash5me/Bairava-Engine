@@ -55,6 +55,7 @@ pub const diagnostics = engine.diagnostics;
 pub const console = engine.console;
 pub const debug_geometry = engine.debug_geometry;
 pub const log = engine.log;
+pub const crash = engine.crash;
 pub const profile = engine.profile;
 pub const scene = engine.scene;
 pub const SceneHost = engine.SceneHost;

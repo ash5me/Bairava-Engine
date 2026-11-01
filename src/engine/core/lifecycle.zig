@@ -9,6 +9,7 @@ const allocator_types = @import("allocators.zig");
 const platform = @import("../platform/platform.zig");
 const audio = @import("../audio/audio.zig");
 const logging = @import("../logging/log.zig");
+const crash = @import("../logging/crash.zig");
 const Input = @import("../input/input.zig").Input;
 const diagnostics = @import("../diagnostics/collector.zig");
 const hot_reload = @import("../assets/hot_reload.zig");
@@ -245,6 +246,7 @@ fn hotReloadStamp(path: []const u8) ?i64 {
 /// Opens the log file beside the executable when the game asks for one. Each run replaces the
 /// file from the last run. Startup messages and startup failures are kept, so this runs first.
 pub fn openLog(config: Config) void {
+    if (config.crash_file) |name| setupCrashReport(name);
     if (config.log_file) |name| {
         var path_buf: [max_full_path]u8 = undefined;
         const path = platform.files.absolutePath(.beside_executable, name, &path_buf) catch {
@@ -257,6 +259,20 @@ pub fn openLog(config: Config) void {
             elog.warn("could not open log file {s}, so logs go to the terminal only", .{path});
         }
     }
+}
+
+/// Sets the file a crash report is written to, beside the executable, and clears the report from an earlier run.
+fn setupCrashReport(name: [:0]const u8) void {
+    var path_buf: [max_full_path]u8 = undefined;
+    const path = platform.files.absolutePath(.beside_executable, name, &path_buf) catch {
+        elog.warn("crash report name is longer than {d} bytes, so crash reports are not written", .{max_full_path});
+        return;
+    };
+    if (!crash.setReportPath(path)) {
+        elog.warn("crash report path {s} is too long, so crash reports are not written", .{path});
+        return;
+    }
+    crash.clearOldReport();
 }
 
 /// Reads the settings file beside the executable. Returns null when there is no file, or it can't be

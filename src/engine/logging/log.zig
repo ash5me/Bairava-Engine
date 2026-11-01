@@ -144,6 +144,17 @@ pub fn recordPanic(msg: []const u8) void {
     lf.log_file_write(@intFromEnum(Level.err), text.ptr);
 }
 
+/// Writes the crash report file at `path`, replacing any report already there. Returns false when the file
+/// can't be written. The panic handler reaches it through `crash.report`.
+pub fn writeCrashFile(path: [:0]const u8, text: [:0]const u8) bool {
+    return lf.crash_file_write(path.ptr, text.ptr) == 0;
+}
+
+/// Removes the crash report at `path`, if there is one.
+pub fn removeCrashFile(path: [:0]const u8) void {
+    lf.crash_file_remove(path.ptr);
+}
+
 /// Checks an invariant. If `ok` is false, the message names the caller's location and panics.
 /// Does nothing when assertions are compiled out.
 pub fn assert(ok: bool, src: std.builtin.SourceLocation, comptime fmt: []const u8, args: anytype) void {

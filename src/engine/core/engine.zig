@@ -102,6 +102,7 @@ pub const debug_geometry = @import("../renderer/debug_geometry.zig");
 pub const ui = @import("../ui/ui.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = @import("../logging/log.zig");
+pub const crash = @import("../logging/crash.zig");
 /// Profiling zones for the Tracy profiler. They record only when the build uses -Dtracy=true.
 pub const profile = @import("../profiling/profile.zig");
 /// Scenes: one active scene at a time, switched at a safe point. See scene/scene_manager.zig.

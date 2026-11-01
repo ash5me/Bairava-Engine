@@ -122,6 +122,14 @@ pub const Library = struct {
         self.* = undefined;
     }
 
+    /// The index of the clip named `name`, or null. The index stays valid until `deinit`.
+    pub fn indexOf(self: *const Library, name: []const u8) ?u32 {
+        for (self.clips[0..self.clip_count], 0..) |clip, index| {
+            if (std.mem.eql(u8, clip.name, name)) return @intCast(index);
+        }
+        return null;
+    }
+
     pub fn find(self: *const Library, name: []const u8) ?*const Clip {
         for (self.clips[0..self.clip_count]) |*clip| {
             if (std.mem.eql(u8, clip.name, name)) return clip;

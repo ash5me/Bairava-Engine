@@ -5,4 +5,5 @@ font font assets/font.ttf font.ttf - 10 32 224
 level1 map assets/maps/level1.txt maps/level1.txt tile
 level1_spawn file assets/maps/level1.spawn maps/level1.spawn level1
 warrior_animation file assets/animations/warrior.anim animations/warrior.anim warrior
+warrior_machine file assets/animations/warrior.machine animations/warrior.machine warrior_animation
 wind1 audio assets/wind1.wav wind1.wav -
