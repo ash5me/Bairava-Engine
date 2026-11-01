@@ -25,13 +25,13 @@ def verify_source_pins(lock: dict) -> bool:
         workflow = CI.read_text(encoding="utf-8")
         toolchain = lock["toolchain"]
         zig_version = re.search(r'\.minimum_zig_version\s*=\s*"([^"]+)"', zon)
-        slang_version = re.search(r"(?m)^  SLANG_VERSION:\s*([^\s#]+)\s*$", workflow)
+        slang_version = re.search(r"""(?m)^  SLANG_VERSION:\s*(['"])([^'"]+)\1\s*$""", workflow)
         if zig_version is None or slang_version is None:
             raise ValueError("could not find the Zig or Slang version in its source file")
         if zig_version.group(1) != toolchain["zig"]:
             raise ValueError(f"Zig version differs from lock (configured {zig_version.group(1)}, locked {toolchain['zig']})")
-        if slang_version.group(1) != toolchain["slang"]:
-            raise ValueError(f"Slang version differs from lock (configured {slang_version.group(1)}, locked {toolchain['slang']})")
+        if slang_version.group(2) != toolchain["slang"]:
+            raise ValueError(f"Slang version differs from lock (configured {slang_version.group(2)}, locked {toolchain['slang']})")
 
         packages = lock["zig_packages"]
         if not isinstance(packages, list) or not packages:

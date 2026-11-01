@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  SLANG_VERSION: 2026.20
+  SLANG_VERSION: "2026.20"
 
 jobs:
   build-and-test:
