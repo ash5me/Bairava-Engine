@@ -114,16 +114,20 @@ zig build asset-import -- path/to/sprite_keyed.png my_sprite
 
 Press **F5** to save or **F9** to load. Saves are written to `save.json` beside the executable and use Parson to serialize a pretty, human-editable JSON document. The `save_version` field and component-scoped keys keep the format resilient: older files can omit newer component fields, while a save with a newer unsupported version is ignored and left untouched unless you explicitly save over it.
 
-The file maps game state into component paths: `components.player.transform` stores position, `components.player.facing` stores direction, `components.player.animation` stores movement and elapsed time, `components.game.progress` stores clicks and volume, `components.world.level` identifies the map, and `components.display` stores scale mode and zoom. Invalid component values fall back to defaults; saved player positions outside the map or inside solid tiles are rejected.
+The file maps game state into component paths: `components.player.transform` stores position, rotation, and scale, `components.player.facing` stores direction, `components.player.animation` stores movement and elapsed time, `components.game.progress` stores clicks and volume, `components.world.level` identifies the map, and `components.display` stores scale mode and zoom. Version 1 saves with flat `transform.x` and `transform.y` values remain readable. Invalid component values fall back to defaults; saved player positions outside the map or inside solid tiles are rejected.
 
 For example:
 
 ```json
 {
-  "save_version": 1,
+  "save_version": 2,
   "components": {
     "player": {
-      "transform": { "x": 64, "y": 48 },
+      "transform": {
+        "position": { "x": 64, "y": 48, "z": 0 },
+        "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
       "facing": { "direction": "down" },
       "animation": { "moving": false, "elapsed_seconds": 0 }
     },

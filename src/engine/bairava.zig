@@ -28,6 +28,7 @@ pub const TextureHandle = engine.TextureHandle;
 pub const HandleError = engine.HandleError;
 pub const view = engine.view;
 pub const math = engine.math;
+pub const transform = engine.transform;
 pub const strings = engine.strings;
 pub const hash_map = engine.hash_map;
 pub const assets = engine.assets;

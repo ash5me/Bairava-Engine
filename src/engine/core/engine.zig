@@ -55,6 +55,8 @@ pub const HandleError = @import("../assets/handle.zig").LookupError;
 pub const view = @import("../renderer/view.zig");
 /// Vector and matrix math, backed by cglm.
 pub const math = @import("math.zig");
+/// Local transforms and parent-child world-matrix composition.
+pub const transform = @import("transform.zig");
 /// Validated fixed-capacity strings for names and paths.
 pub const strings = @import("../memory/string.zig");
 /// Hash map keyed by validated names.

@@ -116,7 +116,7 @@ pub const Game = struct {
     /// Adds the game's lines to the diagnostics overlay: where the player is, which way it faces, and
     /// which movement keys are held. The engine calls this once per frame, in development builds only.
     pub fn debugText(self: *const Game, out: *engine.diagnostics.Text) void {
-        out.print("player {d:.1}, {d:.1}  facing {s}", .{ self.player.x, self.player.y, @tagName(self.player.facing) });
+        out.print("player {d:.1}, {d:.1}  facing {s}", .{ self.player.transform.position[0], self.player.transform.position[1], @tagName(self.player.facing) });
         out.print("move held: L{d} R{d} U{d} D{d}  clicks {d}", .{
             @intFromBool(self.bindings.held(self.input, .move_left)),
             @intFromBool(self.bindings.held(self.input, .move_right)),
@@ -239,8 +239,11 @@ pub const Game = struct {
 
     fn saveGame(self: *const Game, ctx: *const engine.Context) void {
         const state = save_store.State{
-            .player_x = self.player.x,
-            .player_y = self.player.y,
+            .player_transform = .{
+                .position = self.player.transform.position,
+                .rotation = self.player.transform.rotation,
+                .scale = self.player.transform.scale,
+            },
             .facing = self.player.facing,
             .moving = self.player.anim.clip.frames.len > 1,
             .animation_time = self.player.anim.time,
@@ -271,8 +274,11 @@ pub const Game = struct {
         defer ctx.allocators.frame.free(text);
 
         const defaults = save_store.State{
-            .player_x = self.player.x,
-            .player_y = self.player.y,
+            .player_transform = .{
+                .position = self.player.transform.position,
+                .rotation = self.player.transform.rotation,
+                .scale = self.player.transform.scale,
+            },
             .facing = self.player.facing,
             .clicks = self.clicks,
             .volume = self.volume,
@@ -288,8 +294,12 @@ pub const Game = struct {
             return;
         }
 
-        if (positionIsValid(state.player_x, state.player_y, &self.level)) {
-            self.player.restore(state.player_x, state.player_y, state.facing, state.moving, state.animation_time, &self.animations);
+        if (positionIsValid(state.player_transform.position[0], state.player_transform.position[1], &self.level)) {
+            self.player.restore(.{
+                .position = state.player_transform.position,
+                .rotation = state.player_transform.rotation,
+                .scale = state.player_transform.scale,
+            }, state.facing, state.moving, state.animation_time, &self.animations);
         } else {
             log.warn("saved player position is outside the current level; using the level spawn", .{});
         }

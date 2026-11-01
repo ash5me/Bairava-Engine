@@ -5,6 +5,20 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.Config;
     _ = bairava.Context;
     _ = bairava.run;
+    _ = bairava.transform.Transform;
+}
+
+test "transforms compose through an entity hierarchy" {
+    var hierarchy = bairava.transform.Hierarchy.init(std.testing.allocator);
+    defer hierarchy.deinit();
+
+    const parent = try hierarchy.spawn(.{ .position = .{ 10.0, 20.0, 0.0 } });
+    const child = try hierarchy.spawn(.{ .position = .{ 3.0, 4.0, 0.0 } });
+    try hierarchy.setParent(child, parent);
+    const matrix = try hierarchy.worldMatrix(child);
+    const point = bairava.math.transformPoint(&matrix, 0.0, 0.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 13.0), point[0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 24.0), point[1], 1e-5);
 }
 
 test "Context does not expose a device field or SDL types" {

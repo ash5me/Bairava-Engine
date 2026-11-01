@@ -43,9 +43,8 @@ pub const Point = struct {
 };
 
 pub const Player = struct {
-    /// Top-left corner, in native pixels, as of the latest update.
-    x: f32,
-    y: f32,
+    /// Local transform; gameplay uses its position as the sprite's top-left corner.
+    transform: engine.transform.Transform = .{},
     /// Top-left corner as of the update before that. Drawing blends between the two.
     prev_x: f32,
     prev_y: f32,
@@ -68,8 +67,7 @@ pub const Player = struct {
         const x = @as(f32, @floatFromInt(col)) * engine.tilemap.tile_px;
         const y = @as(f32, @floatFromInt(row)) * engine.tilemap.tile_px - collide_top;
         return .{
-            .x = x,
-            .y = y,
+            .transform = .{ .position = .{ x, y, 0.0 } },
             .prev_x = x,
             .prev_y = y,
             .anim = engine.animation.Timeline.init(clipFor(animations, .down, false)),
@@ -77,9 +75,10 @@ pub const Player = struct {
     }
 
     /// Restores persisted movement state without interpolating from an unrelated previous frame.
-    pub fn restore(self: *Player, x: f32, y: f32, facing: Facing, moving: bool, elapsed: f32, animations: *const engine.animation.Library) void {
-        self.x = x;
-        self.y = y;
+    pub fn restore(self: *Player, transform: engine.transform.Transform, facing: Facing, moving: bool, elapsed: f32, animations: *const engine.animation.Library) void {
+        self.transform = transform;
+        const x = transform.position[0];
+        const y = transform.position[1];
         self.prev_x = x;
         self.prev_y = y;
         self.facing = facing;
@@ -91,8 +90,8 @@ pub const Player = struct {
     /// previous update and 1 at the latest.
     pub fn drawPosition(self: *const Player, alpha: f32) Point {
         return .{
-            .x = self.prev_x + (self.x - self.prev_x) * alpha,
-            .y = self.prev_y + (self.y - self.prev_y) * alpha,
+            .x = self.prev_x + (self.transform.position[0] - self.prev_x) * alpha,
+            .y = self.prev_y + (self.transform.position[1] - self.prev_y) * alpha,
         };
     }
 
@@ -106,8 +105,8 @@ pub const Player = struct {
     /// in `map` stop the player on each axis, so the player slides along walls.
     pub fn update(self: *Player, move_x: f32, move_y: f32, dt: f32, map: *const engine.tilemap.TileMap, animations: *const engine.animation.Library) void {
         // Remember where we were, so drawing can blend from here to the new position.
-        self.prev_x = self.x;
-        self.prev_y = self.y;
+        self.prev_x = self.transform.position[0];
+        self.prev_y = self.transform.position[1];
 
         var dx = move_x;
         var dy = move_y;
@@ -136,11 +135,11 @@ pub const Player = struct {
         dy = direction[1];
 
         // Move the feet against the map, one axis at a time. Then place the sprite above them.
-        const feet = map.moveBox(Player.feetAt(self.x, self.y), dx * speed * dt, dy * speed * dt);
-        self.x = feet.x;
-        self.y = feet.y - collide_top;
+        const feet = map.moveBox(Player.feetAt(self.transform.position[0], self.transform.position[1]), dx * speed * dt, dy * speed * dt);
+        self.transform.position[0] = feet.x;
+        self.transform.position[1] = feet.y - collide_top;
 
-        engine.log.assert(std.math.isFinite(self.x) and std.math.isFinite(self.y), @src(), "player position is not finite: ({d}, {d})", .{ self.x, self.y });
+        engine.log.assert(std.math.isFinite(self.transform.position[0]) and std.math.isFinite(self.transform.position[1]), @src(), "player position is not finite: ({d}, {d})", .{ self.transform.position[0], self.transform.position[1] });
     }
 
     /// The collision box (the feet) at the blended position, in world pixels. Debug geometry draws it.

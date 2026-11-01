@@ -7,13 +7,19 @@ const parson = @cImport({
 });
 const player = @import("player.zig");
 
-pub const current_version: u32 = 1;
+/// Save-file representation kept independent of engine runtime types.
+pub const SavedTransform = struct {
+    position: [3]f32 = .{ 0.0, 0.0, 0.0 },
+    rotation: [4]f32 = .{ 0.0, 0.0, 0.0, 1.0 },
+    scale: [3]f32 = .{ 1.0, 1.0, 1.0 },
+};
+
+pub const current_version: u32 = 2;
 
 pub const ScaleMode = enum { fit, integer };
 
 pub const State = struct {
-    player_x: f32 = 0,
-    player_y: f32 = 0,
+    player_transform: SavedTransform = .{},
     facing: player.Facing = .down,
     moving: bool = false,
     animation_time: f32 = 0,
@@ -25,19 +31,32 @@ pub const State = struct {
 };
 
 fn isValidState(state: State) bool {
-    return isFiniteF32(state.player_x) and isFiniteF32(state.player_y) and isFiniteF32(state.animation_time) and
+    return isValidTransform(state.player_transform) and isFiniteF32(state.animation_time) and
         isFiniteF32(state.volume) and isFiniteF32(state.zoom_target) and
-        @abs(state.player_x) <= 1_000_000 and @abs(state.player_y) <= 1_000_000 and
         state.animation_time >= 0 and state.animation_time <= 3600 and state.volume >= 0 and state.volume <= 1 and
         state.zoom_target > 0 and state.zoom_target <= 100 and state.level_matches;
 }
 
 fn isValidDefaultState(state: State) bool {
-    return isFiniteF32(state.player_x) and isFiniteF32(state.player_y) and isFiniteF32(state.animation_time) and
+    return isValidTransform(state.player_transform) and isFiniteF32(state.animation_time) and
         isFiniteF32(state.volume) and isFiniteF32(state.zoom_target) and
-        @abs(state.player_x) <= 1_000_000 and @abs(state.player_y) <= 1_000_000 and
         state.animation_time >= 0 and state.animation_time <= 3600 and state.volume >= 0 and state.volume <= 1 and
         state.zoom_target > 0 and state.zoom_target <= 100;
+}
+
+fn isValidTransform(value: SavedTransform) bool {
+    for (value.position) |component| {
+        if (!isFiniteF32(component) or @abs(component) > 1_000_000) return false;
+    }
+    for (value.scale) |component| {
+        if (!isFiniteF32(component) or @abs(component) > 1_000) return false;
+    }
+    var rotation_length_squared: f32 = 0;
+    for (value.rotation) |component| {
+        if (!isFiniteF32(component) or @abs(component) > 1_000_000) return false;
+        rotation_length_squared += component * component;
+    }
+    return rotation_length_squared > 1e-12 and isFiniteF32(rotation_length_squared);
 }
 
 fn parseScaleMode(text: []const u8) ?ScaleMode {
@@ -74,8 +93,18 @@ pub fn serialize(allocator: std.mem.Allocator, state: State) ![]u8 {
     const root = parson.json_value_get_object(root_value) orelse return error.SerializeFailed;
 
     try setNumber(root, "save_version", @floatFromInt(current_version));
-    try setNumber(root, "components.player.transform.x", @floatCast(state.player_x));
-    try setNumber(root, "components.player.transform.y", @floatCast(state.player_y));
+    const saved_transform = state.player_transform;
+    try setNumber(root, "components.player.transform.position.x", @floatCast(saved_transform.position[0]));
+    try setNumber(root, "components.player.transform.position.y", @floatCast(saved_transform.position[1]));
+    try setNumber(root, "components.player.transform.position.z", @floatCast(saved_transform.position[2]));
+    const rotation = normalizedRotation(saved_transform.rotation);
+    try setNumber(root, "components.player.transform.rotation.x", @floatCast(rotation[0]));
+    try setNumber(root, "components.player.transform.rotation.y", @floatCast(rotation[1]));
+    try setNumber(root, "components.player.transform.rotation.z", @floatCast(rotation[2]));
+    try setNumber(root, "components.player.transform.rotation.w", @floatCast(rotation[3]));
+    try setNumber(root, "components.player.transform.scale.x", @floatCast(saved_transform.scale[0]));
+    try setNumber(root, "components.player.transform.scale.y", @floatCast(saved_transform.scale[1]));
+    try setNumber(root, "components.player.transform.scale.z", @floatCast(saved_transform.scale[2]));
     try setString(root, "components.player.facing.direction", @tagName(state.facing));
     try setBoolean(root, "components.player.animation.moving", state.moving);
     try setNumber(root, "components.player.animation.elapsed_seconds", @floatCast(state.animation_time));
@@ -110,11 +139,55 @@ pub fn deserialize(allocator: std.mem.Allocator, text: []const u8, defaults: Sta
     if (version > current_version) return error.UnsupportedVersion;
 
     var state = defaults;
-    if (numberAt(root, "components.player.transform.x")) |x| {
-        if (numberAt(root, "components.player.transform.y")) |y| {
-            if (std.math.isFinite(x) and std.math.isFinite(y) and @abs(x) <= 1_000_000 and @abs(y) <= 1_000_000) {
-                state.player_x = @floatCast(x);
-                state.player_y = @floatCast(y);
+    const position_x = numberAt(root, "components.player.transform.position.x") orelse numberAt(root, "components.player.transform.x");
+    const position_y = numberAt(root, "components.player.transform.position.y") orelse numberAt(root, "components.player.transform.y");
+    if (position_x) |x| {
+        if (position_y) |y| {
+            const z = numberAt(root, "components.player.transform.position.z") orelse @as(f64, state.player_transform.position[2]);
+            if (std.math.isFinite(x) and std.math.isFinite(y) and std.math.isFinite(z) and
+                @abs(x) <= 1_000_000 and @abs(y) <= 1_000_000 and @abs(z) <= 1_000_000)
+            {
+                state.player_transform.position = .{ @floatCast(x), @floatCast(y), @floatCast(z) };
+            }
+        }
+    }
+
+    const rotation_paths = .{
+        numberAt(root, "components.player.transform.rotation.x"),
+        numberAt(root, "components.player.transform.rotation.y"),
+        numberAt(root, "components.player.transform.rotation.z"),
+        numberAt(root, "components.player.transform.rotation.w"),
+    };
+    if (rotation_paths[0]) |x| {
+        if (rotation_paths[1]) |y| {
+            if (rotation_paths[2]) |z| {
+                if (rotation_paths[3]) |w| {
+                    if (std.math.isFinite(x) and std.math.isFinite(y) and std.math.isFinite(z) and std.math.isFinite(w) and
+                        @abs(x) <= 1_000_000 and @abs(y) <= 1_000_000 and @abs(z) <= 1_000_000 and @abs(w) <= 1_000_000)
+                    {
+                        const rotation: [4]f32 = .{ @floatCast(x), @floatCast(y), @floatCast(z), @floatCast(w) };
+                        if (rotationLengthSquared(rotation) > 1e-12) {
+                            state.player_transform.rotation = normalizedRotation(rotation);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    const scale_paths = .{
+        numberAt(root, "components.player.transform.scale.x"),
+        numberAt(root, "components.player.transform.scale.y"),
+        numberAt(root, "components.player.transform.scale.z"),
+    };
+    if (scale_paths[0]) |x| {
+        if (scale_paths[1]) |y| {
+            if (scale_paths[2]) |z| {
+                if (std.math.isFinite(x) and std.math.isFinite(y) and std.math.isFinite(z) and
+                    @abs(x) <= 1_000 and @abs(y) <= 1_000 and @abs(z) <= 1_000)
+                {
+                    state.player_transform.scale = .{ @floatCast(x), @floatCast(y), @floatCast(z) };
+                }
             }
         }
     }
@@ -217,11 +290,30 @@ fn isFiniteF32(value: f32) bool {
     return std.math.isFinite(value);
 }
 
+fn rotationLengthSquared(rotation: [4]f32) f32 {
+    var length_squared: f32 = 0;
+    for (rotation) |component| length_squared += component * component;
+    return length_squared;
+}
+
+fn normalizedRotation(rotation: [4]f32) [4]f32 {
+    const inverse_length = 1.0 / @sqrt(rotationLengthSquared(rotation));
+    return .{
+        rotation[0] * inverse_length,
+        rotation[1] * inverse_length,
+        rotation[2] * inverse_length,
+        rotation[3] * inverse_length,
+    };
+}
+
 test "save round-trips valid gameplay state and rejects invalid floats" {
     const defaults = State{};
     const state = State{
-        .player_x = 42.5,
-        .player_y = -12.25,
+        .player_transform = .{
+            .position = .{ 42.5, -12.25, 3.0 },
+            .rotation = .{ 0.0, 0.0, @sin(0.25), @cos(0.25) },
+            .scale = .{ 2.0, 3.0, 1.0 },
+        },
         .facing = .left,
         .moving = true,
         .animation_time = 1.5,
@@ -235,8 +327,9 @@ test "save round-trips valid gameplay state and rejects invalid floats" {
     defer std.testing.allocator.free(json);
 
     const loaded = try deserialize(std.testing.allocator, json, defaults);
-    try std.testing.expectEqual(state.player_x, loaded.player_x);
-    try std.testing.expectEqual(state.player_y, loaded.player_y);
+    try std.testing.expectEqual(state.player_transform.position, loaded.player_transform.position);
+    try std.testing.expectEqual(state.player_transform.rotation, loaded.player_transform.rotation);
+    try std.testing.expectEqual(state.player_transform.scale, loaded.player_transform.scale);
     try std.testing.expectEqual(state.facing, loaded.facing);
     try std.testing.expectEqual(state.moving, loaded.moving);
     try std.testing.expectEqual(state.animation_time, loaded.animation_time);
@@ -245,7 +338,7 @@ test "save round-trips valid gameplay state and rejects invalid floats" {
     try std.testing.expectEqual(state.scale_mode, loaded.scale_mode);
     try std.testing.expectEqual(state.zoom_target, loaded.zoom_target);
 
-    try std.testing.expectError(error.InvalidSave, serialize(std.testing.allocator, .{ .player_x = std.math.nan(f32) }));
+    try std.testing.expectError(error.InvalidSave, serialize(std.testing.allocator, .{ .player_transform = .{ .position = .{ std.math.nan(f32), 0, 0 } } }));
 }
 
 test "save rejects unsupported versions and malformed payloads" {
@@ -276,6 +369,17 @@ test "save rejects invalid default state and keeps malformed loaded values on th
     const loaded = try deserialize(std.testing.allocator, "{\n  \"save_version\": 1,\n  \"components.game.progress.volume\": 2.0\n}\n", .{ .volume = 0.25 });
     try std.testing.expectEqual(@as(f32, 0.25), loaded.volume);
     try std.testing.expectError(error.InvalidSave, serialize(std.testing.allocator, .{ .level_matches = false }));
+}
+
+test "version one position paths remain readable and new transform values default" {
+    const loaded = try deserialize(std.testing.allocator,
+        "{\"save_version\":1,\"components\":{\"player\":{\"transform\":{\"x\":12,\"y\":34}}}}",
+        State{},
+    );
+    try std.testing.expectEqual(@as(f32, 12), loaded.player_transform.position[0]);
+    try std.testing.expectEqual(@as(f32, 34), loaded.player_transform.position[1]);
+    try std.testing.expectEqual(@as(f32, 0), loaded.player_transform.position[2]);
+    try std.testing.expectEqual(@as(f32, 1), loaded.player_transform.scale[0]);
 }
 
 test "save keeps defaults for unknown enum strings and mismatched level ids" {

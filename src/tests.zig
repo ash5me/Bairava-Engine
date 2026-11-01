@@ -39,6 +39,7 @@ test {
     _ = @import("engine/memory/vector.zig");
     _ = @import("engine/ecs/entity.zig");
     _ = @import("engine/core/math.zig");
+    _ = @import("engine/core/transform.zig");
     _ = @import("engine/core/allocators.zig");
     _ = @import("engine/renderer/view.zig");
     _ = @import("engine/core/settings.zig");
