@@ -13,6 +13,7 @@ const collector_mod = @import("../diagnostics/collector.zig");
 const debug_draw = @import("../diagnostics/debug_draw.zig");
 const text_mod = @import("../diagnostics/text.zig");
 const console_mod = @import("../diagnostics/console.zig");
+const spike_log = @import("../diagnostics/spike_log.zig");
 
 const Collector = collector_mod.Collector;
 
@@ -27,11 +28,13 @@ const full_scale_s: f32 = 2.0 * budget_s;
 /// Layout in native pixels. The graph is one column per kept frame, so it is `capacity` pixels wide.
 const graph_w: f32 = frame_history.capacity;
 const graph_h: f32 = 40;
+/// The strip under the frame graph: one column per kept frame, for a plot such as allocations per frame.
+const strip_h: f32 = 16;
 const pad: f32 = 3;
 const margin: f32 = 4;
 
 /// Lines the engine writes, then the game's lines. Each line's buffer is `line_capacity` bytes.
-const engine_lines = 14;
+const engine_lines = 17;
 const max_lines = engine_lines + text_mod.max_lines;
 const line_capacity = text_mod.max_line_len;
 
@@ -41,6 +44,7 @@ const budget_color = ui.Color{ .r = 1.0, .g = 1.0, .b = 1.0, .a = 0.35 };
 const good_color = ui.Color{ .r = 0.35, .g = 0.80, .b = 0.45, .a = 1.0 };
 const slow_color = ui.Color{ .r = 0.95, .g = 0.80, .b = 0.30, .a = 1.0 };
 const late_color = ui.Color{ .r = 0.95, .g = 0.35, .b = 0.35, .a = 1.0 };
+const plot_color = ui.Color{ .r = 0.55, .g = 0.75, .b = 0.95, .a = 1.0 };
 
 pub const Overlay = struct {
     /// Null when the overlay has no font, which is always the case in release builds.
@@ -85,16 +89,18 @@ pub const Overlay = struct {
 
         const line_h: f32 = @floatFromInt(canvas.font.baked.line_height);
         const panel_w = widest + 2 * pad;
-        const panel_h = pad + graph_h + pad + @as(f32, @floatFromInt(count)) * line_h + pad;
+        const panel_h = pad + graph_h + pad + strip_h + pad + @as(f32, @floatFromInt(count)) * line_h + pad;
         const x0 = view_w - panel_w - margin;
         const y0 = margin;
         const graph_x = x0 + pad;
         const graph_bottom = y0 + pad + graph_h;
+        const strip_bottom = graph_bottom + pad + strip_h;
 
         canvas.rect(x0, y0, panel_w, panel_h, panel_color);
         drawGraph(canvas, collector, graph_x, graph_bottom);
+        drawStrip(canvas, collector.plots.of(.allocations), graph_x, strip_bottom);
 
-        var text_y = graph_bottom + pad;
+        var text_y = strip_bottom + pad;
         for (lines[0..count]) |line| {
             canvas.text(x0 + pad, text_y, line, text_color);
             text_y += line_h;
@@ -147,6 +153,8 @@ fn buildLines(store: *[max_lines][line_capacity]u8, lines: *[max_lines][]const u
         collector.stats.of(.update).last() * 1000.0,
         (collector.stats.of(.draw).last() + collector.stats.of(.present).last()) * 1000.0,
     });
+    count += 1;
+    lines[count] = gpuLine(&store[count], collector);
     count += 1;
     lines[count] = formatLine(&store[count], "scene {s}{s}  switches {d}", .{ snap.scene.name, pending, snap.scene.switches });
     count += 1;
@@ -201,6 +209,17 @@ fn buildLines(store: *[max_lines][line_capacity]u8, lines: *[max_lines][]const u
     count += 1;
     lines[count] = formatLine(&store[count], "frames {d}", .{snap.frames});
     count += 1;
+    lines[count] = formatLine(&store[count], "per frame: sprites p95 {d:.0}  draws p95 {d:.0}  allocs p95 {d:.0} avg {d:.0}  KiB p95 {d:.0}", .{
+        collector.plots.of(.sprites).percentile(0.95),
+        collector.plots.of(.draw_calls).percentile(0.95),
+        collector.plots.of(.allocations).percentile(0.95),
+        collector.plots.of(.allocations).average(),
+        collector.plots.of(.allocated_bytes).percentile(0.95) / 1024.0,
+    });
+    count += 1;
+
+    lines[count] = spikeLine(&store[count], &collector.spikes);
+    count += 1;
 
     var i: usize = 0;
     while (i < collector.text.count) : (i += 1) {
@@ -225,6 +244,19 @@ fn drawGraph(canvas: *ui.Canvas, collector: *const Collector, graph_x: f32, grap
     canvas.rect(graph_x, budget_y, graph_w, 1, budget_color);
 }
 
+/// A strip under the frame graph: one column per kept frame, scaled to the largest value kept, with a floor of
+/// one so a plot of small numbers still shows its shape. The columns stand on `bottom`.
+fn drawStrip(canvas: *ui.Canvas, series: *const frame_history.FrameHistory, x: f32, bottom: f32) void {
+    const top_value = @max(1.0, series.max());
+    var i: usize = 0;
+    while (i < series.len) : (i += 1) {
+        const h = frame_history.fraction(series.at(i), top_value) * strip_h;
+        if (h <= 0) continue;
+        const column: f32 = @floatFromInt(frame_history.capacity - series.len + i);
+        canvas.rect(x + column, bottom - h, 1, h, plot_color);
+    }
+}
+
 /// Draws the debug shapes into the canvas. An outline is four one-pixel rectangles.
 fn drawShapes(canvas: *ui.Canvas, draw: *const debug_draw.Draw) void {
     for (draw.slice()) |shape| {
@@ -246,6 +278,30 @@ fn namesLine(buf: *[line_capacity]u8, label: []const u8, names: *const collector
     const body: []const u8 = if (names.count == 0) "none" else names.text();
     if (names.omitted == 0) return formatLine(buf, "{s}: {s}", .{ label, body });
     return formatLine(buf, "{s}: {s} +{d}", .{ label, body, names.omitted });
+}
+
+/// The GPU line: the last frame's GPU wait, with its average and p95, when gpu timing is on. Off otherwise.
+fn gpuLine(buf: *[line_capacity]u8, collector: *const Collector) []const u8 {
+    const gpu = collector.stats.of(.gpu);
+    if (gpu.len == 0) return formatLine(buf, "gpu timing off (Config.gpu_timing)", .{});
+    return formatLine(buf, "gpu {d:.2} ms  avg {d:.2}  p95 {d:.2} ms  (CPU waits each frame)", .{
+        gpu.last() * 1000.0,
+        gpu.average() * 1000.0,
+        gpu.percentile(0.95) * 1000.0,
+    });
+}
+
+/// The spike line: how many frames have run past the threshold, and the latest one with the phase that took most of it.
+fn spikeLine(buf: *[line_capacity]u8, spikes: *const spike_log.SpikeLog) []const u8 {
+    const threshold_ms = spike_log.threshold_seconds * 1000.0;
+    const latest = spikes.latest() orelse return formatLine(buf, "spikes: none over {d:.0} ms", .{threshold_ms});
+    return formatLine(buf, "spikes: {d} over {d:.0} ms; last {d:.1} ms after frame {d}, mostly {s}", .{
+        spikes.total,
+        threshold_ms,
+        latest.seconds * 1000.0,
+        latest.frame,
+        @tagName(latest.phase),
+    });
 }
 
 /// Formats one text line into `buf`. The lines are short and fixed, so a full buffer is a bug.

@@ -136,7 +136,7 @@ pub const Session = struct {
         self.screen_batch = sprite.create(self.engine_allocator, self.gpu.device, self.format);
         self.screen_batch_created = true;
         // Effects are sized like the world target, and an empty list makes no GPU objects.
-        self.post_chain = post.Chain.init(self.engine_allocator, self.gpu.device, self.format, config.post_effects, config.native_w, config.native_h);
+        self.post_chain = post.Chain.init(self.engine_allocator, self.gpu.device, self.format, config.post_effects, config.post_params, config.native_w, config.native_h);
         self.post_chain_created = true;
         // Sound output. A missing device leaves it silent, so it never stops the game.
         self.audio = audio.Audio.init();

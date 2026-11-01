@@ -5,6 +5,8 @@
 
 const std = @import("std");
 const frame_stats = @import("frame_stats.zig");
+const plot_series = @import("plots.zig");
+const spike_log = @import("spike_log.zig");
 const text = @import("text.zig");
 const debug_draw = @import("debug_draw.zig");
 const allocator_types = @import("../core/allocators.zig");
@@ -260,6 +262,10 @@ pub const Collector = struct {
     debug: Draw = .{},
     geometry: Geometry = .{},
     layers: Layers = .{},
+    /// Per-frame values the overlay draws as strips and Tracy plots over time. See plots.zig.
+    plots: plot_series.Plots = .{},
+    /// Frames that ran past two budgets, kept for the overlay. See spike_log.zig.
+    spikes: spike_log.SpikeLog = .{},
 
     /// Copies entity/component values into bounded storage for read-only inspection. Neither the
     /// caller's slices nor pointers into game state are retained.

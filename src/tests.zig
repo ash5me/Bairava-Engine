@@ -9,12 +9,18 @@ const math = @import("engine/core/math.zig");
 const camera = @import("engine/renderer/camera.zig");
 const sprite = @import("engine/renderer/sprite.zig");
 const fixtures = @import("engine/test_fixtures.zig");
+const Texture = @import("engine/renderer/texture.zig").Texture;
 const tilemap = @import("engine/scene/tilemap.zig");
 const physics_queries = @import("engine/physics/queries.zig");
 
 test {
     _ = @import("engine/renderer/renderer.zig");
     _ = @import("engine/renderer/post.zig");
+    _ = @import("engine/renderer/render_types.zig");
+    _ = @import("engine/core/application.zig");
+    _ = @import("engine/renderer/render_graph.zig");
+    _ = @import("engine/diagnostics/plots.zig");
+    _ = @import("engine/diagnostics/spike_log.zig");
     _ = @import("engine/memory/string.zig");
     _ = @import("engine/profiling/frame_history.zig");
     _ = @import("engine/diagnostics/text.zig");
@@ -125,6 +131,116 @@ test "drawSprite batches past the old 256 texture-switch limit" {
         try std.testing.expectEqual(@as(u32, 4), batch.batches[b].vertex_count);
     }
     try std.testing.expect(batch.batches[599].texture == &tex_b);
+}
+
+test "normal-mapped sprites form their own runs, split by normal map, in draw order" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const albedo = testTexture(16, 16);
+    const map_a = testTexture(16, 16);
+    const map_b = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&albedo, quad, quad, .{ .normal = &map_a });
+    batch.drawSprite(&albedo, quad, quad, .{ .normal = &map_b });
+    batch.drawSprite(&albedo, quad, quad, .{});
+    batch.prepare();
+
+    try std.testing.expectEqual(@as(u32, 3), batch.batch_count);
+    try std.testing.expectEqual(@as(?*const Texture, &map_a), batch.batches[0].normal);
+    try std.testing.expectEqual(@as(?*const Texture, &map_b), batch.batches[1].normal);
+    try std.testing.expectEqual(@as(?*const Texture, null), batch.batches[2].normal);
+    try std.testing.expect(batch.has_lit_runs);
+}
+
+test "a lit sprite with no normal map samples the flat map, and a plain sprite does not" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const albedo = testTexture(16, 16);
+    const flat = testTexture(1, 1);
+    batch.flat_normal = &flat;
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&albedo, quad, quad, .{ .lit = true });
+    batch.drawSprite(&albedo, quad, quad, .{});
+    batch.prepare();
+
+    try std.testing.expectEqual(@as(u32, 2), batch.batch_count);
+    try std.testing.expectEqual(@as(?*const Texture, &flat), batch.batches[0].normal);
+    try std.testing.expectEqual(@as(?*const Texture, null), batch.batches[1].normal);
+    try std.testing.expect(batch.has_lit_runs);
+}
+
+test "a batch with no normal maps has no lit runs, so it pushes no lights" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const albedo = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&albedo, quad, quad, .{});
+    batch.drawSprite(&albedo, quad, quad, .{ .tint = .{ 0.5, 0.5, 0.5 } });
+    batch.prepare();
+
+    try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
+    try std.testing.expect(!batch.has_lit_runs);
+}
+
+test "lights and ambient light are stored for the frame and restored by the next begin" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+
+    batch.begin(320, 180);
+    batch.setAmbient(.{ 0.2, 0.2, 0.3 });
+    batch.addLight(.{ .x = 40, .y = 30, .radius = 64, .color = .{ 1, 0.5, 0 }, .intensity = 2 });
+    try std.testing.expectEqual(@as(u32, 1), batch.light_count);
+    try std.testing.expectEqual(@as(f32, 1), batch.lighting.info[0]);
+    try std.testing.expectEqual(@as(f32, 40), batch.lighting.position[0][0]);
+    try std.testing.expectEqual(@as(f32, 64), batch.lighting.position[0][3]);
+    try std.testing.expectEqual(@as(f32, 0.5), batch.lighting.color[0][1]);
+    try std.testing.expectEqual(@as(f32, 2), batch.lighting.color[0][3]);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), batch.lighting.ambient[0], 1e-6);
+
+    batch.begin(320, 180);
+    try std.testing.expectEqual(@as(u32, 0), batch.light_count);
+    try std.testing.expectEqual(@as(f32, 0), batch.lighting.info[0]);
+    try std.testing.expectEqual(@as(f32, 1), batch.lighting.ambient[0]);
+}
+
+test "a flipped sprite mirrors its normal map's x or y, and a turned sprite turns them" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    batch.drawSprite(&tex, quad, quad, .{ .flip_x = true });
+    batch.drawSprite(&tex, quad, quad, .{ .rotation = std.math.pi / 2.0 });
+    batch.drawSprite(&tex, quad, quad, .{});
+    batch.prepare();
+
+    // The three quads share z 0, so they keep the order they were added in. Each quad's corners share one basis.
+    try expectBasis(batch.vertices[sprite.indexValue(0, 0)].normal_basis, .{ -1, 0, 0, 1 });
+    try expectBasis(batch.vertices[sprite.indexValue(1, 2)].normal_basis, .{ 0, -1, 1, 0 });
+    try expectBasis(batch.vertices[sprite.indexValue(2, 1)].normal_basis, .{ 1, 0, 0, 1 });
+}
+
+fn expectBasis(actual: [4]f32, expected: [4]f32) !void {
+    for (expected, 0..) |value, i| {
+        try std.testing.expectApproxEqAbs(value, actual[i], 1e-6);
+    }
 }
 
 /// Checks the six corners that the index buffer names for quad `q` against the texel rectangle the

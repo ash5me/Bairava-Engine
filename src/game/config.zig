@@ -38,6 +38,8 @@ pub const zoom_rate: f32 = 8.0;
 /// Post-processing effects, run in order over the finished world before it is shown. Empty turns them off.
 /// To try one, list it, for example `&.{ .vignette }` or `&.{ .grayscale, .vignette }`.
 pub const post_effects: []const engine.Effect = &.{};
+/// Strengths the effects read: vignette, scanline dim, and grayscale amount, each from 0 to 1. The defaults keep their original look.
+pub const post_params: engine.PostParams = engine.default_post_params;
 /// The most bytes the texture cache may hold. Zero means no budget. The game does not request textures through
 /// the cache yet, so this and `texture_loads_per_frame` have no effect until it does.
 pub const texture_budget_bytes: usize = 0;

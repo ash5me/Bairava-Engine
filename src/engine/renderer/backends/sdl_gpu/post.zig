@@ -17,7 +17,7 @@ const grayscale = shader.Source{
         .dxil = embedded.post_grayscale_frag_dxil,
         .msl = embedded.post_grayscale_frag_msl,
     },
-    .resources = .{ .samplers = 1 },
+    .resources = .{ .samplers = 1, .uniform_buffers = 1 },
 };
 
 const vignette = shader.Source{
@@ -29,22 +29,45 @@ const vignette = shader.Source{
         .dxil = embedded.post_vignette_frag_dxil,
         .msl = embedded.post_vignette_frag_msl,
     },
-    .resources = .{ .samplers = 1 },
+    .resources = .{ .samplers = 1, .uniform_buffers = 1 },
 };
+
+const scanlines = shader.Source{
+    .name = "post_scanlines.frag",
+    .entry = "postScanlinesMain",
+    .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
+    .code = .{
+        .spirv = embedded.post_scanlines_frag,
+        .dxil = embedded.post_scanlines_frag_dxil,
+        .msl = embedded.post_scanlines_frag_msl,
+    },
+    .resources = .{ .samplers = 1, .uniform_buffers = 1 },
+};
+
+/// Pushes the settings every effect pass reads. They sit in fragment uniform slot 0, where the effects' shaders
+/// declare them. SDL copies the bytes, so `settings` need not outlive the call. Call it before a pass that runs an effect.
+pub fn pushSettings(cmd: *c.SDL_GPUCommandBuffer, settings: *const render_types.PostParams) void {
+    c.SDL_PushGPUFragmentUniformData(cmd, 0, settings, @sizeOf(render_types.PostParams));
+}
 
 /// The fragment shader that runs `effect`.
 pub fn fragmentSource(effect: render_types.Effect) shader.Source {
     return switch (effect) {
         .grayscale => grayscale,
         .vignette => vignette,
+        .scanlines => scanlines,
     };
 }
 
 test "each effect has its own fragment entry point" {
-    const first = fragmentSource(.grayscale);
-    const second = fragmentSource(.vignette);
-    try std.testing.expect(first.stage == c.SDL_GPU_SHADERSTAGE_FRAGMENT);
-    try std.testing.expect(second.stage == c.SDL_GPU_SHADERSTAGE_FRAGMENT);
-    try std.testing.expect(!std.mem.eql(u8, first.entry, second.entry));
-    try std.testing.expect(!std.mem.eql(u8, first.name, second.name));
+    const effects = std.enums.values(render_types.Effect);
+    for (effects, 0..) |effect, i| {
+        const source = fragmentSource(effect);
+        try std.testing.expect(source.stage == c.SDL_GPU_SHADERSTAGE_FRAGMENT);
+        for (effects[0..i]) |earlier| {
+            const other = fragmentSource(earlier);
+            try std.testing.expect(!std.mem.eql(u8, source.entry, other.entry));
+            try std.testing.expect(!std.mem.eql(u8, source.name, other.name));
+        }
+    }
 }

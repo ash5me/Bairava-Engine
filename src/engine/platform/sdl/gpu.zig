@@ -5,6 +5,7 @@ const std = @import("std");
 const embedded = @import("embedded_shaders");
 const c = @import("sdl.zig").c;
 const profile = @import("../../profiling/profile.zig");
+const sdl_clock = @import("clock.zig");
 const types = @import("../types.zig");
 const window_backend = @import("window.zig");
 
@@ -16,6 +17,10 @@ pub const GpuInitError = error{ CreateGpuFailed, ClaimWindowFailed };
 pub fn waitIdle(device: *Device) void {
     _ = c.SDL_WaitForGPUIdle(device);
 }
+
+/// How long a timed frame may wait for the GPU before the run stops. A device that is lost never signals its fence, and
+/// a bounded wait turns that hang into a message.
+const fence_timeout_ns: u64 = 10_000_000_000;
 
 /// A frame in progress: the command buffer and the swapchain texture it draws to.
 pub const Frame = struct {
@@ -116,6 +121,24 @@ pub const Gpu = struct {
         const zone = profile.zoneNamed(@src(), "submit frame");
         defer zone.End();
         _ = c.SDL_SubmitGPUCommandBuffer(frame.cmd);
+    }
+
+    /// Submits the frame, then blocks until the GPU has finished it. The runtime times this call when
+    /// `Config.gpu_timing` is set, so the time is the frame's GPU cost. SDL_GPU exposes no timestamp queries,
+    /// so a fence wait is the closest measure it offers. The wait stalls the CPU, so it is a profiling mode.
+    pub fn submitAndWait(self: *Gpu, frame: Frame) void {
+        const zone = profile.zoneNamed(@src(), "gpu wait");
+        defer zone.End();
+        const fence = c.SDL_SubmitGPUCommandBufferAndAcquireFence(frame.cmd) orelse {
+            std.debug.panic("SDL_SubmitGPUCommandBufferAndAcquireFence failed: {s}", .{c.SDL_GetError()});
+        };
+        const started = sdl_clock.nowNs();
+        while (!c.SDL_QueryGPUFence(self.device, fence)) {
+            if (sdl_clock.nowNs() - started > fence_timeout_ns) {
+                std.debug.panic("the GPU did not finish a timed frame within 10 s; the device may be lost", .{});
+            }
+        }
+        c.SDL_ReleaseGPUFence(self.device, fence);
     }
 
     /// Releases the device. Destroy anything created from it first.

@@ -401,10 +401,10 @@ pub const Game = struct {
         // Draw order: ground, decoration, the player, and then foreground, which can cover the player.
         const tiles = &self.atlas.texture;
         const map = &self.level.map;
-        if (dc.layers.ground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .ground);
-        if (dc.layers.decoration) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .decoration);
+        if (dc.layers.ground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .ground, .{});
+        if (dc.layers.decoration) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .decoration, .{});
         self.player.draw(dc.batch, tiles, self.warrior, dc.cam, dc.alpha);
-        if (dc.layers.foreground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .foreground);
+        if (dc.layers.foreground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .foreground, .{});
 
         // Debug geometry is queued as shapes, and only while its switch is on, so an idle build does no work.
         if (dc.show.tiles) engine.debug_geometry.drawGrid(map, dc.debug, dc.cam);

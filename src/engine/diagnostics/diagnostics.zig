@@ -17,6 +17,12 @@ pub const EntitySnapshot = @import("collector.zig").EntitySnapshot;
 pub const ComponentSnapshot = @import("collector.zig").ComponentSnapshot;
 pub const component_value_capacity = @import("collector.zig").component_value_capacity;
 pub const FrameStats = @import("frame_stats.zig").Stats;
+pub const Plots = @import("plots.zig").Plots;
+pub const Plot = @import("plots.zig").Plot;
 pub const Phase = @import("frame_stats.zig").Phase;
 pub const Console = @import("console.zig").Console;
 pub const console_commands = @import("console.zig").registry;
+pub const SpikeLog = @import("spike_log.zig").SpikeLog;
+pub const spike_threshold_seconds = @import("spike_log.zig").threshold_seconds;
+/// The frames the frame history keeps, which is the window the frame statistics cover.
+pub const history_capacity = @import("../profiling/frame_history.zig").capacity;

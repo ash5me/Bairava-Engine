@@ -37,6 +37,7 @@ pub fn main() !void {
         .fullscreen = config.fullscreen,
         .vsync = config.vsync,
         .post_effects = config.post_effects,
+        .post_params = config.post_params,
         .texture_budget_bytes = config.texture_budget_bytes,
         .texture_loads_per_frame = config.texture_loads_per_frame,
     });

@@ -34,6 +34,10 @@ pub const ScaleMode = @import("../renderer/view.zig").ScaleMode;
 
 /// A post-processing effect, named in `Config.post_effects`. See renderer/post.zig.
 pub const Effect = @import("../renderer/render_types.zig").Effect;
+/// The strengths the post-processing effects read, named in `Config.post_params`. See renderer/render_types.zig.
+pub const PostParams = @import("../renderer/render_types.zig").PostParams;
+/// The post-processing strengths the effects had before they could be changed.
+pub const default_post_params = @import("../renderer/render_types.zig").default_post_params;
 /// How urgently a texture is preloaded, for `Context.requestTexture`.
 pub const TexturePriority = @import("context.zig").TexturePriority;
 
@@ -57,6 +61,8 @@ pub const GamepadAxis = @import("../platform/types.zig").GamepadAxis;
 pub const Camera = @import("../renderer/camera.zig").Camera;
 pub const Rect = @import("../renderer/sprite.zig").Rect;
 pub const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
+/// A point light for lit sprites, added with `SpriteBatch.addLight` in `draw`. See renderer/sprite.zig.
+pub const Light = @import("../renderer/sprite.zig").Light;
 pub const Texture = @import("../renderer/texture.zig").Texture;
 /// A texture atlas on the GPU, with where each sprite sits in it. See `Context.loadAtlas`.
 pub const LoadedAtlas = @import("../renderer/loaded_atlas.zig").LoadedAtlas;

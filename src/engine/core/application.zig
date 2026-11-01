@@ -55,11 +55,17 @@ pub const Config = struct {
     /// Post-processing effects, run in order over the finished world before it is shown. Empty by default, which
     /// presents the world unchanged. A chain holds at most `render_types.max_post_effects` effects.
     post_effects: []const render_types.Effect = &.{},
+    /// Strengths the post-processing effects use, each from 0 to 1. The defaults keep the effects' original look.
+    post_params: render_types.PostParams = render_types.default_post_params,
     /// Most bytes the texture cache may hold, counted at four bytes per texel. Idle textures are unloaded, least
     /// recently used first, to stay within it. Zero means no budget.
     texture_budget_bytes: usize = 0,
     /// Requested textures the runtime loads each frame, between frames. Zero turns preloading off.
     texture_loads_per_frame: usize = 2,
+    /// Measures the GPU's share of each frame by waiting for the GPU to finish it. Development builds only. The wait
+    /// stalls the CPU every frame, so frame times in this mode add the CPU and GPU work together. That makes them a
+    /// cost, not a rate to play at. The result is the `gpu` phase, shown on the overlay and in Tracy.
+    gpu_timing: bool = false,
 
     pub const ValidationError = error{
         EmptyTitle,
@@ -72,6 +78,7 @@ pub const Config = struct {
         InvalidZoomRate,
         InvalidDebugFont,
         TooManyPostEffects,
+        InvalidPostParams,
     };
 
     /// Validates all engine-owned startup values before any platform resource is created.
@@ -99,6 +106,9 @@ pub const Config = struct {
             !std.math.isFinite(self.debug_font_px) or self.debug_font_px <= 0.0)
             return error.InvalidDebugFont;
         if (self.post_effects.len > render_types.max_post_effects) return error.TooManyPostEffects;
+        for ([_]f32{ self.post_params.vignette, self.post_params.scanline_dim, self.post_params.grayscale }) |value| {
+            if (!std.math.isFinite(value) or value < 0.0 or value > 1.0) return error.InvalidPostParams;
+        }
     }
 
     pub fn validationMessage(err: ValidationError) []const u8 {
@@ -113,6 +123,7 @@ pub const Config = struct {
             error.InvalidZoomRate => "engine config zoom_rate must be a finite non-negative number",
             error.InvalidDebugFont => "engine config debug font path must not be empty and debug font px must be positive",
             error.TooManyPostEffects => "engine config post_effects holds more effects than one chain allows",
+            error.InvalidPostParams => "engine config post_params values must be finite numbers from 0 to 1",
         };
     }
 };
@@ -143,4 +154,11 @@ test "Config validation rejects a post-processing chain longer than one chain al
     const too_many = [_]render_types.Effect{.grayscale} ** (render_types.max_post_effects + 1);
     const config = Config{ .post_effects = &too_many };
     try std.testing.expectError(error.TooManyPostEffects, config.validate());
+}
+
+test "Config validation rejects post settings outside 0 to 1, and values that are not numbers" {
+    const too_strong = Config{ .post_params = .{ .vignette = 1.5, .scanline_dim = 0.8, .grayscale = 1, .padding = 0 } };
+    try std.testing.expectError(error.InvalidPostParams, too_strong.validate());
+    const not_a_number = Config{ .post_params = .{ .vignette = 0.25, .scanline_dim = std.math.nan(f32), .grayscale = 1, .padding = 0 } };
+    try std.testing.expectError(error.InvalidPostParams, not_a_number.validate());
 }

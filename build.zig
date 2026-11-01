@@ -178,13 +178,17 @@ const ShaderEntry = struct {
     /// Declaration name in the generated `embedded_shaders` module, such as "default_vert".
     /// A target's `suffix` is added to this name, so each format gets its own declaration.
     decl: []const u8,
+    /// An entry-point-specific shader define, when only that entry point uses a resource block.
+    define: ?[]const u8 = null,
 };
 
 const shader_entries = [_]ShaderEntry{
     .{ .entry = "vertexMain", .stage = "vertex", .file = "default.vert", .decl = "default_vert" },
     .{ .entry = "fragmentMain", .stage = "fragment", .file = "default.frag", .decl = "default_frag" },
-    .{ .entry = "postGrayscaleMain", .stage = "fragment", .file = "post_grayscale.frag", .decl = "post_grayscale_frag" },
-    .{ .entry = "postVignetteMain", .stage = "fragment", .file = "post_vignette.frag", .decl = "post_vignette_frag" },
+    .{ .entry = "postGrayscaleMain", .stage = "fragment", .file = "post_grayscale.frag", .decl = "post_grayscale_frag", .define = "POST_SHADER" },
+    .{ .entry = "postVignetteMain", .stage = "fragment", .file = "post_vignette.frag", .decl = "post_vignette_frag", .define = "POST_SHADER" },
+    .{ .entry = "postScanlinesMain", .stage = "fragment", .file = "post_scanlines.frag", .decl = "post_scanlines_frag", .define = "POST_SHADER" },
+    .{ .entry = "litFragmentMain", .stage = "fragment", .file = "default_lit.frag", .decl = "default_lit_frag", .define = "LIT_SHADER" },
 };
 
 /// One output format for every shader entry point.
@@ -511,6 +515,7 @@ pub fn build(b: *std.Build) void {
                 const compile = b.addSystemCommand(&.{"slangc"});
                 compile.addArgs(t.args);
                 if (t.define) |d| compile.addArg(d);
+                if (s.define) |d| compile.addArg(b.fmt("-D{s}", .{d}));
                 compile.addArgs(&.{ "-entry", s.entry, "-stage", s.stage });
                 compile.addFileArg(b.path("shaders/default.slang"));
                 compile.addArg("-o");

@@ -23,6 +23,7 @@ const debug_geometry = @import("../renderer/debug_geometry.zig");
 const gate = @import("../diagnostics/gate.zig");
 const console_mod = @import("../diagnostics/console.zig");
 const collector_mod = @import("../diagnostics/collector.zig");
+const frame_stats = @import("../diagnostics/frame_stats.zig");
 const renderer = @import("../renderer/renderer.zig");
 const view = @import("../renderer/view.zig");
 const sprite = @import("../renderer/sprite.zig");
@@ -51,6 +52,39 @@ fn clockIf() u64 {
 fn secondsBetween(start_ns: u64, end_ns: u64) f32 {
     if (!gate.enabled) return 0;
     return @as(f32, @floatFromInt(end_ns -| start_ns)) / 1_000_000_000.0;
+}
+
+/// Records this frame's samples for the overlay strips and for Tracy. Development builds only, since the
+/// collector and the allocator counts are only kept there.
+fn recordPlots(collector: *collector_mod.Collector, sprites: u32, draw_calls: u32, memory: collector_mod.Memory) void {
+    const allocations = memory.allocationsThisFrame();
+    const bytes = memory.bytesThisFrame();
+    collector.plots.record(.sprites, @floatFromInt(sprites));
+    collector.plots.record(.draw_calls, @floatFromInt(draw_calls));
+    collector.plots.record(.allocations, @floatFromInt(allocations));
+    collector.plots.record(.allocated_bytes, @floatFromInt(bytes));
+    profile.plot("sprites", @floatFromInt(sprites));
+    profile.plot("draw calls", @floatFromInt(draw_calls));
+    profile.plot("allocations", @floatFromInt(allocations));
+    profile.plot("allocated bytes", @floatFromInt(bytes));
+}
+
+/// The phase that took the longest in the frame that just ended, for a spike's record. The whole frame is not a
+/// phase of its own, so it is left out. With gpu timing on, the GPU wait sits inside `present`, so `present` is
+/// credited only with the time outside that wait. Otherwise a GPU-bound frame would be blamed on the window pass.
+fn dominantPhase(stats: *const frame_stats.Stats) frame_stats.Phase {
+    var best: frame_stats.Phase = .events;
+    var best_seconds: f32 = -1;
+    for (std.enums.values(frame_stats.Phase)) |phase| {
+        if (phase == .frame) continue;
+        var seconds = stats.of(phase).last();
+        if (phase == .present) seconds = @max(@as(f32, 0), seconds - stats.of(.gpu).last());
+        if (seconds > best_seconds) {
+            best = phase;
+            best_seconds = seconds;
+        }
+    }
+    return best;
 }
 
 /// Loads the overlay's font. A missing font turns the overlay off rather than stopping the game.
@@ -82,6 +116,7 @@ pub fn run(comptime Game: type, config: Config) !void {
     elog.info("build profile {s}", .{build_options.profile});
     elog.info("profiling zones {s}", .{if (profile.enabled) "on (Tracy)" else "off"});
     elog.info("development tools {s}", .{if (gate.enabled) "on" else "off"});
+    elog.info("gpu timing {s}", .{if (gate.enabled and config.gpu_timing) "on (each frame waits for the GPU)" else "off"});
 
     var timestep = fixed_timestep.Accumulator.init(config.update_hz);
 
@@ -152,7 +187,11 @@ pub fn run(comptime Game: type, config: Config) !void {
         const frame_seconds = @as(f32, @floatFromInt(now_ns - last_ns)) / 1_000_000_000.0;
         const frame_dt = timestep.addFrameTime(frame_seconds);
         last_ns = now_ns;
-        if (gate.enabled) collector.stats.record(.frame, frame_seconds);
+        if (gate.enabled) {
+            collector.stats.record(.frame, frame_seconds);
+            // The phases recorded so far belong to the frame that just ended, so a spike names that frame's largest phase.
+            collector.spikes.observe(total_frames, frame_seconds, dominantPhase(&collector.stats));
+        }
 
         // Events, then the held keys as of this pump. Presses and clicks wait in Input for an update.
         const events_start = clockIf();
@@ -308,6 +347,7 @@ pub fn run(comptime Game: type, config: Config) !void {
                 .bytes = textures.bytes,
             };
             collector.snapshot.memory = allocators.stats();
+            recordPlots(collector, session.world_batch.sprite_count, last_draw_calls, collector.snapshot.memory);
             // Held keys by name, and the actions the game's bindings resolve from them. A game that does not
             // declare `debugActions` lists no actions.
             var held_keys = collector_mod.NameList{};
@@ -346,6 +386,8 @@ pub fn run(comptime Game: type, config: Config) !void {
             collector.snapshot.frames = total_frames;
             // The overlay goes above the game in the same native view. Its draw-call count is from the
             // last frame, since this frame's batches are not drawn until below.
+            const overlay_zone = profile.zoneNamed(@src(), "debug overlay");
+            defer overlay_zone.End();
             overlay.draw(&session.world_batch, view_wf, view_hf, collector, &dev_console);
         }
         sprite.upload(&session.world_batch, frame.cmd);
@@ -389,7 +431,17 @@ pub fn run(comptime Game: type, config: Config) !void {
             renderer.endPass(screen_pass);
         }
 
-        platform.gpu.Gpu.endFrame(frame);
+        // With gpu timing on, the frame waits for the GPU to finish, and that wait is the gpu phase. Without it, the
+        // frame is submitted and the CPU moves on.
+        if (gate.enabled and config.gpu_timing) {
+            const gpu_start = clockIf();
+            session.gpu.submitAndWait(frame);
+            const gpu_seconds = secondsBetween(gpu_start, clockIf());
+            collector.stats.record(.gpu, gpu_seconds);
+            profile.plot("gpu ms", gpu_seconds * 1000.0);
+        } else {
+            platform.gpu.Gpu.endFrame(frame);
+        }
         if (gate.enabled) collector.stats.record(.present, secondsBetween(present_start, clockIf()));
 
         // The window title stays as configured. The frame stats are in the debug overlay (F3).

@@ -46,6 +46,31 @@ pub const Options = struct {
     z: i32 = 0,
     /// Treat the texture alpha channel as a signed distance field and reconstruct smooth coverage.
     sdf: bool = false,
+    /// A normal map that lights the sprite with the batch's point lights. Its colors store unit normals as 0..1 per
+    /// channel: x points right, y points down the image, and z points out of the screen. It must be the same size as
+    /// the texture and read at the same source rectangle, so the sprite's texel coordinates index both. The normals
+    /// turn with the sprite: a flip mirrors their x or y, and a rotation turns them as it turns the sprite.
+    normal: ?*const Texture = null,
+    /// Light the sprite with the batch's point lights even when it has no normal map. Such a sprite is lit as a flat
+    /// surface that faces the viewer, so a light brightens it where it reaches and fades past its radius. A sprite
+    /// with a normal map is lit by it either way. A sprite with neither is drawn unlit.
+    lit: bool = false,
+};
+
+/// A point light for lit sprites. Its place and radius are in view pixels, the space sprites are drawn in, so a
+/// game converts a world position with `Camera.screenX` and `Camera.screenY`.
+pub const Light = struct {
+    x: f32,
+    y: f32,
+    /// How far the light sits above the view. A high light spreads evenly over a sprite, and a low one lights only
+    /// the side of it that faces the light.
+    height: f32 = 24,
+    /// The distance, in pixels, at which the light fades to nothing.
+    radius: f32,
+    /// The light's color, each channel from 0 to 1.
+    color: [3]f32 = .{ 1, 1, 1 },
+    /// A multiplier on the color. 1 is full strength.
+    intensity: f32 = 1,
 };
 
 /// Storage starts at these sizes and doubles when a frame needs more. A frame has no sprite or
@@ -57,6 +82,7 @@ const initial_batches = 64;
 /// bottom-right, top-right. `seq` is the order the sprite was added in. It breaks ties in the z sort.
 const Quad = struct {
     texture: *const Texture,
+    normal: ?*const Texture,
     corners: [vertices_per_quad]Vertex,
     z: i32,
     seq: u32,
@@ -66,6 +92,8 @@ const Quad = struct {
 /// `vertex_count` count vertices. Public so tests can build a batch without a GPU.
 pub const Batch = struct {
     texture: *const Texture,
+    /// The normal map the run's sprites are lit with, or null for a run drawn unlit.
+    normal: ?*const Texture,
     first_vertex: u32,
     vertex_count: u32,
 };
@@ -94,19 +122,31 @@ pub const SpriteBatch = struct {
     draw_calls: u32 = 0,
     /// Maps pixel coordinates in the viewport to normalized device coordinates. Set by `begin`.
     projection: math.Mat4 = undefined,
+    /// The ambient light and the point lights for this frame, as the lit pipeline reads them. `begin` resets them.
+    lighting: render_types.LightUniforms = undefined,
+    light_count: u32 = 0,
+    /// True when `prepare` found a run with a normal map, so `upload` must push the lights.
+    has_lit_runs: bool = false,
+    /// The one-texel map that lit sprites without a normal map sample. It faces the viewer. The batch owns it, and
+    /// `deinit` releases it. Null only for a batch that was never given a device, such as a test fixture.
+    flat_normal: ?*const Texture = null,
 
     /// Builds the pipeline and GPU buffers. `color_format` is the swapchain format
     /// the sprites render into. `fragment` is the shader the quads run through.
-    fn init(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat, fragment: backend.shader.Source) SpriteBatch {
-        const gpu_state = backend.sprite.create(allocator, device, color_format, initial_sprites * vertices_per_quad, fragment);
-        return .{
+    /// `lit` is the fragment stage for normal-mapped runs, or null for a batch that draws none.
+    fn init(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat, fragment: backend.shader.Source, lit: ?backend.shader.Source) SpriteBatch {
+        const gpu_state = backend.sprite.create(allocator, device, color_format, initial_sprites * vertices_per_quad, fragment, lit);
+        var batch = SpriteBatch{
             .gpu_state = @ptrCast(gpu_state),
             .allocator = allocator,
             .quads = allocQuads(allocator, initial_sprites),
             .vertices = allocVertices(allocator, initial_sprites * vertices_per_quad),
             .batches = allocBatches(allocator, initial_batches),
+            .flat_normal = createFlatNormal(allocator, device),
             .projection = math.ortho2d(1.0, 1.0),
         };
+        batch.lighting.reset();
+        return batch;
     }
 
     /// Starts a new frame of sprites. `viewport_w` and `viewport_h` are the drawing area in pixels,
@@ -117,16 +157,49 @@ pub const SpriteBatch = struct {
         self.batch_count = 0;
         self.draw_calls = 0;
         self.projection = math.ortho2d(viewport_w, viewport_h);
+        self.lighting.reset();
+        self.light_count = 0;
+        self.has_lit_runs = false;
+    }
+
+    /// Sets the ambient light: the brightness a lit sprite has with no point light on it. It starts at full, so a
+    /// lit sprite looks as it would unlit until a game darkens the scene. `begin` restores full each frame.
+    pub fn setAmbient(self: *SpriteBatch, rgb: [3]f32) void {
+        self.lighting.ambient = .{ rgb[0], rgb[1], rgb[2], 0 };
+    }
+
+    /// Adds a point light for this frame. A frame holds `render_types.max_lights` lights, and one more panics, since
+    /// the lights are fixed-size uniform data.
+    pub fn addLight(self: *SpriteBatch, light: Light) void {
+        if (self.light_count == render_types.max_lights) {
+            std.debug.panic("a frame holds at most {d} lights", .{render_types.max_lights});
+        }
+        const slot = self.light_count;
+        self.lighting.position[slot] = .{ light.x, light.y, light.height, light.radius };
+        self.lighting.color[slot] = .{ light.color[0], light.color[1], light.color[2], light.intensity };
+        self.light_count += 1;
+        self.lighting.info[0] = @floatFromInt(self.light_count);
     }
 
     /// Queues one sprite. `src` is the texel rectangle to sample, and `dst` is the on-screen rectangle
     /// in pixels, before `opts` applies. `opts` sets the tint, alpha, flip, origin, rotation, and z.
     /// Sprites draw in z order, and sprites with equal z draw in the order they were added.
     pub fn drawSprite(self: *SpriteBatch, texture_ref: *const Texture, src: Rect, dst: Rect, opts: Options) void {
+        // A normal map indexes the same texels as the texture, so the two must have the same size.
+        if (opts.normal) |map| {
+            if (map.width != texture_ref.width or map.height != texture_ref.height) {
+                std.debug.panic("a normal map is {d}x{d} but the texture it lights is {d}x{d}; they must match", .{
+                    map.width, map.height, texture_ref.width, texture_ref.height,
+                });
+            }
+        }
         // Make room before writing. Storage doubles when it fills, so a frame has no sprite limit.
         if (self.sprite_count == self.quads.len) self.growQuads(self.sprite_count + 1);
+        // A lit sprite with no normal map of its own samples the flat map, which faces the viewer.
+        const normal: ?*const Texture = if (opts.normal) |map| map else if (opts.lit) self.flat_normal else null;
         self.quads[self.sprite_count] = .{
             .texture = texture_ref,
+            .normal = normal,
             .corners = cornersFor(&self.projection, texture_ref, src, dst, opts),
             .z = opts.z,
             .seq = self.sprite_count,
@@ -144,19 +217,25 @@ pub const SpriteBatch = struct {
 
         self.vertex_count = 0;
         self.batch_count = 0;
+        self.has_lit_runs = false;
         const needed = @as(usize, self.sprite_count) * vertices_per_quad;
         if (needed > self.vertices.len) self.growVertices(needed);
 
         for (queued) |quad| {
-            // Start a new run whenever the texture changes. Runs double too, so there is no switch limit.
-            if (self.batch_count == 0 or self.batches[self.batch_count - 1].texture != quad.texture) {
+            // Start a new run whenever the texture or its normal map changes. Runs double too, so there is no switch limit.
+            const starts_run = self.batch_count == 0 or
+                self.batches[self.batch_count - 1].texture != quad.texture or
+                self.batches[self.batch_count - 1].normal != quad.normal;
+            if (starts_run) {
                 if (self.batch_count == self.batches.len) self.growBatches(self.batch_count + 1);
                 self.batches[self.batch_count] = .{
                     .texture = quad.texture,
+                    .normal = quad.normal,
                     .first_vertex = self.vertex_count,
                     .vertex_count = 0,
                 };
                 self.batch_count += 1;
+                if (quad.normal != null) self.has_lit_runs = true;
             }
             self.batches[self.batch_count - 1].vertex_count += vertices_per_quad;
             for (quad.corners) |corner| {
@@ -174,6 +253,7 @@ pub const SpriteBatch = struct {
         self.prepare();
         if (self.vertex_count == 0) return;
         backend.sprite.upload(gpuOf(self), cmd, self.vertices[0..self.vertex_count]);
+        if (self.has_lit_runs) backend.sprite.pushLights(cmd, &self.lighting);
     }
 
     /// Records one draw call per batch. Call inside a render pass, after upload().
@@ -185,9 +265,14 @@ pub const SpriteBatch = struct {
 
         for (self.batches[0..self.batch_count]) |batch| {
             // A texture whose upload is still running has nothing to sample yet. Skip its batch this
-            // frame. The game queues the sprite again next frame.
+            // frame. The game queues the sprite again next frame. The same holds for its normal map.
             if (!batch.texture.isReady()) continue;
-            backend.sprite.drawRun(pass, texture.backendState(batch.texture), batch.first_vertex, batch.vertex_count);
+            var normal_state: ?*const backend.texture.State = null;
+            if (batch.normal) |map| {
+                if (!map.isReady()) continue;
+                normal_state = texture.backendState(map);
+            }
+            backend.sprite.drawRun(gpuOf(self), pass, texture.backendState(batch.texture), normal_state, batch.first_vertex, batch.vertex_count);
             self.draw_calls += 1;
         }
     }
@@ -222,6 +307,12 @@ pub const SpriteBatch = struct {
     /// Releases the GPU objects and the CPU storage. Call before the renderer is deinitialized.
     pub fn deinit(self: *SpriteBatch) void {
         backend.sprite.destroy(gpuOf(self), self.allocator);
+        if (self.flat_normal) |flat| {
+            // `init` made this map and stored it as a const pointer, so the batch owns it and may release it.
+            const owned: *Texture = @constCast(flat);
+            owned.deinit();
+            self.allocator.destroy(owned);
+        }
         freeSlice(self.allocator, Quad, self.quads);
         freeSlice(self.allocator, Vertex, self.vertices);
         freeSlice(self.allocator, Batch, self.batches);
@@ -229,15 +320,16 @@ pub const SpriteBatch = struct {
     }
 };
 
-/// A batch of sprites, drawn with the default sprite shader.
+/// A batch of sprites. Sprites with no normal map use the default sprite shader, and sprites with one are lit
+/// by the batch's lights through the lit shader.
 pub fn create(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat) SpriteBatch {
-    return SpriteBatch.init(allocator, device, color_format, backend.sprite.sprite_fragment);
+    return SpriteBatch.init(allocator, device, color_format, backend.sprite.sprite_fragment, backend.sprite.lit_fragment);
 }
 
 /// A batch whose quads run through one post-processing effect's shader. It takes the same vertices as a
 /// sprite batch, so a post-processing chain can queue one full-view quad through it.
 pub fn createEffect(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat, effect: render_types.Effect) SpriteBatch {
-    return SpriteBatch.init(allocator, device, color_format, backend.post.fragmentSource(effect));
+    return SpriteBatch.init(allocator, device, color_format, backend.post.fragmentSource(effect), null);
 }
 
 pub fn upload(batch: *SpriteBatch, cmd: *backend.CommandBuffer) void {
@@ -287,11 +379,16 @@ fn cornersFor(projection: *const math.Mat4, texture_ref: *const Texture, src: Re
 
     const color = [4]f32{ opts.tint[0], opts.tint[1], opts.tint[2], opts.alpha };
     const sdf: f32 = if (opts.sdf) 1 else 0;
+    // A normal map turns with the sprite. The flip happens in the sprite's own frame and the rotation after it, so the
+    // basis is R * F: R is the clockwise turn `turned` applies, and F mirrors x or y. Normal z never changes.
+    const flip_x_sign: f32 = if (opts.flip_x) -1 else 1;
+    const flip_y_sign: f32 = if (opts.flip_y) -1 else 1;
+    const basis = [4]f32{ co * flip_x_sign, -s * flip_y_sign, s * flip_x_sign, co * flip_y_sign };
     return .{
-        .{ .pos = p_tl, .uv = .{ u_left, v_top }, .color = color, .sdf = sdf },
-        .{ .pos = p_bl, .uv = .{ u_left, v_bottom }, .color = color, .sdf = sdf },
-        .{ .pos = p_br, .uv = .{ u_right, v_bottom }, .color = color, .sdf = sdf },
-        .{ .pos = p_tr, .uv = .{ u_right, v_top }, .color = color, .sdf = sdf },
+        .{ .pos = p_tl, .uv = .{ u_left, v_top }, .color = color, .sdf = sdf, .normal_basis = basis },
+        .{ .pos = p_bl, .uv = .{ u_left, v_bottom }, .color = color, .sdf = sdf, .normal_basis = basis },
+        .{ .pos = p_br, .uv = .{ u_right, v_bottom }, .color = color, .sdf = sdf, .normal_basis = basis },
+        .{ .pos = p_tr, .uv = .{ u_right, v_top }, .color = color, .sdf = sdf, .normal_basis = basis },
     };
 }
 
@@ -343,6 +440,15 @@ fn heapSort(quads: []Quad) void {
         std.mem.swap(Quad, &quads[0], &quads[end]);
         siftDown(quads, 0, end);
     }
+}
+
+/// The one-texel normal map that faces the viewer. Its texel stores (0.5, 0.5, 1), which decodes to the unit vector
+/// (0, 0, 1). It is heap-allocated, so the batch keeps a stable pointer to it.
+fn createFlatNormal(allocator: std.mem.Allocator, device: *backend.Device) *const Texture {
+    const flat = allocator.create(Texture) catch @panic("out of memory");
+    const texel = [4]u8{ 128, 128, 255, 255 };
+    flat.* = texture.createRgba8(allocator, device, 1, 1, &texel);
+    return flat;
 }
 
 fn allocQuads(allocator: std.mem.Allocator, count: usize) []Quad {

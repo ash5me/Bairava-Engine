@@ -20,6 +20,10 @@ pub const ScopeStats = struct {
     live_bytes: usize = 0,
     high_water_bytes: usize = 0,
     arena_capacity_bytes: usize = 0,
+    /// Allocations and bytes requested since the current frame began. Unlike the counts above, these
+    /// restart each frame, so they show what one frame costs.
+    allocations_this_frame: u64 = 0,
+    bytes_this_frame: usize = 0,
 };
 
 pub const Stats = struct {
@@ -27,6 +31,18 @@ pub const Stats = struct {
     game: ScopeStats = .{},
     asset: ScopeStats = .{},
     frame: ScopeStats = .{},
+
+    /// Allocations requested so far this frame, across every scope.
+    pub fn allocationsThisFrame(self: Stats) u64 {
+        return self.engine.allocations_this_frame + self.game.allocations_this_frame +
+            self.asset.allocations_this_frame + self.frame.allocations_this_frame;
+    }
+
+    /// Bytes requested so far this frame, across every scope.
+    pub fn bytesThisFrame(self: Stats) usize {
+        return self.engine.bytes_this_frame + self.game.bytes_this_frame +
+            self.asset.bytes_this_frame + self.frame.bytes_this_frame;
+    }
 };
 
 const TrackedAllocator = struct {
@@ -37,6 +53,8 @@ const TrackedAllocator = struct {
     live_allocations: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     live_bytes: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     high_water_bytes: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    frame_allocations: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    frame_bytes: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
     const vtable = std.mem.Allocator.VTable{
         .alloc = alloc,
@@ -52,6 +70,8 @@ const TrackedAllocator = struct {
 
     fn recordAllocation(self: *TrackedAllocator, size: usize) void {
         _ = self.allocation_count.fetchAdd(1, .monotonic);
+        _ = self.frame_allocations.fetchAdd(1, .monotonic);
+        _ = self.frame_bytes.fetchAdd(size, .monotonic);
         _ = self.live_allocations.fetchAdd(1, .monotonic);
         const live = self.live_bytes.fetchAdd(size, .monotonic) + size;
         _ = self.high_water_bytes.fetchMax(live, .monotonic);
@@ -84,12 +104,19 @@ const TrackedAllocator = struct {
             .live_allocations = self.live_allocations.load(.monotonic),
             .live_bytes = self.live_bytes.load(.monotonic),
             .high_water_bytes = self.high_water_bytes.load(.monotonic),
+            .allocations_this_frame = self.frame_allocations.load(.monotonic),
+            .bytes_this_frame = self.frame_bytes.load(.monotonic),
         };
     }
 
     fn resetLive(self: *TrackedAllocator) void {
         self.live_allocations.store(0, .monotonic);
         self.live_bytes.store(0, .monotonic);
+    }
+
+    fn resetFrameCounts(self: *TrackedAllocator) void {
+        self.frame_allocations.store(0, .monotonic);
+        self.frame_bytes.store(0, .monotonic);
     }
 
     fn alloc(context: *anyopaque, size: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
@@ -182,6 +209,10 @@ pub const RuntimeAllocators = struct {
     pub fn resetFrame(self: *RuntimeAllocators) void {
         _ = self.frame_arena.reset(.free_all);
         self.frame_tracker.resetLive();
+        self.engine_tracker.resetFrameCounts();
+        self.game_tracker.resetFrameCounts();
+        self.asset_tracker.resetFrameCounts();
+        self.frame_tracker.resetFrameCounts();
     }
 };
 
@@ -238,6 +269,28 @@ test "tracked frees release live bytes and preserve peak usage" {
     try std.testing.expectEqual(@as(usize, 0), stats.live_allocations);
     try std.testing.expectEqual(@as(usize, 0), stats.live_bytes);
     try std.testing.expect(stats.high_water_bytes >= 96);
+}
+
+test "per-frame counts restart each frame, while lifetime totals keep counting" {
+    var roles = RuntimeAllocators.init(std.testing.allocator, true);
+    defer roles.deinit();
+
+    const allocators = roles.context();
+    _ = try allocators.game.alloc(u8, 32);
+    _ = try allocators.asset.alloc(u8, 64);
+    const busy = roles.stats();
+    try std.testing.expectEqual(@as(u64, 2), busy.allocationsThisFrame());
+    try std.testing.expectEqual(@as(usize, 96), busy.bytesThisFrame());
+
+    roles.resetFrame();
+    try std.testing.expectEqual(@as(u64, 0), roles.stats().allocationsThisFrame());
+    try std.testing.expectEqual(@as(usize, 0), roles.stats().bytesThisFrame());
+
+    _ = try allocators.frame.alloc(u8, 8);
+    const next = roles.stats();
+    try std.testing.expectEqual(@as(u64, 1), next.allocationsThisFrame());
+    try std.testing.expectEqual(@as(usize, 8), next.bytesThisFrame());
+    try std.testing.expectEqual(@as(u64, 1), next.game.allocation_count);
 }
 
 test "untracked arenas preserve the normal allocator path" {

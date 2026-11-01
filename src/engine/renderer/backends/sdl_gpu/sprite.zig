@@ -1,6 +1,7 @@
-//! The SDL_GPU half of sprite batching: the pipeline, the vertex, upload, and index buffers, and the draw
+//! The SDL_GPU half of sprite batching: the pipelines, the vertex, upload, and index buffers, and the draw
 //! calls. The engine's SpriteBatch (renderer/sprite.zig) builds the vertices and the texture runs on the
-//! CPU, then hands them here.
+//! CPU, then hands them here. A run with a normal map uses the lit pipeline, which reads the normal map and
+//! the light block; every other run uses the plain pipeline.
 
 const std = @import("std");
 const c = @import("../../../platform/sdl/sdl.zig").c;
@@ -32,6 +33,16 @@ pub const sprite_fragment = shader.Source{
     .resources = .{ .samplers = 1 },
 };
 
+/// The lit fragment shader, for sprites with a normal map. It samples the texture and the normal map, which take
+/// sampler slots 0 and 1, and it reads the light block from uniform slot 0.
+pub const lit_fragment = shader.Source{
+    .name = "default_lit.frag",
+    .entry = "litFragmentMain",
+    .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
+    .code = .{ .spirv = embedded.default_lit_frag, .dxil = embedded.default_lit_frag_dxil, .msl = embedded.default_lit_frag_msl },
+    .resources = .{ .samplers = 2, .uniform_buffers = 1 },
+};
+
 /// The GPU objects of one sprite batch. The engine keeps a pointer to the state, and `destroy` frees it.
 pub const State = struct {
     device: *c.SDL_GPUDevice,
@@ -39,6 +50,8 @@ pub const State = struct {
     vertex_buffer: *c.SDL_GPUBuffer,
     vb_binding: c.SDL_GPUBufferBinding,
     upload_buffer: *c.SDL_GPUTransferBuffer,
+    /// The pipeline for normal-mapped runs. Null when the batch was created without a lit fragment shader.
+    lit_pipeline: ?*c.SDL_GPUGraphicsPipeline,
     index_buffer: *c.SDL_GPUBuffer,
     ib_binding: c.SDL_GPUBufferBinding,
     index_filled: bool = false,
@@ -46,58 +59,17 @@ pub const State = struct {
     gpu_vertex_capacity: usize,
 };
 
-/// Builds the pipeline and the GPU buffers. `initial_vertices` is the starting capacity; the vertex buffer
-/// is replaced when a frame needs more. `color_format` is the swapchain format the sprites render into.
-/// `fragment` is the fragment stage the pipeline runs: `sprite_fragment` for sprites, or one effect's
-/// shader from post.zig. Every fragment shader must read one sampler, as declared in its source.
-pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat, initial_vertices: usize, fragment: shader.Source) *State {
+/// Builds the GPU objects of a batch. `fragment` is the plain fragment stage, and `lit` the lit one, or null for a
+/// batch that draws no lit sprites. `initial_vertices` is the starting capacity; the vertex buffer is
+/// replaced when a frame needs more. `color_format` is the swapchain format the sprites render into. Every
+/// fragment shader must read the samplers and uniform blocks declared in its source.
+pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat, initial_vertices: usize, fragment: shader.Source, lit: ?shader.Source) *State {
     const format = shader.pickFormat(device);
     const vert = shader.load(device, format, vertex_source);
     defer c.SDL_ReleaseGPUShader(device, vert);
-    const frag = shader.load(device, format, fragment);
-    defer c.SDL_ReleaseGPUShader(device, frag);
 
-    // Alpha blending, so transparent pixels show what's behind them.
-    var color_desc = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
-    color_desc.format = color_format;
-    color_desc.blend_state = .{
-        .enable_blend = true,
-        .src_color_blendfactor = c.SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-        .dst_color_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-        .color_blend_op = c.SDL_GPU_BLENDOP_ADD,
-        .src_alpha_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE,
-        .dst_alpha_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-        .alpha_blend_op = c.SDL_GPU_BLENDOP_ADD,
-    };
-
-    var vb_desc = std.mem.zeroes(c.SDL_GPUVertexBufferDescription);
-    vb_desc.slot = 0;
-    vb_desc.pitch = @sizeOf(Vertex);
-    vb_desc.input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX;
-
-    // Locations must match the [vk::location] values in shaders/default.slang.
-    var vb_attrs = [_]c.SDL_GPUVertexAttribute{
-        .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "pos") },
-        .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
-        .{ .location = 2, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, .offset = @offsetOf(Vertex, "color") },
-        .{ .location = 3, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, .offset = @offsetOf(Vertex, "sdf") },
-    };
-
-    var pipeline_info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
-    pipeline_info.vertex_shader = vert;
-    pipeline_info.fragment_shader = frag;
-    pipeline_info.vertex_input_state.vertex_buffer_descriptions = &vb_desc;
-    pipeline_info.vertex_input_state.num_vertex_buffers = 1;
-    pipeline_info.vertex_input_state.vertex_attributes = &vb_attrs;
-    pipeline_info.vertex_input_state.num_vertex_attributes = @intCast(vb_attrs.len);
-    pipeline_info.primitive_type = c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    pipeline_info.depth_stencil_state.compare_op = c.SDL_GPU_COMPAREOP_ALWAYS;
-    pipeline_info.target_info.num_color_targets = 1;
-    pipeline_info.target_info.color_target_descriptions = &color_desc;
-
-    const pipeline = c.SDL_CreateGPUGraphicsPipeline(device, &pipeline_info) orelse {
-        std.debug.panic("SDL_CreateGPUGraphicsPipeline failed: {s}", .{c.SDL_GetError()});
-    };
+    const pipeline = makePipeline(device, format, vert, fragment, color_format);
+    const lit_pipeline: ?*c.SDL_GPUGraphicsPipeline = if (lit) |source| makePipeline(device, format, vert, source, color_format) else null;
 
     // The GPU buffers start at the initial size and are replaced when a frame needs more. The index buffer
     // has one set of six indices for each quad the vertex buffer holds.
@@ -109,6 +81,7 @@ pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_form
     state.* = .{
         .device = device,
         .pipeline = pipeline,
+        .lit_pipeline = lit_pipeline,
         .vertex_buffer = vertex_buffer,
         .vb_binding = .{ .buffer = vertex_buffer, .offset = 0 },
         .upload_buffer = upload_buffer,
@@ -142,20 +115,34 @@ pub fn upload(state: *State, cmd: *c.SDL_GPUCommandBuffer, vertices: []const Ver
     c.SDL_EndGPUCopyPass(copy_pass);
 }
 
-/// Binds the pipeline and the vertex and index buffers for this batch's draws. Call inside a render pass,
-/// after `upload`.
+/// Pushes the light block that lit runs read. SDL copies the bytes, so `lights` need not outlive the call. Call
+/// it after `upload`, outside a render pass, before the draws that use it.
+pub fn pushLights(cmd: *c.SDL_GPUCommandBuffer, lights: *const render_types.LightUniforms) void {
+    c.SDL_PushGPUFragmentUniformData(cmd, 0, lights, @sizeOf(render_types.LightUniforms));
+}
+
+/// Binds the vertex and index buffers for this batch's draws. Call inside a render pass, after `upload`. The
+/// pipeline is bound per run, because a run's pipeline depends on whether its sprites are lit.
 pub fn beginDraw(state: *const State, pass: ?*c.SDL_GPURenderPass) void {
-    c.SDL_BindGPUGraphicsPipeline(pass, state.pipeline);
     c.SDL_BindGPUVertexBuffers(pass, 0, &state.vb_binding, 1);
     c.SDL_BindGPUIndexBuffer(pass, &state.ib_binding, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
 }
 
-/// Draws one run of quads that share a texture: the vertices from `first_vertex` on, `vertex_count` of them.
-/// The indices name absolute vertices, so the draw starts at this run's first quad in the index buffer and
-/// uses no base vertex.
-pub fn drawRun(pass: ?*c.SDL_GPURenderPass, tex: *const texture.State, first_vertex: u32, vertex_count: u32) void {
-    const sampler = texture.binding(tex);
-    c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+/// Draws one run of quads that share a texture and a normal map: the vertices from `first_vertex` on, `vertex_count`
+/// of them. A run with a normal map binds the lit pipeline and both samplers. Any other run binds the plain pipeline
+/// and one sampler. The indices name absolute vertices, so the draw starts at this run's first quad in the index
+/// buffer and uses no base vertex.
+pub fn drawRun(state: *const State, pass: ?*c.SDL_GPURenderPass, tex: *const texture.State, normal: ?*const texture.State, first_vertex: u32, vertex_count: u32) void {
+    if (normal) |map| {
+        const lit = state.lit_pipeline orelse std.debug.panic("a normal-mapped sprite needs a batch with a lit pipeline", .{});
+        c.SDL_BindGPUGraphicsPipeline(pass, lit);
+        const samplers = [2]c.SDL_GPUTextureSamplerBinding{ texture.binding(tex), texture.binding(map) };
+        c.SDL_BindGPUFragmentSamplers(pass, 0, &samplers, 2);
+    } else {
+        c.SDL_BindGPUGraphicsPipeline(pass, state.pipeline);
+        const sampler = texture.binding(tex);
+        c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+    }
     const first_quad = first_vertex / vertices_per_quad;
     const quads = vertex_count / vertices_per_quad;
     c.SDL_DrawGPUIndexedPrimitives(pass, quads * indices_per_quad, 1, first_quad * indices_per_quad, 0, 0);
@@ -167,6 +154,7 @@ pub fn destroy(state: *State, allocator: std.mem.Allocator) void {
     if (state.index_staging) |staging| c.SDL_ReleaseGPUTransferBuffer(state.device, staging);
     c.SDL_ReleaseGPUBuffer(state.device, state.index_buffer);
     c.SDL_ReleaseGPUBuffer(state.device, state.vertex_buffer);
+    if (state.lit_pipeline) |lit| c.SDL_ReleaseGPUGraphicsPipeline(state.device, lit);
     c.SDL_ReleaseGPUGraphicsPipeline(state.device, state.pipeline);
     allocator.destroy(state);
 }
@@ -226,6 +214,56 @@ fn fillIndexBuffer(state: *State, cmd: *c.SDL_GPUCommandBuffer) void {
     c.SDL_EndGPUCopyPass(copy_pass);
 
     state.index_filled = true;
+}
+
+/// Builds one pipeline: the shared vertex stage, the given fragment stage, and alpha blending into `color_format`.
+/// The fragment shader is released once the pipeline exists, as the vertex shader is by the caller.
+fn makePipeline(device: *c.SDL_GPUDevice, format: shader.Format, vert: *c.SDL_GPUShader, fragment: shader.Source, color_format: c.SDL_GPUTextureFormat) *c.SDL_GPUGraphicsPipeline {
+    const frag = shader.load(device, format, fragment);
+    defer c.SDL_ReleaseGPUShader(device, frag);
+
+    // Alpha blending, so transparent pixels show what's behind them.
+    var color_desc = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
+    color_desc.format = color_format;
+    color_desc.blend_state = .{
+        .enable_blend = true,
+        .src_color_blendfactor = c.SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+        .dst_color_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        .color_blend_op = c.SDL_GPU_BLENDOP_ADD,
+        .src_alpha_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE,
+        .dst_alpha_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        .alpha_blend_op = c.SDL_GPU_BLENDOP_ADD,
+    };
+
+    var vb_desc = std.mem.zeroes(c.SDL_GPUVertexBufferDescription);
+    vb_desc.slot = 0;
+    vb_desc.pitch = @sizeOf(Vertex);
+    vb_desc.input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX;
+
+    // Locations must match the [vk::location] values in shaders/default.slang.
+    var vb_attrs = [_]c.SDL_GPUVertexAttribute{
+        .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "pos") },
+        .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
+        .{ .location = 2, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, .offset = @offsetOf(Vertex, "color") },
+        .{ .location = 3, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, .offset = @offsetOf(Vertex, "sdf") },
+        .{ .location = 4, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, .offset = @offsetOf(Vertex, "normal_basis") },
+    };
+
+    var pipeline_info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
+    pipeline_info.vertex_shader = vert;
+    pipeline_info.fragment_shader = frag;
+    pipeline_info.vertex_input_state.vertex_buffer_descriptions = &vb_desc;
+    pipeline_info.vertex_input_state.num_vertex_buffers = 1;
+    pipeline_info.vertex_input_state.vertex_attributes = &vb_attrs;
+    pipeline_info.vertex_input_state.num_vertex_attributes = @intCast(vb_attrs.len);
+    pipeline_info.primitive_type = c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pipeline_info.depth_stencil_state.compare_op = c.SDL_GPU_COMPAREOP_ALWAYS;
+    pipeline_info.target_info.num_color_targets = 1;
+    pipeline_info.target_info.color_target_descriptions = &color_desc;
+
+    return c.SDL_CreateGPUGraphicsPipeline(device, &pipeline_info) orelse {
+        std.debug.panic("SDL_CreateGPUGraphicsPipeline failed: {s}", .{c.SDL_GetError()});
+    };
 }
 
 /// Creates a GPU vertex buffer that holds `vertex_count` vertices.

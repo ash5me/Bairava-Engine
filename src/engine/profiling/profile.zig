@@ -34,3 +34,19 @@ pub fn zoneNamed(comptime src: std.builtin.SourceLocation, comptime name: [:0]co
 pub fn frameMark() void {
     ztracy.FrameMark();
 }
+
+/// Records `value` as a sample of the Tracy plot `name`. Tracy draws each plot as a graph over time, beside
+/// the zones. Without `-Dtracy=true` this does nothing, and it references no Tracy symbol.
+pub fn plot(comptime name: [:0]const u8, value: f32) void {
+    if (comptime enabled) {
+        tracyEmitPlot(name.ptr, value);
+    }
+}
+
+/// Tracy's C entry point for one plot sample, the call its own `TracyPlot` macro makes. It is declared here
+/// and referenced only in builds that record zones, so an ordinary build does not link Tracy.
+extern fn ___tracy_emit_plot(name: [*:0]const u8, val: f64) void;
+
+fn tracyEmitPlot(name: [*:0]const u8, value: f32) void {
+    ___tracy_emit_plot(name, value);
+}

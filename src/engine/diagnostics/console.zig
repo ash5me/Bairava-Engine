@@ -22,7 +22,7 @@ pub const registry = [_]CommandInfo{
     .{ .name = "entities", .usage = "entities [id]", .command = .entities },
     .{ .name = "assets", .usage = "assets", .command = .assets },
     .{ .name = "memory", .usage = "memory", .command = .memory },
-    .{ .name = "performance", .usage = "performance [frame|events|asset|update|audio|draw|present]", .command = .performance },
+    .{ .name = "performance", .usage = "performance [frame|events|asset|update|audio|draw|present|gpu]", .command = .performance },
     .{ .name = "audio", .usage = "audio", .command = .audio },
     .{ .name = "tile", .usage = "tile", .command = .tile },
     .{ .name = "diagnostics", .usage = "diagnostics on|off|toggle", .command = .diagnostics },

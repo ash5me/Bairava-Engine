@@ -8,7 +8,8 @@ const frame_history = @import("../profiling/frame_history.zig");
 
 /// The phases the runtime times. `frame` is the whole loop iteration, from one frame's start to the
 /// next. `update` is every fixed step taken this frame. `draw` is the game's draw and the world pass,
-/// and `present` is the window pass and the submit.
+/// and `present` is the window pass and the submit. `gpu` is the wait for the GPU to finish the frame,
+/// which only `Config.gpu_timing` records; it falls inside `present`.
 pub const Phase = enum {
     frame,
     events,
@@ -17,6 +18,7 @@ pub const Phase = enum {
     audio,
     draw,
     present,
+    gpu,
 };
 
 const phase_count = std.enums.values(Phase).len;

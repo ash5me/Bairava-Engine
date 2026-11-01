@@ -12,7 +12,7 @@ const Texture = @import("texture.zig").Texture;
 
 /// Queues the tiles of one layer that overlap the camera's view. `tileset` is the region of the
 /// atlas that holds the tiles, read left to right, then down. Each cell draws the tile its ID names,
-/// and empty cells draw nothing.
+/// and empty cells draw nothing. Every tile is drawn with `options`, so `.lit = true` lights the layer.
 pub fn drawLayer(
     map: *const tilemap.TileMap,
     batch: *sprite.SpriteBatch,
@@ -20,6 +20,7 @@ pub fn drawLayer(
     tileset: atlas.Region,
     cam: *const Camera,
     layer: tilemap.Layer,
+    options: sprite.Options,
 ) void {
     const zone = profile.zoneNamed(@src(), "draw layer");
     defer zone.End();
@@ -51,7 +52,7 @@ pub fn drawLayer(
                 .w = tile_px,
                 .h = tile_px,
             };
-            batch.drawSprite(texture, src, dst, .{});
+            batch.drawSprite(texture, src, dst, options);
         }
     }
 }
