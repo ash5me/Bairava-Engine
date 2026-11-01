@@ -31,7 +31,7 @@ jobs:
         run: python scripts/boundary_scan.py --self-test
 
       - name: Verify vendored dependency pins
-        run: python scripts/check-vendor-pins.py
+        run: python scripts/check-dependency-pins.py
 
       - name: Platform boundary check
         run: python scripts/boundary_scan.py --fail
@@ -54,11 +54,11 @@ jobs:
           url="https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/${archive}"
           install_dir="${RUNNER_TEMP}/slang"
           mkdir -p "$install_dir"
+          curl --fail --location --retry 3 "$url" -o "${RUNNER_TEMP}/${archive}"
+          python scripts/check-dependency-pins.py --slang-archive "${RUNNER_TEMP}/${archive}"
           if [[ "$archive" == *.zip ]]; then
-            curl --fail --location --retry 3 "$url" -o "${RUNNER_TEMP}/${archive}"
             unzip -q "${RUNNER_TEMP}/${archive}" -d "$install_dir"
           else
-            curl --fail --location --retry 3 "$url" -o "${RUNNER_TEMP}/${archive}"
             tar -xzf "${RUNNER_TEMP}/${archive}" -C "$install_dir"
           fi
 
@@ -68,6 +68,7 @@ jobs:
             exit 1
           fi
           chmod +x "$slang_bin"
+          python scripts/check-dependency-pins.py --slang-compiler "$slang_bin"
           dirname "$slang_bin" >> "$GITHUB_PATH"
           "$slang_bin" -version
 
@@ -80,9 +81,13 @@ jobs:
           $archivePath = Join-Path $env:RUNNER_TEMP $archive
           $installDir = Join-Path $env:RUNNER_TEMP 'slang'
           Invoke-WebRequest -Uri $url -OutFile $archivePath
+          python scripts/check-dependency-pins.py --slang-archive $archivePath
+          if ($LASTEXITCODE -ne 0) { throw "Slang archive checksum did not match dependency-lock.json" }
           Expand-Archive -LiteralPath $archivePath -DestinationPath $installDir -Force
           $compiler = Get-ChildItem -LiteralPath $installDir -Recurse -Filter slangc.exe | Select-Object -First 1
           if ($null -eq $compiler) { throw "slangc.exe was not found in $archive" }
+          python scripts/check-dependency-pins.py --slang-compiler $compiler.FullName
+          if ($LASTEXITCODE -ne 0) { throw "Slang compiler version did not match dependency-lock.json" }
           Add-Content -LiteralPath $env:GITHUB_PATH -Value $compiler.DirectoryName
           & $compiler.FullName -version
 

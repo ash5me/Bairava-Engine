@@ -1,5 +1,28 @@
 {
   "format": 1,
+  "toolchain": {
+    "zig": "0.16.0-dev.3142+5ccfeb926",
+    "slang": "2026.20"
+  },
+  "slang_archives": {
+    "slang-2026.20-linux-x86_64-glibc-2.27.tar.gz": "b831477e994dee2fb36a3e83c54ad89cbfeefd47b4d973b2d8bed65b64780996",
+    "slang-2026.20-linux-aarch64.tar.gz": "b0345743e2153d8c2bd33f56fb5696bcef63fc03513f054a1ae1b8d3dd0152a9",
+    "slang-2026.20-macos-x86_64.zip": "a71d4a499d08b6178325a697a5a5c9fddc9eee5914daaf195451b283189e96ce",
+    "slang-2026.20-macos-aarch64.zip": "ede1865bf086442c8786c5b7c0470ce5f4fd4f032eefe881356726ff9c445f40",
+    "slang-2026.20-windows-x86_64.zip": "e6dd32bbddf1720ebb4e679d55e9635ce792865a5bd84f3d2cd9af28647c0174"
+  },
+  "zig_packages": [
+    {
+      "name": "SDL",
+      "url": "git+https://codeberg.org/brodo/SDL.git#95a338c07505cf35580a8c786e1fca0367a1b9d1",
+      "hash": "sdl-0.4.0+3.4.2-SDL--iEpAgD_8zjY9OaeW6F21dX_Fi1zvuZvs5xAWfLt"
+    },
+    {
+      "name": "ztracy",
+      "url": "git+https://github.com/zig-gamedev/ztracy#2d06ebe148f6d8e68a060123c5d64064b032db43",
+      "hash": "ztracy-0.14.0-dev-zHJSq-r5GwBAkYF_zObYWu72FoSnDpkx5QCQh6GYMXNH"
+    }
+  ],
   "dependencies": [
     {
       "name": "cglm",
@@ -40,8 +63,8 @@
       "name": "Parson",
       "version": "1.5.4",
       "source": "https://github.com/kgabis/parson",
-      "paths": ["vendor/parson.c", "vendor/parson.h"],
-      "sha256": "d4fbb940392a9b51baa747295eeceaee7154b4d86a9955fb5e8e3815445e4b4f"
+      "paths": ["vendor/parson.c", "vendor/parson.h", "vendor/parson-LICENSE"],
+      "sha256": "35613a28bf64906fd5e08589afddd5595363074b97a9c91d3871c79b17cf9446"
     }
   ]
 }

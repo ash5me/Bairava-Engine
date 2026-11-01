@@ -34,7 +34,7 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 - **A GPU backend supported by SDL3.** The default build provides SPIR-V and requests Vulkan 1.2. `-Ddxil=true` adds DXIL for Direct3D 12, and `-Dmetal=true` adds MSL for Metal.
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
 - **cglm 0.9.7** is vendored under `vendor/cglm/`, including the C sources and headers used by the build.
-- **Vendored libraries** are already included in the repository. Their upstream versions and verified source-tree hashes are recorded in [docs/dependency-lock.json](docs/dependency-lock.json); check them with `python scripts/check-vendor-pins.py`. Do not replace them with files from a floating upstream branch.
+- **Pinned dependencies** are recorded in [docs/dependency-lock.json](docs/dependency-lock.json). Verify configured versions and vendored source hashes with `python scripts/check-dependency-pins.py`. Do not replace vendored dependencies with files from a floating upstream branch.
 - **FreeType 2.15.0** is vendored under `vendor/freetype-2.15.0/` with its FreeType License. The minimal in-tree build rasterizes TrueType and OpenType CFF outlines and generates SDF glyphs.
 - **Optional:** the cross-platform checkerboard keyer can be built through Zig; see [Asset keyer](#asset-keyer).
 - **Optional:** Arm's `astcenc` on `PATH`, for ASTC 4x4 texture variants. The build doesn't need it for the other formats.

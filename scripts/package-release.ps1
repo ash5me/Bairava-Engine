@@ -46,13 +46,18 @@ if (-not (Test-Path "build.zig")) {
     Fail "This script must run from the project root, next to build.zig."
 }
 
-Write-Host "Verifying vendored dependencies against docs/dependency-lock.json..."
-& python scripts/check-vendor-pins.py
+Write-Host "Verifying dependency pins against docs/dependency-lock.json..."
+& python scripts/check-dependency-pins.py
 if ($LASTEXITCODE -ne 0) {
-    Fail "Vendored dependencies do not match docs/dependency-lock.json."
+    Fail "Dependency pins do not match docs/dependency-lock.json."
 }
 
 if (-not $SkipBuild) {
+    & python scripts/check-dependency-pins.py --slang-compiler slangc
+    if ($LASTEXITCODE -ne 0) {
+        Fail "The Slang compiler on PATH does not match docs/dependency-lock.json."
+    }
+
     Write-Host "Building the executable and staged assets with the '$Profile' profile..."
     & zig build "-Dprofile=$Profile"
     if ($LASTEXITCODE -ne 0) {
