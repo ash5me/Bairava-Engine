@@ -23,6 +23,49 @@ pub const Color = struct {
 };
 
 
+/// Where a UI panel is anchored inside the logical viewport.
+pub const Anchor = enum {
+    top_left,
+    top_center,
+    top_right,
+    middle_left,
+    center,
+    middle_right,
+    bottom_left,
+    bottom_center,
+    bottom_right,
+};
+
+/// A drawable rectangle in view pixels. `Ui.anchorBounds` resolves a panel's x/y and size from a
+/// logical viewport and a target panel size.
+pub const Bounds = struct {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+};
+
+/// Resolves an anchored panel inside the logical viewport. `margin_x` and `margin_y` are extra
+/// padding from the chosen edge before the panel is placed. Invalid viewport values fall back to a
+/// 1x1 view, so the UI never crashes when the window is transiently zero-sized or empty.
+pub fn anchorBounds(view_w: f32, view_h: f32, width: f32, height: f32, anchor: Anchor, margin_x: f32, margin_y: f32) Bounds {
+    const safe_view_w = if (std.math.isFinite(view_w) and view_w > 0) view_w else 1.0;
+    const safe_view_h = if (std.math.isFinite(view_h) and view_h > 0) view_h else 1.0;
+    const safe_w = if (std.math.isFinite(width) and width > 0) width else 1.0;
+    const safe_h = if (std.math.isFinite(height) and height > 0) height else 1.0;
+    const x = switch (anchor) {
+        .top_left, .middle_left, .bottom_left => margin_x,
+        .top_center, .center, .bottom_center => (safe_view_w - safe_w) / 2.0 + margin_x,
+        .top_right, .middle_right, .bottom_right => safe_view_w - safe_w - margin_x,
+    };
+    const y = switch (anchor) {
+        .top_left, .top_center, .top_right => margin_y,
+        .middle_left, .center, .middle_right => (safe_view_h - safe_h) / 2.0 + margin_y,
+        .bottom_left, .bottom_center, .bottom_right => safe_view_h - safe_h - margin_y,
+    };
+    return .{ .x = x, .y = y, .w = safe_w, .h = safe_h };
+}
+
 /// A font and a quad list on the heap, with text and rectangle helpers. The debug overlay draws
 /// with one directly, and `Ui` builds one for its widgets. The font lives on the heap because the
 /// C side keeps pointers into it.
@@ -110,7 +153,26 @@ pub const Ui = struct {
     /// Starts the frame's widgets in the column (x, y, width), in view pixels. The pointer comes
     /// from `in_state` in window points, so it is mapped through `layout` first.
     pub fn begin(self: *Ui, in_state: *const input.Input, layout: view.Layout, x: f32, y: f32, width: f32) void {
-        const pointer = view.windowToView(layout, .{ .x = in_state.mouse_x, .y = in_state.mouse_y });
+        const safe_layout: view.Layout = if (std.math.isFinite(layout.pixel_density) and layout.pixel_density > 0 and
+            std.math.isFinite(layout.dst_x) and std.math.isFinite(layout.dst_y) and
+            std.math.isFinite(layout.dst_w) and std.math.isFinite(layout.dst_h) and
+            std.math.isFinite(layout.view_w) and std.math.isFinite(layout.view_h) and
+            layout.dst_w > 0 and layout.dst_h > 0 and layout.view_w > 0 and layout.view_h > 0)
+            layout
+        else
+            .{
+                .pixel_density = 1.0,
+                .dst_x = 0.0,
+                .dst_y = 0.0,
+                .dst_w = 1.0,
+                .dst_h = 1.0,
+                .view_w = 1.0,
+                .view_h = 1.0,
+            };
+        const pointer = view.windowToView(safe_layout, .{
+            .x = if (std.math.isFinite(in_state.mouse_x)) in_state.mouse_x else 0,
+            .y = if (std.math.isFinite(in_state.mouse_y)) in_state.mouse_y else 0,
+        });
         const frame = c.ui_input{
             .mouse_x = pointer.x,
             .mouse_y = pointer.y,
@@ -118,7 +180,7 @@ pub const Ui = struct {
             .mouse_pressed = @intFromBool(in_state.mousePressed(.left)),
             .mouse_released = @intFromBool(in_state.mouseReleased(.left)),
         };
-        c.ui_begin(self.ctx, &frame, x, y, width);
+        c.ui_begin(self.ctx, &frame, if (std.math.isFinite(x)) x else 0, if (std.math.isFinite(y)) y else 0, if (std.math.isFinite(width) and width > 0) width else 1);
     }
 
     /// Ends the frame's widgets. Call `queue` after this to draw them.
@@ -183,4 +245,37 @@ fn queueQuads(batch: *sprite.SpriteBatch, font: *Font, list: *const c.ui_quad_li
             .{ .tint = .{ q.color.r, q.color.g, q.color.b }, .alpha = q.color.a, .z = z, .sdf = q.sdf != 0 },
         );
     }
+}
+
+test "ui anchorBounds places panels relative to the viewport" {
+    const panel = anchorBounds(320, 180, 120, 60, .top_right, 8, 6);
+    try std.testing.expectEqual(@as(f32, 192.0), panel.x);
+    try std.testing.expectEqual(@as(f32, 6.0), panel.y);
+    try std.testing.expectEqual(@as(f32, 120.0), panel.w);
+    try std.testing.expectEqual(@as(f32, 60.0), panel.h);
+
+    const centered = anchorBounds(320, 180, 80, 40, .center, 0, 0);
+    try std.testing.expectApproxEqAbs(@as(f32, 120.0), centered.x, 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 70.0), centered.y, 1e-4);
+}
+
+test "ui begin substitutes a safe layout and origin when input is invalid" {
+    var ui = Ui.init(std.testing.allocator, .{
+        .texture = .{},
+        .baked = .{
+            .white = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
+        },
+    });
+    defer ui.deinit();
+
+    var input_state = input.Input{};
+    input_state.mouse_x = std.math.nan(f32);
+    input_state.mouse_y = std.math.inf(f32);
+    ui.begin(&input_state, .{
+        .pixel_density = 0,
+        .dst_w = 0,
+        .dst_h = 0,
+        .view_w = 0,
+        .view_h = 0,
+    }, std.math.nan(f32), std.math.inf(f32), 0);
 }

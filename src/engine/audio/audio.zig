@@ -48,6 +48,13 @@ pub const PlayOptions = struct {
     loop: bool = false,
 };
 
+fn clampGain(value: f32) f32 {
+    if (!std.math.isFinite(value)) return 0;
+    if (value < 0) return 0;
+    if (value > 1) return 1;
+    return value;
+}
+
 /// What a busy voice holds.
 const Playing = struct {
     stream: *platform.AudioStream,
@@ -146,6 +153,10 @@ pub const Audio = struct {
     /// Starts `sound` on a free voice and returns its handle. The voice ends by itself when a
     /// non-looping sound finishes, or when `stop` is called.
     pub fn play(self: *Audio, sound: *const Sound, options: PlayOptions) Error!Handle {
+        if (sound.samples.len == 0) {
+            log.warn("sound is empty; refusing to play it", .{});
+            return error.StreamFailed;
+        }
         const device = self.device orelse return error.NoDevice;
 
         const stream = platform.audio.createStream(self.format) orelse {
@@ -156,7 +167,8 @@ pub const Audio = struct {
         var adopted = false;
         defer if (!adopted) platform.audio.destroyStream(stream);
 
-        platform.audio.setStreamGain(stream, rules.effectiveGain(options.gain, self.master_gain));
+        const gain = clampGain(options.gain);
+        platform.audio.setStreamGain(stream, rules.effectiveGain(gain, self.master_gain));
         if (!platform.audio.putStreamData(stream, sound.samples)) {
             log.warn("could not queue sound data", .{});
             return error.StreamFailed;
@@ -193,10 +205,10 @@ pub const Audio = struct {
 
     /// Sets the gain every voice is multiplied by. It applies to voices already playing too.
     pub fn setMasterGain(self: *Audio, gain: f32) void {
-        self.master_gain = gain;
+        self.master_gain = clampGain(gain);
         var it = self.playing.iterator();
         while (it.next()) |entry| {
-            platform.audio.setStreamGain(entry.payload.stream, rules.effectiveGain(entry.payload.gain, gain));
+            platform.audio.setStreamGain(entry.payload.stream, rules.effectiveGain(entry.payload.gain, self.master_gain));
         }
     }
 
@@ -207,6 +219,12 @@ pub const Audio = struct {
         var it = self.playing.iterator();
         while (it.next()) |entry| {
             const playing = entry.payload;
+            if (playing.sound.samples.len == 0) {
+                const stream = playing.stream;
+                _ = self.playing.release(entry.handle);
+                platform.audio.destroyStream(stream);
+                continue;
+            }
             const queued = platform.audio.streamQueuedBytes(playing.stream);
             const available = platform.audio.streamAvailableBytes(playing.stream);
             if (rules.isFinished(playing.looping, queued, available)) {
@@ -225,7 +243,7 @@ test "a silent Audio refuses to play and ignores the other calls" {
     defer audio.deinit();
 
     const sound = Sound{ .allocator = std.testing.allocator, .samples = &.{} };
-    try std.testing.expectError(error.NoDevice, audio.play(&sound, .{}));
+    try std.testing.expectError(error.StreamFailed, audio.play(&sound, .{}));
     try std.testing.expectError(error.NoDevice, audio.loadSound(std.testing.allocator, "assets/wind1.wav"));
 
     const never = Handle{ .index = 0, .generation = 0 };
@@ -242,4 +260,19 @@ test "a Sound frees its samples with the allocator it was made with" {
     var sound = Sound{ .allocator = std.testing.allocator, .samples = samples };
     // std.testing.allocator reports a leak if deinit does not free these bytes.
     sound.deinit();
+}
+
+test "master gain and play options clamp invalid values and empty sounds" {
+    var audio = Audio{};
+    defer audio.deinit();
+
+    audio.setMasterGain(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0.0), audio.master_gain);
+
+    const empty = Sound{ .allocator = std.testing.allocator, .samples = &.{} };
+    try std.testing.expectError(error.StreamFailed, audio.play(&empty, .{ .gain = 2.0, .loop = false }));
+
+    audio.master_gain = 1.5;
+    audio.setMasterGain(5.0);
+    try std.testing.expectEqual(@as(f32, 1.0), audio.master_gain);
 }

@@ -72,7 +72,8 @@ pub const font_exts = [_][]const u8{ "ttf", "otf" };
 pub const map_exts = [_][]const u8{"txt"};
 
 /// True when `path` can name a file inside the project: relative, with forward slashes, no drive or
-/// URL prefix, and no `..` segment. Paths from manifests are checked with this before anything reads them.
+/// URL prefix, no empty or `.`/`..` segments, and no trailing slash. Paths from manifests are checked
+/// with this before anything reads them.
 pub fn isSafePath(path: []const u8) bool {
     if (path.len == 0 or path.len > 255) return false;
     if (path[0] == '/' or path[0] == '\\') return false;
@@ -80,7 +81,7 @@ pub fn isSafePath(path: []const u8) bool {
     if (std.mem.indexOfScalar(u8, path, '\\') != null) return false;
     var parts = std.mem.splitScalar(u8, path, '/');
     while (parts.next()) |part| {
-        if (std.mem.eql(u8, part, "..")) return false;
+        if (part.len == 0 or std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) return false;
     }
     return true;
 }
@@ -547,6 +548,9 @@ test "safe paths stay inside the project" {
     try std.testing.expect(!isSafePath("\\windows"));
     try std.testing.expect(!isSafePath("C:/x.png"));
     try std.testing.expect(!isSafePath("assets/../secret.png"));
+    try std.testing.expect(!isSafePath("assets/./tile.png"));
+    try std.testing.expect(!isSafePath("assets//tile.png"));
+    try std.testing.expect(!isSafePath("assets/"));
     try std.testing.expect(!isSafePath("assets\\tile.png"));
 }
 

@@ -336,8 +336,8 @@ pub const Game = struct {
     /// reaches the widgets exactly once.
     fn updateUi(self: *Game, ctx: *engine.Context) void {
         const ui = &self.ui;
-        // The panel sits in the top-left corner of the view, 120 view pixels wide.
-        ui.begin(ctx.input, ctx.layout, 4, 4, 120);
+        const panel = engine.ui.anchorBounds(ctx.layout.view_w, ctx.layout.view_h, 120, 130, .top_left, 4, 4);
+        ui.begin(ctx.input, ctx.layout, panel.x, panel.y, panel.w);
         ui.label("Semkootru");
         ui.label("F5 save  F9 load");
         if (ui.button("Click me##go")) self.clicks += 1;

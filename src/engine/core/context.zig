@@ -31,6 +31,18 @@ const ScaleMode = view.ScaleMode;
 const elog = logging.scoped("engine");
 const GpuAccess = opaque {};
 
+fn isSafeRelativePath(path: []const u8) bool {
+    if (path.len == 0 or path.len > max_full_path) return false;
+    if (path[0] == '/' or path[0] == '\\') return false;
+    if (std.mem.indexOfScalar(u8, path, ':') != null) return false;
+    if (std.mem.indexOfScalar(u8, path, '\\') != null) return false;
+    var parts = std.mem.splitScalar(u8, path, '/');
+    while (parts.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) return false;
+    }
+    return true;
+}
+
 pub const AssetError = error{
     PathTooLong,
     FileNotFound,
@@ -206,6 +218,7 @@ pub const Context = struct {
     /// Reads a whole packaged file using `allocator`. The caller owns the result and frees it with
     /// that allocator. A missing file gives `error.FileNotFound`; other failures give `error.ReadFailed`.
     pub fn readFile(_: *const Context, allocator: std.mem.Allocator, relative: []const u8) ![]u8 {
+        if (!isSafeRelativePath(relative)) return error.ReadFailed;
         const bytes = platform.files.read(allocator, .packaged, relative) catch |err| return switch (err) {
             error.NotFound => error.FileNotFound,
             error.PathTooLong => error.PathTooLong,
@@ -215,9 +228,11 @@ pub const Context = struct {
         return bytes;
     }
 
-    /// Writes a whole file, replacing any old one. `relative` is relative to the executable's folder,
-    /// like `readFile`. The platform logs SDL's reason when the write fails, and this returns an error.
+    /// Writes a whole file atomically, replacing the previous version only after the new bytes are
+    /// fully staged and closed. `relative` is relative to the executable's folder, like `readFile`.
+    /// The platform logs SDL's reason when the write fails, and this returns an error.
     pub fn writeFile(_: *const Context, relative: []const u8, bytes: []const u8) !void {
+        if (!isSafeRelativePath(relative)) return error.WriteFailed;
         platform.files.write(.beside_executable, relative, bytes) catch |err| return switch (err) {
             error.PathTooLong => error.PathTooLong,
             else => error.WriteFailed,

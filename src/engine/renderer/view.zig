@@ -64,12 +64,18 @@ pub const Fit = struct {
 /// when the window holds at least one native view, and otherwise falls back to fit. Its scale is
 /// the zoomed scale rounded to a whole number, and it is never below 1.
 pub fn chooseFit(win_w: f32, win_h: f32, native_w: f32, native_h: f32, mode: ScaleMode, zoom: f32) Fit {
+    const safe_zoom = if (std.math.isFinite(zoom) and zoom > 0) zoom else 1.0;
+    if (!std.math.isFinite(win_w) or !std.math.isFinite(win_h) or !std.math.isFinite(native_w) or
+        !std.math.isFinite(native_h) or win_w <= 0 or win_h <= 0 or native_w <= 0 or native_h <= 0)
+    {
+        return .{ .scale = safe_zoom, .view_w = 0, .view_h = 0, .pixel_perfect = false };
+    }
     const fit = @min(win_w / native_w, win_h / native_h);
     const pixel_perfect = mode == .integer and fit >= 1.0;
     const scale: f32 = if (pixel_perfect)
-        @max(1.0, @round(@floor(fit) * zoom))
+        @max(1.0, @round(@floor(fit) * safe_zoom))
     else
-        fit * zoom;
+        fit * safe_zoom;
     // The 0.01 keeps float rounding from dropping a whole view pixel.
     const view_w: u32 = @intFromFloat(@floor(win_w / scale + 0.01));
     const view_h: u32 = @intFromFloat(@floor(win_h / scale + 0.01));
@@ -81,11 +87,41 @@ pub fn chooseFit(win_w: f32, win_h: f32, native_w: f32, native_h: f32, mode: Sca
     };
 }
 
+/// The region of the window the native view fills after the fit is chosen. In fit mode the view
+/// stretches to the whole window. In integer mode it is centered and only covers a whole-number
+/// multiple, leaving letterbox bars at the edges.
+pub fn layoutForFit(win_w: f32, win_h: f32, fit: Fit) Layout {
+    const safe_win_w = if (std.math.isFinite(win_w) and win_w > 0) win_w else 1.0;
+    const safe_win_h = if (std.math.isFinite(win_h) and win_h > 0) win_h else 1.0;
+    const safe_view_w = if (fit.view_w > 0) @as(f32, @floatFromInt(fit.view_w)) else 1.0;
+    const safe_view_h = if (fit.view_h > 0) @as(f32, @floatFromInt(fit.view_h)) else 1.0;
+    if (!fit.pixel_perfect) {
+        return .{ .pixel_density = 1.0, .dst_x = 0, .dst_y = 0, .dst_w = safe_win_w, .dst_h = safe_win_h, .view_w = safe_view_w, .view_h = safe_view_h };
+    }
+    const content_w = safe_view_w * fit.scale;
+    const content_h = safe_view_h * fit.scale;
+    return .{
+        .pixel_density = 1.0,
+        .dst_x = @floor((safe_win_w - content_w) / 2.0),
+        .dst_y = @floor((safe_win_h - content_h) / 2.0),
+        .dst_w = content_w,
+        .dst_h = content_h,
+        .view_w = safe_view_w,
+        .view_h = safe_view_h,
+    };
+}
+
 /// Converts a mouse position in window points to view pixels, with (0, 0) at the view's top-left
 /// corner. Positions outside the view, such as the black bars in integer mode, map to coordinates
 /// below 0 or above the view size. `dst_w` and `dst_h` must be positive. The engine guarantees
 /// that because it skips frames while the window has no pixels.
 pub fn windowToView(layout: Layout, window: Point) Point {
+    if (!std.math.isFinite(layout.dst_w) or !std.math.isFinite(layout.dst_h) or
+        !std.math.isFinite(layout.view_w) or !std.math.isFinite(layout.view_h) or
+        layout.dst_w <= 0 or layout.dst_h <= 0)
+    {
+        return .{ .x = 0, .y = 0 };
+    }
     const px = window.x * layout.pixel_density;
     const py = window.y * layout.pixel_density;
     return .{
@@ -164,6 +200,22 @@ test "windowToWorld adds the camera position to the view position" {
     try std.testing.expectApproxEqAbs(@as(f32, 140), p.y, 1e-4);
 }
 
+test "layoutForFit fills the whole window in fit mode and letterboxes in integer mode" {
+    const fit = chooseFit(960, 540, 320, 180, .fit, 1.0);
+    const fit_layout = layoutForFit(960, 540, fit);
+    try std.testing.expectEqual(@as(f32, 0.0), fit_layout.dst_x);
+    try std.testing.expectEqual(@as(f32, 0.0), fit_layout.dst_y);
+    try std.testing.expectEqual(@as(f32, 960.0), fit_layout.dst_w);
+    try std.testing.expectEqual(@as(f32, 540.0), fit_layout.dst_h);
+
+    const integer_fit = chooseFit(1000, 540, 320, 180, .integer, 1.0);
+    const integer_layout = layoutForFit(1000, 540, integer_fit);
+    try std.testing.expectEqual(@as(f32, 0.0), integer_layout.dst_x);
+    try std.testing.expectEqual(@as(f32, 0.0), integer_layout.dst_y);
+    try std.testing.expectEqual(@as(f32, 999.0), integer_layout.dst_w);
+    try std.testing.expectEqual(@as(f32, 540.0), integer_layout.dst_h);
+}
+
 test "chooseFit at zoom 1 gives the view the window always had" {
     // A 960x540 window is exactly 3x the 320x180 native view.
     const fit = chooseFit(960, 540, 320, 180, .fit, 1.0);
@@ -218,6 +270,17 @@ test "integer mode falls back to fit when the window cannot hold one native view
     const fit = chooseFit(300, 170, 320, 180, .integer, 1.0);
     try std.testing.expect(!fit.pixel_perfect);
     try std.testing.expectApproxEqAbs(@as(f32, 0.9375), fit.scale, 1e-4);
+}
+
+test "zero-sized views are clamped to a safe fallback" {
+    const fit = chooseFit(0, 0, 320, 180, .fit, 0.0);
+    try std.testing.expectEqual(@as(f32, 1.0), fit.scale);
+    try std.testing.expectEqual(@as(u32, 0), fit.view_w);
+    try std.testing.expectEqual(@as(u32, 0), fit.view_h);
+
+    const mapped = windowToView(.{ .dst_w = 0, .dst_h = 0, .view_w = 320, .view_h = 180 }, .{ .x = 10, .y = 20 });
+    try std.testing.expectEqual(@as(f32, 0.0), mapped.x);
+    try std.testing.expectEqual(@as(f32, 0.0), mapped.y);
 }
 
 test "at zoom 2 the window center maps to the camera's view center" {

@@ -327,26 +327,17 @@ pub fn run(comptime Game: type, config: Config) !void {
         {
             const zone = profile.zoneNamed(@src(), "present");
             defer zone.End();
-            var dst_rect = Rect{ .x = 0, .y = 0, .w = win_wf, .h = win_hf };
-            if (fit.pixel_perfect) {
-                const content_w = view_wf * fit.scale;
-                const content_h = view_hf * fit.scale;
-                dst_rect = Rect{
-                    .x = @floor((win_wf - content_w) / 2.0),
-                    .y = @floor((win_hf - content_h) / 2.0),
-                    .w = content_w,
-                    .h = content_h,
-                };
-            }
+            const layout = view.layoutForFit(win_wf, win_hf, fit);
+            const dst_rect = Rect{ .x = layout.dst_x, .y = layout.dst_y, .w = layout.dst_w, .h = layout.dst_h };
             // Record where the view landed, so the next update maps mouse positions with the same rectangle.
             ctx.layout = .{
                 .pixel_density = platform.window.pixelDensity(session.window),
-                .dst_x = dst_rect.x,
-                .dst_y = dst_rect.y,
-                .dst_w = dst_rect.w,
-                .dst_h = dst_rect.h,
-                .view_w = view_wf,
-                .view_h = view_hf,
+                .dst_x = layout.dst_x,
+                .dst_y = layout.dst_y,
+                .dst_w = layout.dst_w,
+                .dst_h = layout.dst_h,
+                .view_w = layout.view_w,
+                .view_h = layout.view_h,
             };
             const view_rect = Rect{ .x = 0, .y = 0, .w = view_wf, .h = view_hf };
             session.screen_batch.begin(win_wf, win_hf);

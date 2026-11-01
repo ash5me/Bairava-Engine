@@ -26,7 +26,20 @@ pub fn baseDir() []const u8 {
 }
 
 /// The full path for `path` at `location`, built in `buf`. It is valid for as long as `buf` is.
+fn isSafeRelativePath(path: []const u8) bool {
+    if (path.len == 0 or path.len > max_full_path) return false;
+    if (path[0] == '/' or path[0] == '\\') return false;
+    if (std.mem.indexOfScalar(u8, path, ':') != null) return false;
+    if (std.mem.indexOfScalar(u8, path, '\\') != null) return false;
+    var parts = std.mem.splitScalar(u8, path, '/');
+    while (parts.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) return false;
+    }
+    return true;
+}
+
 pub fn absolutePath(location: Location, path: []const u8, buf: []u8) FileError![:0]const u8 {
+    if (!isSafeRelativePath(path)) return error.ReadFailed;
     const folder: []const u8 = switch (location) {
         // Both locations resolve beside the executable today. The split is kept so that a user-data
         // location can be added later without changing any caller.
@@ -54,14 +67,25 @@ pub fn read(allocator: std.mem.Allocator, location: Location, path: []const u8) 
     return allocator.dupe(u8, bytes[0..size]);
 }
 
-/// Writes a whole file, replacing any old one. Only `.beside_executable` accepts writes. Any other
-/// location gives `error.ReadOnlyLocation`, and the file is not touched.
+/// Writes a whole file by staging it under a temp name and replacing the destination once the file
+/// is fully written. This keeps the previous version in place if the write fails partway through.
+/// Only `.beside_executable` accepts writes. Any other location gives `error.ReadOnlyLocation`, and
+/// the file is not touched.
 pub fn write(location: Location, path: []const u8, bytes: []const u8) FileError!void {
     if (location != .beside_executable) return error.ReadOnlyLocation;
     var buf: [max_full_path]u8 = undefined;
     const full = try absolutePath(location, path, &buf);
-    if (!c.SDL_SaveFile(full.ptr, bytes.ptr, bytes.len)) {
+
+    var temp_buf: [max_full_path]u8 = undefined;
+    const temp = std.fmt.bufPrintZ(&temp_buf, "{s}.tmp", .{full}) catch return error.PathTooLong;
+    if (!c.SDL_SaveFile(temp.ptr, bytes.ptr, bytes.len)) {
+        _ = c.SDL_RemovePath(temp.ptr);
         elog.err("could not write '{s}': {s}", .{ path, c.SDL_GetError() });
+        return error.WriteFailed;
+    }
+    if (!c.SDL_RenamePath(temp.ptr, full.ptr)) {
+        _ = c.SDL_RemovePath(temp.ptr);
+        elog.err("could not replace '{s}' atomically: {s}", .{ path, c.SDL_GetError() });
         return error.WriteFailed;
     }
 }

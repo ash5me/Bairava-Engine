@@ -20,6 +20,13 @@ pub const Camera = struct {
 
     /// Centers the view on a world point, clamped so the view never shows past the world edges.
     pub fn follow(self: *Camera, target_x: f32, target_y: f32) void {
+        if (!std.math.isFinite(target_x) or !std.math.isFinite(target_y) or
+            !std.math.isFinite(self.view_w) or !std.math.isFinite(self.view_h) or
+            !std.math.isFinite(self.world_w) or !std.math.isFinite(self.world_h) or
+            self.view_w <= 0 or self.view_h <= 0)
+        {
+            return;
+        }
         self.x = goalX(self, target_x);
         self.y = goalY(self, target_y);
         self.placed = true;
@@ -29,6 +36,14 @@ pub const Camera = struct {
     /// second. Each `dt` seconds it covers `1 - e^(-rate * dt)` of the distance that remains, so the
     /// result doesn't depend on the frame rate. A rate of zero or less snaps, as `follow` does.
     pub fn followSmooth(self: *Camera, target_x: f32, target_y: f32, dt: f32, rate: f32) void {
+        if (!std.math.isFinite(target_x) or !std.math.isFinite(target_y) or !std.math.isFinite(dt) or
+            !std.math.isFinite(rate) or !std.math.isFinite(self.view_w) or !std.math.isFinite(self.view_h) or
+            !std.math.isFinite(self.world_w) or !std.math.isFinite(self.world_h) or
+            self.view_w <= 0 or self.view_h <= 0)
+        {
+            self.follow(target_x, target_y);
+            return;
+        }
         if (!self.placed or rate <= 0) {
             self.follow(target_x, target_y);
             return;
@@ -42,13 +57,19 @@ pub const Camera = struct {
     /// as going from 2x to 4x. `rate` is how fast the zoom closes the gap, per second, as in
     /// `followSmooth`, and a rate of zero or less snaps. `target` must be positive.
     pub fn approachZoom(self: *Camera, target: f32, dt: f32, rate: f32) void {
+        const safe_target = if (std.math.isFinite(target) and target > 0) target else 1.0;
+        const safe_current = if (std.math.isFinite(self.zoom) and self.zoom > 0) self.zoom else 1.0;
+        if (!std.math.isFinite(dt) or !std.math.isFinite(rate)) {
+            self.zoom = safe_target;
+            return;
+        }
         if (rate <= 0) {
-            self.zoom = target;
+            self.zoom = safe_target;
             return;
         }
         const t = 1.0 - @exp(-rate * dt);
         // Moving the logarithm of the zoom keeps each zoom step the same size on screen.
-        self.zoom *= @exp((@log(target) - @log(self.zoom)) * t);
+        self.zoom = safe_current * @exp((@log(safe_target) - @log(safe_current)) * t);
     }
 
     /// The zoom target after multiplying `current` by `factor`, kept within `lo` and `hi`. A factor
@@ -83,4 +104,15 @@ pub const Camera = struct {
 fn clampAxis(pos: f32, view: f32, world: f32) f32 {
     if (world <= view) return (world - view) / 2.0;
     return std.math.clamp(pos, 0.0, world - view);
+}
+
+test "camera zoom and center tracking stay finite with invalid input" {
+    var camera = Camera{ .x = 0, .y = 0, .view_w = 320, .view_h = 180, .world_w = 640, .world_h = 360 };
+    camera.approachZoom(-1.0, 0.25, 2.0);
+    try std.testing.expect(std.math.isFinite(camera.zoom));
+    try std.testing.expect(camera.zoom > 0);
+
+    camera.follow(std.math.nan(f32), 5.0);
+    try std.testing.expect(std.math.isFinite(camera.x));
+    try std.testing.expect(std.math.isFinite(camera.y));
 }

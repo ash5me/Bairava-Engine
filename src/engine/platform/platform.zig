@@ -70,7 +70,7 @@ pub const files = struct {
         return sdl_files.read(allocator, location, path);
     }
 
-    /// Writes a whole file, replacing any old one. Only `.beside_executable` accepts writes.
+    /// Writes a whole file via a temp file and atomic rename. Only `.beside_executable` accepts writes.
     pub fn write(location: Location, path: []const u8, bytes: []const u8) FileError!void {
         return sdl_files.write(location, path, bytes);
     }

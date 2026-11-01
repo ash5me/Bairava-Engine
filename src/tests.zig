@@ -23,6 +23,7 @@ test {
     _ = @import("engine/diagnostics/console.zig");
     _ = @import("engine/animation/data.zig");
     _ = @import("game/level_data.zig");
+    _ = @import("game/save.zig");
     _ = @import("engine/renderer/debug_geometry.zig");
     _ = @import("engine/memory/hash_map.zig");
     _ = @import("engine/assets/registry.zig");
