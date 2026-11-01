@@ -30,6 +30,7 @@ F4 has no effect in a release build, because the geometry switches are never rea
 - Held and pressed key counts, and the mouse position in window points.
 - Texture store counters: loaded, hits, misses, and failed loads.
 - Requested live and peak bytes for the engine, game, asset, and frame allocator scopes.
+- The game-published entity count.
 - Shapes queued this frame, and shapes dropped because the list was full.
 - The game's own lines (see below).
 - Frame-time average, p95, and maximum over the retained sample window.
@@ -45,6 +46,22 @@ A game adds lines by declaring a method:
 The engine calls it once per frame, in development builds only. A line longer than
 `engine.diagnostics.max_line_len` is cut; a line past the `max_lines` limit is counted in `dropped`.
 The method must not change game state.
+
+## Inspecting entities and components
+
+The `entities` console command lists the entity count and the names/IDs of published snapshots.
+Use `entities <id>` to inspect a selected entity's component values. For example:
+
+    entities
+    entities 1
+
+Games publish snapshots through `Context.diagnostics.publishEntities`. Inputs are copied into
+bounded diagnostic storage; no pointers or mutable component storage are retained, and the console
+reads only those copies. Snapshots are refreshed by the game during update and are capped at 16
+entities and four named component values per entity. When a game publishes only a subset, the omitted
+entity count is reported. Capacity violations and values that exceed the fixed text capacities are
+rejected rather than truncated. The inspector is diagnostic data, not a way to mutate live entities.
+The sample game publishes the player's transform, facing, animation, and collision box.
 
 ## Drawing debug geometry
 

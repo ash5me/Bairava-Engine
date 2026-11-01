@@ -162,7 +162,6 @@ pub const Game = struct {
         if (self.bindings.pressed(input, .zoom_reset)) ctx.resetZoom();
         if (ctx.diagnostics_enabled) {
             const world = &ctx.diagnostics.snapshot.world;
-            world.entities = 1;
             world.collision_queries += 1;
             world.map_cols = self.level.map.cols;
             world.map_rows = self.level.map.rows;
@@ -182,7 +181,56 @@ pub const Game = struct {
         if (self.bindings.held(input, .move_down)) dy += 1;
 
         self.player.update(dx, dy, ctx.dt, &self.level.map, &self.animations);
+        if (ctx.diagnostics_enabled) self.publishEntitySnapshot(ctx);
         self.updateUi(ctx);
+    }
+
+    fn publishEntitySnapshot(self: *const Game, ctx: *engine.Context) void {
+        var values: [4][engine.diagnostics.component_value_capacity]u8 = undefined;
+        const transform = std.fmt.bufPrint(&values[0], "x={d:.2} y={d:.2} z={d:.2}", .{
+            self.player.transform.position[0],
+            self.player.transform.position[1],
+            self.player.transform.position[2],
+        }) catch |err| {
+            log.warn("entity diagnostics transform was not formatted: {s}", .{@errorName(err)});
+            return;
+        };
+        const facing = std.fmt.bufPrint(&values[1], "{s}", .{@tagName(self.player.facing)}) catch |err| {
+            log.warn("entity diagnostics facing was not formatted: {s}", .{@errorName(err)});
+            return;
+        };
+        const animation = std.fmt.bufPrint(&values[2], "{s} frame={d} time={d:.2}", .{
+            self.player.anim.clip.name,
+            self.player.anim.frameIndex(),
+            self.player.anim.time,
+        }) catch |err| {
+            log.warn("entity diagnostics animation was not formatted: {s}", .{@errorName(err)});
+            return;
+        };
+        const collider = Player.feetAt(self.player.transform.position[0], self.player.transform.position[1]);
+        const collision_box = std.fmt.bufPrint(&values[3], "x={d:.1} y={d:.1} w={d:.1} h={d:.1}", .{
+            collider.x,
+            collider.y,
+            collider.w,
+            collider.h,
+        }) catch |err| {
+            log.warn("entity diagnostics collider was not formatted: {s}", .{@errorName(err)});
+            return;
+        };
+        const components = [_]engine.diagnostics.ComponentInput{
+            .{ .name = "transform", .value = transform },
+            .{ .name = "facing", .value = facing },
+            .{ .name = "animation", .value = animation },
+            .{ .name = "collider", .value = collision_box },
+        };
+        const entities = [_]engine.diagnostics.EntityInput{.{
+            .id = 1,
+            .name = "player",
+            .components = &components,
+        }};
+        ctx.diagnostics.publishEntities(1, &entities) catch |err| {
+            log.warn("entity diagnostics snapshot was not published: {s}", .{@errorName(err)});
+        };
     }
 
     /// Registers the atlas files for hot reload. In a release build this watches nothing. A file that cannot

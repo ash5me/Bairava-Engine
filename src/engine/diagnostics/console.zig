@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const Phase = @import("frame_stats.zig").Phase;
+const collector_mod = @import("collector.zig");
 
 pub const max_input = 128;
 pub const max_output = 512;
@@ -18,7 +19,7 @@ pub const CommandInfo = struct {
 pub const registry = [_]CommandInfo{
     .{ .name = "help", .usage = "help", .command = .help },
     .{ .name = "scene", .usage = "scene", .command = .scene },
-    .{ .name = "entities", .usage = "entities", .command = .entities },
+    .{ .name = "entities", .usage = "entities [id]", .command = .entities },
     .{ .name = "assets", .usage = "assets", .command = .assets },
     .{ .name = "memory", .usage = "memory", .command = .memory },
     .{ .name = "performance", .usage = "performance [frame|events|asset|update|audio|draw|present]", .command = .performance },
@@ -119,8 +120,16 @@ pub const Console = struct {
                     }
                 },
                 .entities => {
-                    if (count != 1) return self.usage(entry);
-                    self.setOutput("entities: {d}", .{collector.snapshot.world.entities});
+                    if (count > 2) return self.usage(entry);
+                    if (count == 2) {
+                        const id = std.fmt.parseInt(u32, tokens[1], 10) catch {
+                            self.setError("entity id must be an unsigned integer");
+                            return;
+                        };
+                        self.writeEntity(collector.snapshot.inspection, id);
+                    } else {
+                        self.writeEntities(collector.snapshot.world.entities, collector.snapshot.inspection);
+                    }
                 },
                 .assets => {
                     if (count != 1) return self.usage(entry);
@@ -244,7 +253,32 @@ pub const Console = struct {
     }
 
     fn writeHelp(self: *Console) void {
-        self.setOutput("commands: help scene entities assets performance tile\ncontrols: diagnostics on|off|toggle; collision on|off|toggle; tiles on|off|toggle; layer NAME on|off|toggle", .{});
+        self.setOutput("commands: help scene entities [id] assets performance tile\ncontrols: diagnostics on|off|toggle; collision on|off|toggle; tiles on|off|toggle; layer NAME on|off|toggle", .{});
+    }
+
+    fn writeEntities(self: *Console, total: u32, inspection: collector_mod.Inspection) void {
+        self.setOutput("entities: {d}", .{total});
+        const shown = @min(inspection.entitySlice().len, 4);
+        for (inspection.entitySlice()[0..shown]) |entity| {
+            self.appendOutput("\n{d}: {s}", .{ entity.id, entity.nameText() });
+        }
+        const omitted = inspection.omitted + @as(u32, @intCast(inspection.entitySlice().len - shown));
+        if (omitted > 0) self.appendOutput("\n{d} more; query entities ID", .{omitted});
+        if (inspection.entitySlice().len == 0 and total > 0) {
+            self.appendOutput("\nno entity snapshots published", .{});
+        }
+    }
+
+    fn writeEntity(self: *Console, inspection: collector_mod.Inspection, id: u32) void {
+        for (inspection.entitySlice()) |entity| {
+            if (entity.id != id) continue;
+            self.setOutput("entity {d}: {s}", .{ id, entity.nameText() });
+            for (entity.componentSlice()) |component| {
+                self.appendOutput("\n{s}: {s}", .{ component.nameText(), component.valueText() });
+            }
+            return;
+        }
+        self.setErrorFmt("entity {d} has no published snapshot", .{id});
     }
 
     fn writePhase(self: *Console, phase: Phase, history: anytype) void {
@@ -321,6 +355,7 @@ test "registry commands inspect published state and reject invalid arguments" {
                 selected_tile: ?u8 = 0,
                 selected_solid: bool = true,
             } = .{},
+            inspection: collector_mod.Inspection = .{},
         } = .{},
         stats: struct {
             pub fn of(_: *@This(), _: Phase) *const History {
@@ -347,7 +382,7 @@ test "registry commands inspect published state and reject invalid arguments" {
     var collector = Diagnostics{};
     var overlay = true;
     console.execute("entities", &collector, &overlay);
-    try std.testing.expectEqualStrings("entities: 4", console.outputText());
+    try std.testing.expectEqualStrings("entities: 4\nno entity snapshots published", console.outputText());
     console.execute("memory", &collector, &overlay);
     try std.testing.expect(std.mem.indexOf(u8, console.outputText(), "asset: 4 alloc/0 free/1 fail, live 512 B, peak 512 B, arena 512 B") != null);
     console.execute("collision toggle", &collector, &overlay);
@@ -363,6 +398,30 @@ test "registry commands inspect published state and reject invalid arguments" {
     try std.testing.expect(std.mem.startsWith(u8, console.outputText(), "usage:"));
     console.execute("unknown", &collector, &overlay);
     try std.testing.expect(console.output_is_error);
+}
+
+test "entities console lists and safely inspects copied component snapshots" {
+    var console = Console{};
+    var collector = collector_mod.Collector{};
+    var overlay = true;
+    const components = [_]collector_mod.ComponentInput{
+        .{ .name = "transform", .value = "x=12 y=24" },
+        .{ .name = "facing", .value = "left" },
+    };
+    const entities = [_]collector_mod.EntityInput{.{
+        .id = 7,
+        .name = "player",
+        .components = &components,
+    }};
+    try collector.publishEntities(1, &entities);
+
+    console.execute("entities", &collector, &overlay);
+    try std.testing.expectEqualStrings("entities: 1\n7: player", console.outputText());
+    console.execute("entities 7", &collector, &overlay);
+    try std.testing.expectEqualStrings("entity 7: player\ntransform: x=12 y=24\nfacing: left", console.outputText());
+    console.execute("entities 8", &collector, &overlay);
+    try std.testing.expect(console.output_is_error);
+    try std.testing.expectEqualStrings("entity 8 has no published snapshot", console.outputText());
 }
 
 test "console input is bounded, ignores control characters, and supports backspace" {

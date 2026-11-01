@@ -69,6 +69,75 @@ pub const Assets = struct {
 /// peaks; frame live counts reset with the frame arena.
 pub const Memory = allocator_types.Stats;
 
+pub const max_inspected_entities = 16;
+pub const max_inspected_components = 4;
+pub const entity_name_capacity = 32;
+pub const component_name_capacity = 24;
+pub const component_value_capacity = 64;
+
+pub const ComponentInput = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+/// Caller-owned data copied into the diagnostics snapshot; no game storage is retained.
+pub const EntityInput = struct {
+    id: u32,
+    name: []const u8,
+    components: []const ComponentInput,
+};
+
+pub const ComponentSnapshot = struct {
+    name: [component_name_capacity]u8 = undefined,
+    name_len: u8 = 0,
+    value: [component_value_capacity]u8 = undefined,
+    value_len: u8 = 0,
+
+    pub fn nameText(self: *const ComponentSnapshot) []const u8 {
+        return self.name[0..self.name_len];
+    }
+
+    pub fn valueText(self: *const ComponentSnapshot) []const u8 {
+        return self.value[0..self.value_len];
+    }
+};
+
+pub const EntitySnapshot = struct {
+    id: u32,
+    name: [entity_name_capacity]u8 = undefined,
+    name_len: u8 = 0,
+    components: [max_inspected_components]ComponentSnapshot = undefined,
+    component_count: u8 = 0,
+
+    pub fn nameText(self: *const EntitySnapshot) []const u8 {
+        return self.name[0..self.name_len];
+    }
+
+    pub fn componentSlice(self: *const EntitySnapshot) []const ComponentSnapshot {
+        return self.components[0..self.component_count];
+    }
+};
+
+pub const Inspection = struct {
+    entities: [max_inspected_entities]EntitySnapshot = undefined,
+    count: u8 = 0,
+    omitted: u32 = 0,
+
+    pub fn entitySlice(self: *const Inspection) []const EntitySnapshot {
+        return self.entities[0..self.count];
+    }
+};
+
+pub const EntityPublishError = error{
+    TooManyEntities,
+    TooManyComponents,
+    TextTooLong,
+    EmptyName,
+    DuplicateEntity,
+    DuplicateComponent,
+    CountMismatch,
+};
+
 /// Input state, from the input module.
 pub const Input = struct {
     held: u32 = 0,
@@ -109,6 +178,7 @@ pub const Snapshot = struct {
     memory: Memory = .{},
     input: Input = .{},
     world: World = .{},
+    inspection: Inspection = .{},
     /// Loop iterations since the run started.
     frames: u64 = 0,
 };
@@ -123,6 +193,52 @@ pub const Collector = struct {
     debug: Draw = .{},
     geometry: Geometry = .{},
     layers: Layers = .{},
+
+    /// Copies entity/component values into bounded storage for read-only inspection. Neither the
+    /// caller's slices nor pointers into game state are retained.
+    pub fn publishEntities(self: *Collector, total_count: u32, inputs: []const EntityInput) EntityPublishError!void {
+        if (inputs.len > max_inspected_entities) return error.TooManyEntities;
+        if (inputs.len > total_count) return error.CountMismatch;
+
+        for (inputs, 0..) |entity, index| {
+            if (entity.name.len == 0) return error.EmptyName;
+            if (entity.name.len > entity_name_capacity) return error.TextTooLong;
+            if (entity.components.len > max_inspected_components) return error.TooManyComponents;
+            for (inputs[0..index]) |previous| {
+                if (previous.id == entity.id) return error.DuplicateEntity;
+            }
+            for (entity.components, 0..) |component, component_index| {
+                if (component.name.len == 0) return error.EmptyName;
+                if (component.name.len > component_name_capacity or component.value.len > component_value_capacity) {
+                    return error.TextTooLong;
+                }
+                for (entity.components[0..component_index]) |previous| {
+                    if (std.mem.eql(u8, previous.name, component.name)) return error.DuplicateComponent;
+                }
+            }
+        }
+
+        var inspection = Inspection{ .omitted = total_count - @as(u32, @intCast(inputs.len)) };
+        for (inputs, 0..) |entity, index| {
+            var snapshot = EntitySnapshot{ .id = entity.id, .name_len = @intCast(entity.name.len) };
+            @memcpy(snapshot.name[0..entity.name.len], entity.name);
+            snapshot.component_count = @intCast(entity.components.len);
+            for (entity.components, 0..) |component, component_index| {
+                var copied = ComponentSnapshot{
+                    .name_len = @intCast(component.name.len),
+                    .value_len = @intCast(component.value.len),
+                };
+                @memcpy(copied.name[0..component.name.len], component.name);
+                @memcpy(copied.value[0..component.value.len], component.value);
+                snapshot.components[component_index] = copied;
+            }
+            inspection.entities[index] = snapshot;
+        }
+
+        inspection.count = @intCast(inputs.len);
+        self.snapshot.world.entities = total_count;
+        self.snapshot.inspection = inspection;
+    }
 
     /// Turns all debug geometry on, or all of it off when any is on.
     pub fn toggleGeometry(self: *Collector) void {
@@ -145,4 +261,33 @@ test "a collector toggles all geometry with one call" {
     try std.testing.expect(collector.geometry.any());
     collector.toggleGeometry();
     try std.testing.expect(!collector.geometry.any());
+}
+
+test "entity snapshots copy bounded component values and report omitted entities" {
+    var collector = Collector{};
+    var name = [_]u8{ 'p', 'l', 'a', 'y', 'e', 'r' };
+    var position = [_]u8{ 'x', '=', '1' };
+    const components = [_]ComponentInput{.{ .name = "transform", .value = &position }};
+    const entities = [_]EntityInput{.{ .id = 7, .name = &name, .components = &components }};
+    try collector.publishEntities(3, &entities);
+
+    name[0] = 'X';
+    position[2] = '9';
+    try std.testing.expectEqual(@as(u32, 3), collector.snapshot.world.entities);
+    try std.testing.expectEqual(@as(u32, 2), collector.snapshot.inspection.omitted);
+    try std.testing.expectEqualStrings("player", collector.snapshot.inspection.entities[0].nameText());
+    try std.testing.expectEqualStrings("x=1", collector.snapshot.inspection.entities[0].components[0].valueText());
+}
+
+test "invalid entity snapshots are rejected without replacing the prior snapshot" {
+    var collector = Collector{};
+    const valid = [_]EntityInput{.{ .id = 1, .name = "player", .components = &.{} }};
+    try collector.publishEntities(1, &valid);
+    const duplicate = [_]EntityInput{
+        .{ .id = 2, .name = "first", .components = &.{} },
+        .{ .id = 2, .name = "second", .components = &.{} },
+    };
+    try std.testing.expectError(error.DuplicateEntity, collector.publishEntities(2, &duplicate));
+    try std.testing.expectEqual(@as(u32, 1), collector.snapshot.world.entities);
+    try std.testing.expectEqual(@as(u32, 1), collector.snapshot.inspection.entities[0].id);
 }

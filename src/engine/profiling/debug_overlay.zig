@@ -108,7 +108,8 @@ pub const Overlay = struct {
 fn drawConsole(canvas: *ui.Canvas, dev_console: *const console_mod.Console, view_w: f32, view_h: f32) void {
     const line_h: f32 = @floatFromInt(canvas.font.baked.line_height);
     const max_w = @max(0, view_w - 2 * margin);
-    const panel_h = 4 * line_h + 2 * pad;
+    const output_line_count = @min(std.mem.count(u8, dev_console.outputText(), "\n") + 1, 6);
+    const panel_h = @as(f32, @floatFromInt(output_line_count + 1)) * line_h + 2 * pad;
     const y0 = @max(margin, view_h - panel_h - margin);
     const x0 = margin;
     canvas.rect(x0, y0, max_w, panel_h, panel_color);
@@ -116,7 +117,7 @@ fn drawConsole(canvas: *ui.Canvas, dev_console: *const console_mod.Console, view
     var output_lines = std.mem.splitScalar(u8, dev_console.outputText(), '\n');
     var line_index: usize = 0;
     while (output_lines.next()) |line| : (line_index += 1) {
-        if (line_index == 3) break;
+        if (line_index == output_line_count) break;
         canvas.text(x0 + pad, y0 + pad + @as(f32, @floatFromInt(line_index)) * line_h, line, if (dev_console.output_is_error) late_color else text_color);
     }
 
