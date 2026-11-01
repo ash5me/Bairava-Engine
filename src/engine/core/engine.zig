@@ -108,6 +108,8 @@ pub const audio = @import("../audio/audio.zig");
 pub const settings = @import("settings.zig");
 /// Locale IDs, translated string lookup, and fallback locale resolution.
 pub const localization = @import("../localization.zig");
+/// Bounded, deterministic particle simulation and SpriteBatch rendering.
+pub const particles = @import("../particles.zig");
 /// Diagnostics: the text lines and debug shapes a game adds, and the frame snapshot. See docs/diagnostics.md.
 pub const diagnostics = @import("../diagnostics/diagnostics.zig");
 /// Bounded, development-only command registry and parser. See docs/developer-console.md.
