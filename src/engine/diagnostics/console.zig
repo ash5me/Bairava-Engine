@@ -8,7 +8,7 @@ const collector_mod = @import("collector.zig");
 pub const max_input = 128;
 pub const max_output = 512;
 
-const Command = enum { help, scene, entities, assets, memory, performance, tile, diagnostics, collision, tiles, layer };
+const Command = enum { help, scene, entities, assets, memory, performance, audio, tile, diagnostics, collision, tiles, layer };
 
 pub const CommandInfo = struct {
     name: []const u8,
@@ -23,6 +23,7 @@ pub const registry = [_]CommandInfo{
     .{ .name = "assets", .usage = "assets", .command = .assets },
     .{ .name = "memory", .usage = "memory", .command = .memory },
     .{ .name = "performance", .usage = "performance [frame|events|asset|update|audio|draw|present]", .command = .performance },
+    .{ .name = "audio", .usage = "audio", .command = .audio },
     .{ .name = "tile", .usage = "tile", .command = .tile },
     .{ .name = "diagnostics", .usage = "diagnostics on|off|toggle", .command = .diagnostics },
     .{ .name = "collision", .usage = "collision on|off|toggle", .command = .collision },
@@ -177,6 +178,10 @@ pub const Console = struct {
                         });
                     }
                 },
+                .audio => {
+                    if (count != 1) return self.usage(entry);
+                    self.writeAudio(collector.snapshot.audio);
+                },
                 .tile => {
                     if (count != 1) return self.usage(entry);
                     const world = collector.snapshot.world;
@@ -253,7 +258,7 @@ pub const Console = struct {
     }
 
     fn writeHelp(self: *Console) void {
-        self.setOutput("commands: help scene entities [id] assets performance tile\ncontrols: diagnostics on|off|toggle; collision on|off|toggle; tiles on|off|toggle; layer NAME on|off|toggle", .{});
+        self.setOutput("commands: help scene entities [id] assets audio performance tile\ncontrols: diagnostics on|off|toggle; collision on|off|toggle; tiles on|off|toggle; layer NAME on|off|toggle", .{});
     }
 
     fn writeEntities(self: *Console, total: u32, inspection: collector_mod.Inspection) void {
@@ -279,6 +284,25 @@ pub const Console = struct {
             return;
         }
         self.setErrorFmt("entity {d} has no published snapshot", .{id});
+    }
+
+    fn writeAudio(self: *Console, audio: collector_mod.AudioState) void {
+        if (audio.device_open) {
+            self.setOutput("device open: {d} Hz, {d} channels", .{ audio.sample_rate, audio.channels });
+        } else {
+            self.setOutput("device closed: nothing plays", .{});
+        }
+        self.appendOutput("\nvoices {d}/{d} busy, master gain {d:.2}", .{ audio.voices_busy, audio.voices_max, audio.master_gain });
+        for (audio.listed[0..audio.listed_count], 0..) |voice, index| {
+            self.appendOutput("\n{d}: {s}, gain {d:.2}, {d} bytes", .{
+                index + 1,
+                if (voice.looping) "loop" else "once",
+                voice.gain,
+                voice.sound_bytes,
+            });
+        }
+        const hidden = audio.voices_busy -| @as(u32, audio.listed_count);
+        if (hidden > 0) self.appendOutput("\n{d} more busy", .{hidden});
     }
 
     fn writePhase(self: *Console, phase: Phase, history: anytype) void {
@@ -356,6 +380,7 @@ test "registry commands inspect published state and reject invalid arguments" {
                 selected_solid: bool = true,
             } = .{},
             inspection: collector_mod.Inspection = .{},
+            audio: collector_mod.AudioState = .{},
         } = .{},
         stats: struct {
             pub fn of(_: *@This(), _: Phase) *const History {
@@ -434,4 +459,28 @@ test "console input is bounded, ignores control characters, and supports backspa
     console.close();
     console.append("ignored");
     try std.testing.expectEqual(@as(usize, 0), console.input_len);
+}
+
+test "the audio command reports the device, the busy voices, and the first few by slot" {
+    var console = Console{};
+    var collector = collector_mod.Collector{};
+    var overlay = true;
+    collector.snapshot.audio = .{
+        .device_open = true,
+        .sample_rate = 48000,
+        .channels = 2,
+        .voices_busy = 4,
+        .voices_max = 32,
+        .master_gain = 0.5,
+        .listed_count = 1,
+    };
+    collector.snapshot.audio.listed[0] = .{ .looping = true, .gain = 0.25, .sound_bytes = 1024 };
+
+    console.execute("audio", &collector, &overlay);
+    try std.testing.expectEqualStrings(
+        "device open: 48000 Hz, 2 channels\nvoices 4/32 busy, master gain 0.50\n1: loop, gain 0.25, 1024 bytes\n3 more busy",
+        console.outputText(),
+    );
+    console.execute("audio extra", &collector, &overlay);
+    try std.testing.expect(console.output_is_error);
 }

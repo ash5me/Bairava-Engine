@@ -79,6 +79,14 @@ pub fn ActionMap(comptime Action: type) type {
             return false;
         }
 
+        /// Hands the name of each action that is held now to `list`, which takes names with `add`. The names
+        /// are the enum's, so a game can show which actions its bindings resolve to.
+        pub fn addHeldNames(self: *const Self, state: *const Input, list: anytype) void {
+            for (std.enums.values(Action)) |action| {
+                if (self.held(state, action)) list.add(@tagName(action));
+            }
+        }
+
         /// True during the update step that first sees any binding of `action` go down.
         pub fn pressed(self: *const Self, state: *const Input, action: Action) bool {
             for (self.bindingsOf(action)) |binding| {
@@ -323,4 +331,28 @@ test "defaults copy into the map, so a later change to the map leaves the defaul
     map.set(.fire, &.{.{ .key = .q }});
     try std.testing.expectEqual(@as(usize, 1), test_defaults.get(.fire).len);
     try std.testing.expectEqual(Binding{ .mouse = .left }, test_defaults.get(.fire)[0]);
+}
+
+const NameSink = struct {
+    seen: [8][]const u8 = undefined,
+    n: usize = 0,
+
+    pub fn add(self: *NameSink, name: []const u8) void {
+        self.seen[self.n] = name;
+        self.n += 1;
+    }
+};
+
+test "held action names are the actions whose bindings are down" {
+    const map = ActionMap(TestAction).fromDefaults(test_defaults);
+    var state = Input{};
+    var none = NameSink{};
+    map.addHeldNames(&state, &none);
+    try std.testing.expectEqual(@as(usize, 0), none.n);
+
+    state.setHeld(.w, true);
+    var sink = NameSink{};
+    map.addHeldNames(&state, &sink);
+    try std.testing.expectEqual(@as(usize, 1), sink.n);
+    try std.testing.expectEqualStrings("jump", sink.seen[0]);
 }

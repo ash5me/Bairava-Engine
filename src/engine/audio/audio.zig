@@ -8,6 +8,7 @@ const platform = @import("../platform/platform.zig");
 const ima = @import("ima.zig");
 const rules = @import("voices.zig");
 const logging = @import("../logging/log.zig");
+const collector = @import("../diagnostics/collector.zig");
 
 const log = logging.scoped("audio");
 
@@ -212,6 +213,31 @@ pub const Audio = struct {
         }
     }
 
+    /// Copies the audio state into `out` for the console's `audio` command: whether a device is open and
+    /// its format, the busy voice count, the master gain, and the first few busy voices. Allocates nothing.
+    pub fn describe(self: *Audio, out: *collector.AudioState) void {
+        out.* = .{};
+        out.device_open = self.device != null;
+        if (self.device != null) {
+            out.sample_rate = self.format.sample_rate;
+            out.channels = self.format.channels;
+        }
+        out.voices_busy = @intCast(self.playing.count());
+        out.voices_max = max_voices;
+        out.master_gain = self.master_gain;
+
+        var it = self.playing.iterator();
+        while (it.next()) |entry| {
+            if (out.listed_count == collector.AudioState.max_listed) break;
+            out.listed[out.listed_count] = .{
+                .looping = entry.payload.looping,
+                .gain = entry.payload.gain,
+                .sound_bytes = entry.payload.sound.samples.len,
+            };
+            out.listed_count += 1;
+        }
+    }
+
     /// Call once per frame. It frees voices that have finished, and it gives each looping voice another
     /// copy of its sound when the queue runs short.
     pub fn update(self: *Audio) void {
@@ -275,4 +301,15 @@ test "master gain and play options clamp invalid values and empty sounds" {
     audio.master_gain = 1.5;
     audio.setMasterGain(5.0);
     try std.testing.expectEqual(@as(f32, 1.0), audio.master_gain);
+}
+
+test "describe reports a silent audio state with no voices" {
+    var audio = Audio{};
+    defer audio.deinit();
+    var state = collector.AudioState{};
+    audio.describe(&state);
+    try std.testing.expect(!state.device_open);
+    try std.testing.expectEqual(@as(u32, 0), state.voices_busy);
+    try std.testing.expectEqual(@as(u32, max_voices), state.voices_max);
+    try std.testing.expectEqual(@as(u8, 0), state.listed_count);
 }

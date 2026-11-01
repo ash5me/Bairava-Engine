@@ -129,6 +129,11 @@ pub const Game = struct {
         });
     }
 
+    /// The actions held now, as the game's bindings resolve them from the held keys. The overlay lists them.
+    pub fn debugActions(self: *const Game, input: *const engine.Input, out: *engine.diagnostics.NameList) void {
+        self.bindings.addHeldNames(input, out);
+    }
+
     pub fn deinit(self: *Game) void {
         if (self.ambient_voice) |voice| self.audio.stop(voice);
         if (self.ambient_sound) |*sound| sound.deinit();

@@ -188,6 +188,14 @@ pub const Input = struct {
         return count;
     }
 
+    /// Hands the name of each held key to `list`, which takes names with `add`. The diagnostics overlay
+    /// shows them, so a held key can be read by name.
+    pub fn addHeldNames(self: *const Input, list: anytype) void {
+        for (std.enums.values(Key)) |key| {
+            if (self.held(key)) list.add(@tagName(key));
+        }
+    }
+
     /// How many keys were pressed in the update step that is running. The diagnostics overlay shows it.
     pub fn pressedCount(self: *const Input) u32 {
         var count: u32 = 0;
@@ -605,4 +613,24 @@ test "a repeated arrival for a gamepad already in its slot changes nothing" {
     input.apply(.{ .gamepad_added = pad_a });
     try std.testing.expectEqual(@as(u64, 1), input.connections);
     try std.testing.expectEqual(@as(u64, 1), input.pads[0].order);
+}
+
+test "held key names come from the keys that are down, in enum order" {
+    const Names = struct {
+        seen: [8][]const u8 = undefined,
+        n: usize = 0,
+
+        pub fn add(self: *@This(), name: []const u8) void {
+            self.seen[self.n] = name;
+            self.n += 1;
+        }
+    };
+    var state = Input{};
+    state.setHeld(.space, true);
+    state.setHeld(.w, true);
+    var names = Names{};
+    state.addHeldNames(&names);
+    try std.testing.expectEqual(@as(usize, 2), names.n);
+    try std.testing.expectEqualStrings("w", names.seen[0]);
+    try std.testing.expectEqualStrings("space", names.seen[1]);
 }

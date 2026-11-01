@@ -69,6 +69,69 @@ pub const Assets = struct {
 /// peaks; frame live counts reset with the frame arena.
 pub const Memory = allocator_types.Stats;
 
+/// A short list of names, such as the held keys or the actions they resolve to. The names are kept
+/// as one joined line, so the overlay and the console can show them without allocating. A name that
+/// does not fit is counted in `omitted` instead, so a full list is visible rather than silent.
+pub const NameList = struct {
+    /// Bytes kept for the joined text, names and their separators.
+    pub const capacity = 72;
+
+    bytes: [capacity]u8 = undefined,
+    len: usize = 0,
+    /// Names kept.
+    count: usize = 0,
+    /// Names that did not fit.
+    omitted: u32 = 0,
+
+    pub fn add(self: *NameList, name: []const u8) void {
+        const separator: usize = if (self.count == 0) 0 else 2;
+        if (self.len + separator + name.len > capacity) {
+            self.omitted += 1;
+            return;
+        }
+        if (separator == 2) {
+            self.bytes[self.len] = ',';
+            self.bytes[self.len + 1] = ' ';
+            self.len += 2;
+        }
+        @memcpy(self.bytes[self.len..][0..name.len], name);
+        self.len += name.len;
+        self.count += 1;
+    }
+
+    /// The names kept, joined by ", ".
+    pub fn text(self: *const NameList) []const u8 {
+        return self.bytes[0..self.len];
+    }
+};
+
+/// Audio state, copied from the audio module each frame for the console's `audio` command. Plain
+/// values only, so this file stays free of the audio code.
+pub const AudioState = struct {
+    /// Voices listed in full. `voices_busy` counts all of them.
+    pub const max_listed = 3;
+
+    /// True when a playback device is open. Without one, nothing plays.
+    device_open: bool = false,
+    /// The device's mix format, when a device is open.
+    sample_rate: u32 = 0,
+    channels: u8 = 0,
+    /// Voices in use, the most that can play at once, and the master gain.
+    voices_busy: u32 = 0,
+    voices_max: u32 = 0,
+    master_gain: f32 = 1,
+    /// The first busy voices, in slot order.
+    listed: [max_listed]AudioVoice = [_]AudioVoice{.{}} ** max_listed,
+    listed_count: u8 = 0,
+};
+
+/// One busy voice: whether it loops, its own gain, and the size of the sound it plays.
+pub const AudioVoice = struct {
+    looping: bool = false,
+    gain: f32 = 0,
+    sound_bytes: usize = 0,
+};
+
 pub const max_inspected_entities = 16;
 pub const max_inspected_components = 4;
 pub const entity_name_capacity = 32;
@@ -144,6 +207,9 @@ pub const Input = struct {
     pressed: u32 = 0,
     mouse_x: f32 = 0,
     mouse_y: f32 = 0,
+    /// The keys held now, by name, and the actions they resolve to through the game's bindings.
+    keys: NameList = .{},
+    actions: NameList = .{},
 };
 
 /// What the world drew, and how the view is laid out.
@@ -178,6 +244,7 @@ pub const Snapshot = struct {
     memory: Memory = .{},
     input: Input = .{},
     world: World = .{},
+    audio: AudioState = .{},
     inspection: Inspection = .{},
     /// Loop iterations since the run started.
     frames: u64 = 0,
@@ -290,4 +357,19 @@ test "invalid entity snapshots are rejected without replacing the prior snapshot
     try std.testing.expectError(error.DuplicateEntity, collector.publishEntities(2, &duplicate));
     try std.testing.expectEqual(@as(u32, 1), collector.snapshot.world.entities);
     try std.testing.expectEqual(@as(u32, 1), collector.snapshot.inspection.entities[0].id);
+}
+
+test "a name list joins its names and counts the ones that do not fit" {
+    var names = NameList{};
+    names.add("w");
+    names.add("space");
+    try std.testing.expectEqualStrings("w, space", names.text());
+    try std.testing.expectEqual(@as(usize, 2), names.count);
+
+    var i: usize = 0;
+    while (i < 20) : (i += 1) names.add("keypad_minus");
+    // Four more names fit under the capacity, and the other sixteen are counted as omitted.
+    try std.testing.expectEqual(@as(usize, 6), names.count);
+    try std.testing.expectEqual(@as(u32, 16), names.omitted);
+    try std.testing.expect(names.text().len <= NameList.capacity);
 }

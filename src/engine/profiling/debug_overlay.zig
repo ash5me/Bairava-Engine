@@ -31,7 +31,7 @@ const pad: f32 = 3;
 const margin: f32 = 4;
 
 /// Lines the engine writes, then the game's lines. Each line's buffer is `line_capacity` bytes.
-const engine_lines = 12;
+const engine_lines = 14;
 const max_lines = engine_lines + text_mod.max_lines;
 const line_capacity = text_mod.max_line_len;
 
@@ -160,6 +160,10 @@ fn buildLines(store: *[max_lines][line_capacity]u8, lines: *[max_lines][]const u
         snap.input.held, snap.input.pressed, snap.input.mouse_x, snap.input.mouse_y,
     });
     count += 1;
+    lines[count] = namesLine(&store[count], "keys", &snap.input.keys);
+    count += 1;
+    lines[count] = namesLine(&store[count], "actions", &snap.input.actions);
+    count += 1;
     lines[count] = formatLine(&store[count], "assets: loaded {d}  hits {d}  misses {d}  failed {d}", .{
         snap.assets.loaded, snap.assets.hits, snap.assets.misses, snap.assets.failed,
     });
@@ -235,6 +239,13 @@ fn drawShapes(canvas: *ui.Canvas, draw: *const debug_draw.Draw) void {
             },
         }
     }
+}
+
+/// Formats a line of names, such as the held keys. A list that dropped names says how many.
+fn namesLine(buf: *[line_capacity]u8, label: []const u8, names: *const collector_mod.NameList) []const u8 {
+    const body: []const u8 = if (names.count == 0) "none" else names.text();
+    if (names.omitted == 0) return formatLine(buf, "{s}: {s}", .{ label, body });
+    return formatLine(buf, "{s}: {s} +{d}", .{ label, body, names.omitted });
 }
 
 /// Formats one text line into `buf`. The lines are short and fixed, so a full buffer is a bug.

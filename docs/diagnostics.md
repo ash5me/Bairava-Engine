@@ -27,7 +27,7 @@ F4 has no effect in a release build, because the geometry switches are never rea
 - Update and render time for the last frame.
 - The active scene's name, the number of scenes opened, and whether a switch is pending.
 - Sprites and draw calls, the zoom, the view size, and the camera position.
-- Held and pressed key counts, and the mouse position in window points.
+- Held and pressed key counts, the names of the held keys, the held actions the game's bindings resolve, and the mouse position in window points.
 - Texture store counters: loaded, hits, misses, and failed loads.
 - Requested live and peak bytes for the engine, game, asset, and frame allocator scopes.
 - The game-published entity count.
@@ -46,6 +46,20 @@ A game adds lines by declaring a method:
 The engine calls it once per frame, in development builds only. A line longer than
 `engine.diagnostics.max_line_len` is cut; a line past the `max_lines` limit is counted in `dropped`.
 The method must not change game state.
+
+## Held keys and actions
+
+The overlay's input lines name the keys held now, and the actions they resolve to. The engine names keys by their `Key` names. A game names its actions by declaring a method, which the engine calls once per frame in development builds, with the same rules as `debugText`:
+
+    pub fn debugActions(self: *const Game, input: *const engine.Input, out: *engine.diagnostics.NameList) void {
+        self.bindings.addHeldNames(input, out);
+    }
+
+A name list keeps 72 bytes of joined names. Names past that are counted and shown as `+N`.
+
+## Audio state
+
+The `audio` console command prints whether a playback device is open and its sample rate and channel count, the busy and maximum voice counts, the master gain, and the first three busy voices. Each voice line gives whether it loops, its own gain, and the length of its sound in bytes. Sounds do not keep their names yet, so voices are listed by slot.
 
 ## Inspecting entities and components
 

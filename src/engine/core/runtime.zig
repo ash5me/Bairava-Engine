@@ -21,6 +21,7 @@ const debug_overlay = @import("../profiling/debug_overlay.zig");
 const debug_geometry = @import("../renderer/debug_geometry.zig");
 const gate = @import("../diagnostics/gate.zig");
 const console_mod = @import("../diagnostics/console.zig");
+const collector_mod = @import("../diagnostics/collector.zig");
 const renderer = @import("../renderer/renderer.zig");
 const view = @import("../renderer/view.zig");
 const sprite = @import("../renderer/sprite.zig");
@@ -294,12 +295,21 @@ pub fn run(comptime Game: type, config: Config) !void {
                 .bytes = textures.bytes,
             };
             collector.snapshot.memory = allocators.stats();
+            // Held keys by name, and the actions the game's bindings resolve from them. A game that does not
+            // declare `debugActions` lists no actions.
+            var held_keys = collector_mod.NameList{};
+            session.input.addHeldNames(&held_keys);
+            var held_actions = collector_mod.NameList{};
+            if (comptime @hasDecl(@TypeOf(game), "debugActions")) game.debugActions(&session.input, &held_actions);
             collector.snapshot.input = .{
                 .held = session.input.heldCount(),
                 .pressed = session.input.pressedCount(),
                 .mouse_x = session.input.mouse_x,
                 .mouse_y = session.input.mouse_y,
+                .keys = held_keys,
+                .actions = held_actions,
             };
+            session.audio.describe(&collector.snapshot.audio);
             const previous_world = collector.snapshot.world;
             collector.snapshot.world = .{
                 .sprites = session.world_batch.sprite_count,
