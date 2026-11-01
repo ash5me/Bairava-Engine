@@ -70,6 +70,11 @@ pub const files = struct {
         return sdl_files.read(allocator, location, path);
     }
 
+    /// Reads a whole file without logging, so a worker thread may call it. See sdl/files.zig `readQuiet`.
+    pub fn readQuiet(allocator: std.mem.Allocator, location: Location, path: []const u8) FileError![]u8 {
+        return sdl_files.readQuiet(allocator, location, path);
+    }
+
     /// Writes a whole file via a temp file and atomic rename. Only `.beside_executable` accepts writes.
     pub fn write(location: Location, path: []const u8, bytes: []const u8) FileError!void {
         return sdl_files.write(location, path, bytes);

@@ -125,6 +125,10 @@ pub const log = @import("../logging/log.zig");
 pub const crash = @import("../logging/crash.zig");
 /// Profiling zones for the Tracy profiler. They record only when the build uses -Dtracy=true.
 pub const profile = @import("../profiling/profile.zig");
+/// Background work on worker threads: a pool, counters, and typed jobs. See docs/jobs.md.
+pub const jobs = @import("../jobs/jobs.zig");
+/// The scripting runtime for gameplay scripts, and its typed bindings. See docs/scripting.md.
+pub const script = @import("../script/script.zig");
 /// Scenes: one active scene at a time, switched at a safe point. See scene/scene_manager.zig.
 pub const scene = @import("../scene/scene.zig");
 /// Runs a chain of scenes as a game. Pass `SceneHost(FirstScene)` to `run`.

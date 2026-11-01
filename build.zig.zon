@@ -48,6 +48,8 @@
         "shaders",
         "vendor",
         "docs",
+        "assets",
+        "tests",
         // For example...
         //"LICENSE",
         //"README.md",

@@ -214,13 +214,12 @@ pub fn run(comptime Game: type, config: Config) !void {
             collector.stats.record(.asset, secondsBetween(asset_start, clockIf()));
         }
 
-        // Preloads requested textures a few at a time. They load here, between frames, so a texture never appears
-        // partway through an update, and a burst of requests spreads over several frames.
+        // Requested textures decode on worker threads and are uploaded here, between frames, so a texture never appears
+        // partway through an update. At most `texture_loads_per_frame` uploads happen per frame, which bounds the GPU work.
         if (config.texture_loads_per_frame > 0) {
-            const zone = profile.zoneNamed(@src(), "texture preload");
+            const zone = profile.zoneNamed(@src(), "texture stream");
             defer zone.End();
-            const pumped = session.textures.pump(config.texture_loads_per_frame);
-            if (pumped.failed > 0) elog.warn("{d} requested texture(s) failed to load and were dropped", .{pumped.failed});
+            _ = session.streamer.pump(ctx, session.textures, config.texture_loads_per_frame);
         }
 
         // Fixed-timestep updates. Run whole steps while the accumulated time covers one, so game

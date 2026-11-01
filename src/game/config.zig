@@ -40,8 +40,8 @@ pub const zoom_rate: f32 = 8.0;
 pub const post_effects: []const engine.Effect = &.{};
 /// Strengths the effects read: vignette, scanline dim, and grayscale amount, each from 0 to 1. The defaults keep their original look.
 pub const post_params: engine.PostParams = engine.default_post_params;
-/// The most bytes the texture cache may hold. Zero means no budget. The game does not request textures through
-/// the cache yet, so this and `texture_loads_per_frame` have no effect until it does.
+/// The most bytes the texture cache may hold. Zero means no budget. Requested textures are loaded through the cache,
+/// so the budget applies to them; direct `acquireTexture` loads count against it too.
 pub const texture_budget_bytes: usize = 0;
 /// Textures the runtime loads each frame from its preload requests. Zero turns preloading off.
 pub const texture_loads_per_frame: usize = 2;
@@ -69,6 +69,12 @@ pub const machine_path = "assets/animations/warrior.machine";
 
 /// Looping ambience, relative to the executable's folder.
 pub const ambient_sound_path = "assets/wind1.wav";
+
+/// The gameplay script, relative to the executable's folder. The asset manifest packages it from
+/// `assets/scripts/game.bs`. A missing or broken script is logged, and the game runs without one.
+pub const script_path = "assets/scripts/game.bs";
+/// Most steps one script call may take before it is stopped, so a loop that never ends can't freeze the game.
+pub const script_max_steps: usize = 100_000;
 
 /// The gameplay save beside the executable. It is human-editable JSON with a schema version.
 pub const save_file_name = "save.json";

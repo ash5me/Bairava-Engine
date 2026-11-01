@@ -1,5 +1,4 @@
 # jobs
 
-Planned: a job system for work that can run off the main thread, such as asset decoding and
-texture uploads. Nothing lives here yet. Texture uploads are asynchronous through SDL_GPU
-(renderer/texture.zig) and do not need it.
+The job system: a worker thread pool with counters, used for background texture loading. See
+[docs/jobs.md](../../../docs/jobs.md) for the rules that jobs must follow and how textures stream.

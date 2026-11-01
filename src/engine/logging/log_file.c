@@ -68,7 +68,7 @@ int log_file_open(const char *path) {
   if (!fp) return -1;
   if (!sink_added) {
     /* The sink takes every level, because engine/logging/log.zig already drops the ones below min_level. */
-    log_set_quiet(true);
+    log_set_quiet(1);
     if (log_add_callback(file_sink, NULL, LOG_DEBUG) != 0) {
       fclose(fp);
       return -1;

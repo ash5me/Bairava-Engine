@@ -11,6 +11,7 @@ const controls = @import("controls.zig");
 const Level = @import("level.zig").Level;
 const Player = @import("player.zig").Player;
 const save_store = @import("save.zig");
+const script_host = @import("script_host.zig");
 
 const log = engine.log.scoped("game");
 
@@ -47,6 +48,11 @@ pub const Game = struct {
     asset_graph_watched: bool,
     /// Held keys, for the debug lines and the actions. It lives as long as the session.
     input: *const engine.Input,
+    /// The gameplay script, when one loaded. See attachScript. Null when the game runs without one.
+    script: ?engine.script.Vm = null,
+    /// The state the script's bindings read and write. It lives on the heap, because the bindings keep its address
+    /// and Game is returned by value.
+    script_bridge: ?*script_host.Bridge = null,
 
     pub fn init(ctx: *engine.Context) engine.AssetError!Game {
         const zone = engine.profile.zoneNamed(@src(), "game init");
@@ -125,6 +131,7 @@ pub const Game = struct {
             .input = ctx.input,
         };
         game.loadSave(ctx);
+        game.attachScript(ctx);
         return game;
     }
 
@@ -147,6 +154,7 @@ pub const Game = struct {
     }
 
     pub fn deinit(self: *Game) void {
+        if (self.script) |*vm| vm.deinit();
         if (self.ambient_voice) |voice| self.audio.stop(voice);
         if (self.ambient_sound) |*sound| sound.deinit();
         self.level.deinit();
@@ -201,6 +209,56 @@ pub const Game = struct {
         self.player.update(dx, dy, ctx.dt, &self.level.map, &self.animations);
         if (ctx.diagnostics_enabled) self.publishEntitySnapshot(ctx);
         self.updateUi(ctx);
+        self.runScript(ctx);
+    }
+
+    /// Loads the gameplay script and binds the game's functions to it. A missing or broken script is logged, and the
+    /// game runs without one. Nothing here can stop the game from starting.
+    fn attachScript(self: *Game, ctx: *engine.Context) void {
+        const bridge = ctx.allocators.game.create(script_host.Bridge) catch {
+            log.err("could not allocate the script bridge, so the game runs without scripts", .{});
+            return;
+        };
+        bridge.* = .{ .ctx = ctx };
+        var vm = engine.script.Vm.init(config.script_max_steps) catch {
+            log.err("could not create the script runtime, so the game runs without scripts", .{});
+            return;
+        };
+        script_host.bind(&vm, bridge) catch |err| {
+            log.err("script bindings failed ({s}), so the game runs without scripts", .{@errorName(err)});
+            vm.deinit();
+            return;
+        };
+        const source = ctx.readFile(ctx.allocators.asset, config.script_path) catch |err| {
+            log.warn("script '{s}' could not be read ({s}), so the game runs without one", .{ config.script_path, @errorName(err) });
+            vm.deinit();
+            return;
+        };
+        defer ctx.allocators.asset.free(source);
+        vm.load(config.script_path, source) catch {
+            log.err("script '{s}' failed to load: {s}", .{ config.script_path, vm.errorText() });
+            vm.deinit();
+            return;
+        };
+        self.script = vm;
+        self.script_bridge = bridge;
+        log.info("script '{s}' loaded", .{config.script_path});
+    }
+
+    /// Calls the script's `on_update` hook once per update step. The game's values go in first, and the volume the
+    /// script set comes back out. A script that fails is reported once and turned off, so a broken script can't flood
+    /// the log every step.
+    fn runScript(self: *Game, ctx: *engine.Context) void {
+        const bridge = self.script_bridge orelse return;
+        if (self.script) |*vm| {
+            bridge.* = .{ .ctx = ctx, .clicks = self.clicks, .volume = self.volume, .dt = ctx.dt };
+            if (vm.call("on_update", &.{})) |_| {} else |_| {
+                log.err("script stopped after an error: {s}", .{vm.errorText()});
+                vm.deinit();
+                self.script = null;
+            }
+            self.volume = bridge.volume;
+        }
     }
 
     fn publishEntitySnapshot(self: *const Game, ctx: *engine.Context) void {

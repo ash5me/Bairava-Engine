@@ -66,6 +66,12 @@ pub const Config = struct {
     /// stalls the CPU every frame, so frame times in this mode add the CPU and GPU work together. That makes them a
     /// cost, not a rate to play at. The result is the `gpu` phase, shown on the overlay and in Tracy.
     gpu_timing: bool = false,
+    /// Worker threads for background work, such as decoding requested textures before they are needed. Zero runs that
+    /// work on the main thread instead, which is deterministic. With workers, `allocator` must be safe to use from several
+    /// threads. The page allocator, the default, is.
+    worker_threads: u32 = 2,
+    /// The most worker threads a config may ask for.
+    pub const max_worker_threads: u32 = 32;
 
     pub const ValidationError = error{
         EmptyTitle,
@@ -74,6 +80,7 @@ pub const Config = struct {
         InvalidNativeViewSize,
         InvalidClearColor,
         InvalidUpdateRate,
+        TooManyWorkerThreads,
         InvalidZoomBounds,
         InvalidZoomRate,
         InvalidDebugFont,
@@ -97,6 +104,7 @@ pub const Config = struct {
                 return error.InvalidClearColor;
         }
         if (self.update_hz == 0) return error.InvalidUpdateRate;
+        if (self.worker_threads > max_worker_threads) return error.TooManyWorkerThreads;
         if (!std.math.isFinite(self.zoom_min) or !std.math.isFinite(self.zoom_max) or
             self.zoom_min <= 0.0 or self.zoom_min > 1.0 or self.zoom_max < 1.0)
             return error.InvalidZoomBounds;
@@ -119,6 +127,7 @@ pub const Config = struct {
             error.InvalidNativeViewSize => "engine config native_w and native_h must be greater than zero",
             error.InvalidClearColor => "engine config clear_rgb channels must be finite numbers between 0 and 1",
             error.InvalidUpdateRate => "engine config update_hz must be greater than zero",
+            error.TooManyWorkerThreads => "engine config worker_threads must be at most 32",
             error.InvalidZoomBounds => "engine config zoom bounds must be finite, positive, and include zoom 1",
             error.InvalidZoomRate => "engine config zoom_rate must be a finite non-negative number",
             error.InvalidDebugFont => "engine config debug font path must not be empty and debug font px must be positive",
@@ -134,19 +143,19 @@ test "Config defaults are valid and can start a minimal consumer" {
 }
 
 test "Config validation rejects invalid startup values" {
-    var window = Config{ .window_w = 0 };
+    const window = Config{ .window_w = 0 };
     try std.testing.expectError(error.InvalidWindowSize, window.validate());
 
-    var native = Config{ .native_h = 0 };
+    const native = Config{ .native_h = 0 };
     try std.testing.expectError(error.InvalidNativeViewSize, native.validate());
 
-    var rate = Config{ .update_hz = 0 };
+    const rate = Config{ .update_hz = 0 };
     try std.testing.expectError(error.InvalidUpdateRate, rate.validate());
 
-    var bounds = Config{ .zoom_min = 2.0 };
+    const bounds = Config{ .zoom_min = 2.0 };
     try std.testing.expectError(error.InvalidZoomBounds, bounds.validate());
 
-    var clear = Config{ .clear_rgb = .{ 0.0, 1.1, 0.0 } };
+    const clear = Config{ .clear_rgb = .{ 0.0, 1.1, 0.0 } };
     try std.testing.expectError(error.InvalidClearColor, clear.validate());
 }
 
@@ -161,4 +170,11 @@ test "Config validation rejects post settings outside 0 to 1, and values that ar
     try std.testing.expectError(error.InvalidPostParams, too_strong.validate());
     const not_a_number = Config{ .post_params = .{ .vignette = 0.25, .scanline_dim = std.math.nan(f32), .grayscale = 1, .padding = 0 } };
     try std.testing.expectError(error.InvalidPostParams, not_a_number.validate());
+}
+
+test "Config validation rejects more worker threads than the engine allows" {
+    const too_many = Config{ .worker_threads = Config.max_worker_threads + 1 };
+    try std.testing.expectError(error.TooManyWorkerThreads, too_many.validate());
+    const none = Config{ .worker_threads = 0 };
+    try none.validate();
 }

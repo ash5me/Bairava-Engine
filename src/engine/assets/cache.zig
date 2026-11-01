@@ -27,7 +27,9 @@
 //!
 //! Preloading: `request` marks an unloaded asset as wanted at a `Priority`, and `pump` loads wanted assets,
 //! highest priority first, up to a limit per call. A preloaded value holds no reference, so it can be unloaded
-//! if nothing acquires it. Loads are still synchronous. `pump` only spreads them across calls.
+//! if nothing acquires it. `pump` loads on the calling thread. `beginLoad`, `finishLoad`, and `failLoad` split a
+//! load in two, so a caller can run the expensive part elsewhere: the caller takes a ticket, loads the value on
+//! another thread, and hands the result back on the thread that owns the cache. Only that thread may touch the cache.
 //!
 //! The cache isn't thread-safe. The table it reads must outlive it and must not move after `init`,
 //! because the cache keeps a pointer to it.
@@ -46,6 +48,13 @@ pub const Priority = enum(u8) { low = 1, normal = 2, high = 3 };
 
 /// What one `pump` did: how many requested values loaded, and how many failed to load.
 pub const PumpResult = struct { loaded: usize = 0, failed: usize = 0 };
+
+/// A requested asset that the caller has taken for loading outside the cache. See `Cache.beginLoad`.
+pub const LoadTicket = struct {
+    id: assets.AssetId,
+    /// The asset's path, relative to the executable's folder. It stays valid for the table's lifetime.
+    path: []const u8,
+};
 
 /// A cache of values of type `T`, loaded through a `Loader` that the caller supplies.
 pub fn Cache(comptime T: type) type {
@@ -102,6 +111,8 @@ pub fn Cache(comptime T: type) type {
             /// The use clock's value when the value was last loaded or acquired. Budget eviction unloads the
             /// smallest value first, so the least recently used idle value goes first.
             last_use: u64 = 0,
+            /// True between `beginLoad` and its `finishLoad` or `failLoad`. A loading slot takes no new requests.
+            loading: bool = false,
             value: T = undefined,
         };
 
@@ -214,7 +225,7 @@ pub fn Cache(comptime T: type) type {
             const id = self.table.find(checked.slice()) orelse return error.UnknownAsset;
             if (id >= self.slots.len) return error.UnknownAsset;
             const slot = &self.slots[id];
-            if (slot.loaded) return;
+            if (slot.loaded or slot.loading) return;
             slot.pending = @max(slot.pending, @intFromEnum(priority));
         }
 
@@ -238,7 +249,7 @@ pub fn Cache(comptime T: type) type {
         fn nextRequest(self: *const Self) ?assets.AssetId {
             var best: ?assets.AssetId = null;
             for (self.slots, 0..) |slot, i| {
-                if (slot.pending == 0 or slot.loaded) continue;
+                if (slot.pending == 0 or slot.loaded or slot.loading) continue;
                 if (best) |chosen| {
                     if (slot.pending <= self.slots[chosen].pending) continue;
                 }
@@ -259,6 +270,13 @@ pub fn Cache(comptime T: type) type {
                 self.counts.failed_loads += 1;
                 return err;
             };
+            self.install(id, value);
+        }
+
+        /// Makes `value` the loaded value of slot `id`, with no references, and applies the budget. The slot
+        /// must not be loaded already.
+        fn install(self: *Self, id: assets.AssetId, value: T) void {
+            const slot = &self.slots[id];
             slot.value = value;
             slot.loaded = true;
             slot.refs = 0;
@@ -267,6 +285,45 @@ pub fn Cache(comptime T: type) type {
             self.counts.loaded += 1;
             self.counts.bytes += slot.bytes;
             self.enforceBudget(id);
+        }
+
+        /// Takes the highest-priority requested value for loading outside the cache, such as on a worker thread,
+        /// and marks it loading. The caller must finish it with `finishLoad` or `failLoad`. Returns null when no
+        /// request is waiting. The path points into the table, which never moves.
+        pub fn beginLoad(self: *Self) ?LoadTicket {
+            const id = self.nextRequest() orelse return null;
+            const slot = &self.slots[id];
+            slot.pending = 0;
+            slot.loading = true;
+            self.counts.misses += 1;
+            const path = self.table.pathOf(id) orelse {
+                slot.loading = false;
+                return null;
+            };
+            return .{ .id = id, .path = path.slice() };
+        }
+
+        /// Installs a value that the caller loaded for `id` after `beginLoad`. If the value was loaded some other way
+        /// in the meantime, the new value is unloaded instead, and this returns false. Returns true when it was installed.
+        pub fn finishLoad(self: *Self, id: assets.AssetId, value: T) bool {
+            const slot = &self.slots[id];
+            if (!slot.loading or slot.loaded) {
+                slot.loading = false;
+                var stray = value;
+                self.loader.unload(self.loader.context, &stray);
+                return false;
+            }
+            slot.loading = false;
+            self.install(id, value);
+            return true;
+        }
+
+        /// Records that a load started by `beginLoad` failed. Nothing is cached, and the request is not retried
+        /// until it is asked for again.
+        pub fn failLoad(self: *Self, id: assets.AssetId) void {
+            const slot = &self.slots[id];
+            slot.loading = false;
+            self.counts.failed_loads += 1;
         }
 
         /// Advances the use clock and returns the new value. Each slot records it when the slot is loaded or
@@ -811,4 +868,85 @@ test "a preload that fails is dropped, so the next pump does not retry it" {
     try std.testing.expectEqual(@as(usize, 0), cache.pump(4).failed);
     try std.testing.expectEqual(@as(u64, 1), cache.stats().failed_loads);
     try std.testing.expectEqual(@as(usize, 0), cache.count());
+}
+
+test "a background load is taken once, installed by finishLoad, and then shared by acquires" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+
+    try cache.request("tile", .normal);
+    const ticket = cache.beginLoad() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("assets/tile.png", ticket.path);
+    try std.testing.expectEqual(@as(u32, 0), source.loads);
+    try std.testing.expect(cache.finishLoad(ticket.id, 42));
+
+    var tile = try cache.acquire("tile");
+    try std.testing.expectEqual(@as(u32, 0), source.loads);
+    try std.testing.expectEqual(@as(u32, 42), (try cache.get(tile)).*);
+    try std.testing.expectEqual(@as(u64, 1), cache.stats().hits);
+    try std.testing.expectEqual(@as(u64, 1), cache.stats().misses);
+    try cache.release(&tile);
+}
+
+test "a value that is loading takes no new requests, and beginLoad hands out nothing more" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+
+    try cache.request("tile", .high);
+    const ticket = cache.beginLoad() orelse return error.TestUnexpectedResult;
+    try cache.request("tile", .high);
+    try std.testing.expect(cache.beginLoad() == null);
+    try std.testing.expectEqual(@as(usize, 0), cache.pump(4).loaded);
+    try std.testing.expect(cache.finishLoad(ticket.id, 7));
+}
+
+test "a background result that lost a race to a synchronous acquire is dropped" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+
+    try cache.request("tile", .normal);
+    const ticket = cache.beginLoad() orelse return error.TestUnexpectedResult;
+    var tile = try cache.acquire("tile");
+    try std.testing.expectEqual(@as(u32, 1), source.loads);
+
+    try std.testing.expect(!cache.finishLoad(ticket.id, 99));
+    try std.testing.expectEqual(@as(u32, 1), source.unloads);
+    try std.testing.expectEqual(@as(u32, 1), (try cache.get(tile)).*);
+    try std.testing.expectEqual(@as(usize, 1), cache.count());
+    try cache.release(&tile);
+}
+
+test "a failed background load is counted, and not retried until it is requested again" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+
+    try cache.request("tile", .normal);
+    const ticket = cache.beginLoad() orelse return error.TestUnexpectedResult;
+    cache.failLoad(ticket.id);
+    try std.testing.expect(cache.beginLoad() == null);
+    try std.testing.expectEqual(@as(u64, 1), cache.stats().failed_loads);
+    try std.testing.expectEqual(@as(usize, 0), cache.count());
+
+    try cache.request("tile", .normal);
+    try std.testing.expect(cache.beginLoad() != null);
 }

@@ -48,23 +48,31 @@ pub fn absolutePath(location: Location, path: []const u8, buf: []u8) FileError![
     return std.fmt.bufPrintZ(buf, "{s}{s}", .{ folder, path }) catch error.PathTooLong;
 }
 
-/// Reads a whole file. The caller owns the result and frees it with `allocator`. A path that does not
-/// exist gives `error.NotFound`. SDL reports only that a path can't be examined, so a path that can't
+/// Reads a whole file without logging. The caller owns the result and frees it with `allocator`. A path that
+/// does not exist gives `error.NotFound`. SDL reports only that a path can't be examined, so a path that can't
 /// be examined is also reported as missing. Any other failure gives `error.ReadFailed`.
-pub fn read(allocator: std.mem.Allocator, location: Location, path: []const u8) FileError![]u8 {
+///
+/// Worker threads use this, because the logger is not safe to call from them. The caller logs the failure.
+pub fn readQuiet(allocator: std.mem.Allocator, location: Location, path: []const u8) FileError![]u8 {
     var buf: [max_full_path]u8 = undefined;
     const full = try absolutePath(location, path, &buf);
     var info: c.SDL_PathInfo = undefined;
     if (!c.SDL_GetPathInfo(full.ptr, &info)) return error.NotFound;
 
     var size: usize = 0;
-    const data = c.SDL_LoadFile(full.ptr, &size) orelse {
-        elog.err("could not read '{s}': {s}", .{ path, c.SDL_GetError() });
-        return error.ReadFailed;
-    };
+    const data = c.SDL_LoadFile(full.ptr, &size) orelse return error.ReadFailed;
     defer c.SDL_free(data);
     const bytes: [*]const u8 = @ptrCast(data);
     return allocator.dupe(u8, bytes[0..size]);
+}
+
+/// Reads a whole file, logging SDL's reason when the read fails. Main-thread callers use this. The result and
+/// errors are the same as `readQuiet`.
+pub fn read(allocator: std.mem.Allocator, location: Location, path: []const u8) FileError![]u8 {
+    return readQuiet(allocator, location, path) catch |err| {
+        if (err == error.ReadFailed) elog.err("could not read '{s}': {s}", .{ path, c.SDL_GetError() });
+        return err;
+    };
 }
 
 /// Writes a whole file by staging it under a temp name and replacing the destination once the file

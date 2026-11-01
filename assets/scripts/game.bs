@@ -1,0 +1,13 @@
+# Gameplay script. The engine calls on_update once per update step.
+# Values the game provides: clicks, volume, zoom, dt.
+# Functions the game provides: log(text), set_volume(level), zoom_by(factor), zoom_reset().
+# Built-in functions: abs, min, max, clamp.
+
+var milestones = 0;
+
+fn on_update() {
+    if (clicks >= 10 * (milestones + 1)) {
+        milestones = milestones + 1;
+        log("ten more clicks");
+    }
+}

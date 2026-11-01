@@ -38,6 +38,9 @@ test {
     _ = @import("engine/assets/registry.zig");
     _ = @import("engine/assets/handle.zig");
     _ = @import("engine/assets/cache.zig");
+    _ = @import("engine/assets/staging.zig");
+    _ = @import("engine/jobs/jobs.zig");
+    _ = @import("engine/script/script.zig");
     _ = @import("engine/assets/validate.zig");
     _ = @import("engine/assets/hot_reload.zig");
     _ = @import("engine/audio/voices.zig");

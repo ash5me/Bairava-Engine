@@ -332,8 +332,12 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │   ├── profile.zig    Tracy profiling zones and frame marks. The only ztracy import
 │   │   │   ├── debug_overlay.zig  On-screen frame-time graph and frame stats, toggled with F3
 │   │   │   └── frame_history.zig  Frame-time history and statistics. Pure math
-│   │   └── jobs/
-│   │       └── README.md      Planned job system. Not implemented yet
+│   │   ├── jobs/
+│   │   │   ├── jobs.h, jobs.c    Worker pool, counters, and waits, in C (docs/jobs.md)
+│   │   │   └── jobs.zig          Zig interface: typed submit, wait, and isDone
+│   │   └── script/
+│   │       ├── script.h, script.c  The scripting runtime, in C (docs/scripting.md)
+│   │       └── script.zig        Zig interface: values, typed bindings, load and call
 │   ├── game/                  Gameplay code. Uses the engine only through engine/core/engine.zig
 │   │   ├── game.zig           Game state, asset loading, the UI font, the demo panel, update and draw
 │   │   ├── controls.zig       Named actions, default keys, and the `bind` lines that rebind them
@@ -525,7 +529,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Strings | `memory/string.zig` | Functional | 70% | Validated `Name` (up to 64 bytes) and `Path` (up to 255 bytes, null-terminated). Rules are in the file's doc comments. |
 | Hash map | `memory/hash_map.zig` | Functional | 70% | Open addressing with full key comparison, growth at 3/4 load, removal by backward-shift deletion (no tombstones), checked against `std.StringHashMap`. |
 | Assets | `assets/registry.zig` | Early | 40% | Names, dense ids, and validated paths. The game no longer uses it, since its sprites come from the atlas. Loading and caching are in `assets/cache.zig`, which looks assets up by these names. |
-| Asset cache | `assets/cache.zig` | Early | 50% | Generic cache keyed by asset name: reference counts, load on first `acquire`, `unloadUnused`, a byte budget with least-recently-used eviction, and priority preloading through `request` and `pump`. Names and paths come from `assets/registry.zig`, and the index is the engine's `StringMap`. Not yet compiled or run. The engine's texture store uses it, but the game still loads its atlas, font, and sound directly. Missing: asynchronous loading, which needs the job system; fonts and sounds in the cache; hot reload; unloading on a schedule. |
+| Asset cache | `assets/cache.zig` | Early | 50% | Generic cache keyed by asset name: reference counts, load on first `acquire`, `unloadUnused`, a byte budget with least-recently-used eviction, and priority preloading through `request` and `pump`. Names and paths come from `assets/registry.zig`, and the index is the engine's `StringMap`. Not yet compiled or run. The engine's texture store uses it, but the game still loads its atlas, font, and sound directly. Textures load in the background through the job system (docs/jobs.md). Missing: fonts and sounds in the cache; hot reload; unloading on a schedule. |
 | Sprites | `renderer/sprite.zig`, `renderer/backends/sdl_gpu/sprite.zig` | Functional | 80% | Batched quads with four vertices each and a 32-bit index buffer. Per-sprite tint, alpha, flip, rotation around an origin, and z-order, sorted once per frame. Storage grows with each frame. Normal maps (`Options.normal`) light a sprite with up to 16 point lights from `SpriteBatch.addLight`, drawn through a second pipeline. `Options.lit` lights a sprite with no map of its own as a flat surface, through a shared one-texel map that is ready a frame after the batch is created. Tile layers take the same options through `tilemap_draw.drawLayer`. Each vertex carries a 2x2 normal basis, so a flipped or turned sprite lights as it appears; that adds 16 bytes per vertex. The lit path has not been run on a GPU yet. Missing: instancing. The player and the UI stay unlit until a game passes `lit` for them. |
 | Camera | `renderer/camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
 | Animation | `animation/animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
@@ -546,6 +550,8 @@ These estimates are rough. They measure how close each area is to something usab
 | Text | `text/text.c`, `text/text.h`, `text/layout.zig`, `ui/ui.zig` | Early | 45% | Build-time TTF/CFF preprocessing into `.bfnt` v2 bitmap or v3 SDF sidecars with glyph atlas, metrics, codepoint range, and kerning pairs; v1 sidecars remain readable. `Font.load` lazily rasterizes and caches missing codepoints, growing the atlas and refreshing its GPU texture. `Canvas.layoutText` wraps at spaces/tabs, handles explicit newlines, splits long words on UTF-8 boundaries, and aligns each line. One quad per glyph, UTF-8 input. Missing: shaping for Tamil and other complex scripts. |
 | UI widgets | `ui/imgui.c`, `ui/imgui.h` | Early | 35% | Label, button, and slider with hot and active ids and `##` suffixes. Tested with the C harness using scripted input. Not yet checked in the running game. Missing: checkbox, panels and layouts beyond one column, text input, keyboard focus, scrolling. |
 | Scenes | `engine/scene/scene.zig`, `engine/scene/scene_manager.zig`, `engine/scene/host.zig` | Early | 50% | Scene contract and a manager that keeps one scene active. `SceneHost` runs scenes as a game, and switches apply after the update that asked for them. A failed `init` keeps the current scene. The sample game and Semkootru both run through it. |
+| Jobs | `jobs/jobs.c`, `core/texture_stream.zig`, `assets/staging.zig` | Functional | 60% | A worker pool with a bounded queue, counters, and waits that run queued jobs. Textures decode on workers and upload on the main thread between frames. The C tests run in `zig build test`. Not yet run on Windows. Missing: background loading for fonts and sounds. |
+| Scripting | `script/script.c`, `script/script.zig`, `game/script_host.zig` | Early | 50% | A small C-like language with values, functions, and bounded execution, bound to the game through typed Zig functions. A failed load keeps the previous script. Missing: hot reload from the game, and string and table operations. See docs/scripting.md. |
 
 ## Building on what exists
 

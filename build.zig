@@ -109,6 +109,32 @@ fn addFreeType(b: *std.Build, module: *std.Build.Module) void {
     for (freetype_sources) |path| module.addCSourceFile(.{ .file = b.path(path) });
 }
 
+/// The job system and the scripting runtime are plain C with no SDL. The engine and the test module both link them.
+fn addJobsAndScript(b: *std.Build, module: *std.Build.Module) void {
+    module.addIncludePath(b.path("src/engine/jobs"));
+    module.addIncludePath(b.path("src/engine/script"));
+    module.addCSourceFile(.{ .file = b.path("src/engine/jobs/jobs.c") });
+    module.addCSourceFile(.{ .file = b.path("src/engine/script/script.c") });
+}
+
+/// Builds one C test program from its test source and the one C library it checks. It runs with no arguments, and
+/// it exits nonzero when a check fails.
+fn addCUnitHarness(b: *std.Build, name: []const u8, test_source: []const u8, library_source: []const u8, include_dir: []const u8) *std.Build.Step.Run {
+    const module = b.createModule(.{
+        .target = b.graph.host,
+        .optimize = .Debug,
+        .link_libc = true,
+    });
+    module.addIncludePath(b.path(include_dir));
+    module.addCSourceFile(.{ .file = b.path(test_source) });
+    module.addCSourceFile(.{ .file = b.path(library_source) });
+
+    const harness = b.addExecutable(.{ .name = name, .root_module = module });
+    const run = b.addRunArtifact(harness);
+    run.setCwd(b.path("."));
+    return run;
+}
+
 fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, with_imgui: bool) *std.Build.Step.Run {
     const module = b.createModule(.{
         .target = b.graph.host,
@@ -158,6 +184,7 @@ fn configureEngineModule(
     module.addIncludePath(b.path("src/engine/logging"));
     addFreeType(b, module);
     addCglm(b, module);
+    addJobsAndScript(b, module);
     module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
     module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
@@ -551,6 +578,9 @@ pub fn build(b: *std.Build) void {
     test_module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
     test_module.addCSourceFile(.{ .file = b.path("vendor/parson.c") });
     test_module.addCSourceFile(.{ .file = b.path("src/engine/logging/log_file.c") });
+    // The image loader and the job and script wrappers need their C code in the test binary as well.
+    test_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
+    addJobsAndScript(b, test_module);
     test_module.addImport("ztracy", ztracy.module("root"));
     const tests = b.addTest(.{ .root_module = test_module });
     const run_tests = b.addRunArtifact(tests);
@@ -569,6 +599,8 @@ pub fn build(b: *std.Build) void {
 
     const run_text_ui_tests = addUiTestHarness(b, "test_text", "tests/ui/test_text.c", false);
     const run_imgui_tests = addUiTestHarness(b, "test_imgui", "tests/ui/test_imgui.c", true);
+    const run_jobs_tests = addCUnitHarness(b, "test_jobs", "tests/jobs/test_jobs.c", "src/engine/jobs/jobs.c", "src/engine/jobs");
+    const run_script_tests = addCUnitHarness(b, "test_script", "tests/script/test_script.c", "src/engine/script/script.c", "src/engine/script");
     const ui_test_step = b.step("test-ui", "Run the C text and widget UI tests");
     ui_test_step.dependOn(&run_text_ui_tests.step);
     ui_test_step.dependOn(&run_imgui_tests.step);
@@ -578,4 +610,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_api_tests.step);
     test_step.dependOn(ui_test_step);
     test_step.dependOn(&asset_tool_tests.step);
+    test_step.dependOn(&run_jobs_tests.step);
+    test_step.dependOn(&run_script_tests.step);
 }

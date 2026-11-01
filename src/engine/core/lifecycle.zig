@@ -25,6 +25,12 @@ const application = @import("application.zig");
 const context = @import("context.zig");
 const capability = @import("../capabilities.zig");
 const game_events = @import("game_events.zig");
+const jobs = @import("../jobs/jobs.zig");
+const staging = @import("../assets/staging.zig");
+const texture_stream = @import("texture_stream.zig");
+
+/// The most jobs the pool queues before a submit runs its job on the calling thread instead.
+const job_queue_capacity: u32 = 256;
 
 const Config = application.Config;
 const Context = context.Context;
@@ -71,6 +77,12 @@ pub const Session = struct {
     ctx: Context = undefined,
     /// Textures registered by name. It lives in the engine arena, so the context can point at it.
     textures: *context.TextureStore = undefined,
+    /// Worker threads for background work. Created after the platform starts, and joined before the textures close.
+    jobs_pool: jobs.Pool = undefined,
+    jobs_started: bool = false,
+    /// Decodes requested textures on the workers and uploads them on the main thread. See core/texture_stream.zig.
+    streamer: texture_stream.Streamer = undefined,
+    streamer_ready: bool = false,
 
     /// Opens everything, in dependency order: settings are read, then the platform starts, then the
     /// window, the GPU device, and the audio device. A failed step returns its error after releasing
@@ -102,6 +114,12 @@ pub const Session = struct {
         self.stage = .platform;
         try platform.init();
         self.platform_started = true;
+        // SDL caches the executable's folder on first use. Asking for it here, before any worker can, keeps that
+        // first use on the main thread.
+        _ = platform.files.baseDir();
+        self.jobs_pool = try jobs.Pool.init(config.worker_threads, job_queue_capacity);
+        self.jobs_started = true;
+        elog.info("job system: {d} worker thread(s)", .{self.jobs_pool.workerCount()});
         self.stage = .window;
         self.window = try platform.window.create(config.title, window_settings.width, window_settings.height, window_settings.fullscreen);
         self.window_created = true;
@@ -164,12 +182,15 @@ pub const Session = struct {
             .settings_text = settings_text,
             .settings_file = config.settings_file,
             .textures = self.textures,
+            .worker_allocator = config.allocator,
             .diagnostics = &self.collector,
             .reloads = &self.reloads,
         };
         try self.textures.init(self.engine_allocator, context.max_registered_textures, context.textureLoader(&self.ctx));
         self.textures.setBudget(config.texture_budget_bytes);
         self.textures_ready = true;
+        self.streamer = texture_stream.Streamer.init(&self.jobs_pool, staging.packagedReader(), config.allocator);
+        self.streamer_ready = true;
         self.stage = .ready;
     }
 
@@ -202,6 +223,15 @@ pub const Session = struct {
         if (self.target_created) {
             self.target.deinit();
             self.target_created = false;
+        }
+        // Decodes still running read the pool and write into the streamer, so both finish before either is released.
+        if (self.streamer_ready) {
+            self.streamer.deinit();
+            self.streamer_ready = false;
+        }
+        if (self.jobs_started) {
+            self.jobs_pool.deinit();
+            self.jobs_started = false;
         }
         if (self.textures_ready) {
             // Textures hold GPU objects, so they go before the device. The game was released first, so

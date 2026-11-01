@@ -5,7 +5,7 @@ const std = @import("std");
 const allocator_types = @import("allocators.zig");
 const audio = @import("../audio/audio.zig");
 const platform = @import("../platform/platform.zig");
-const image = @import("../assets/loaders/image.zig");
+const staging = @import("../assets/staging.zig");
 const atlas = @import("../assets/loaders/atlas.zig");
 const handle = @import("../assets/handle.zig");
 const manager = @import("../assets/manager.zig");
@@ -114,6 +114,9 @@ pub const Context = struct {
     immediate_present_supported: bool = false,
     /// Textures registered by name and loaded on first use. The texture functions below use it.
     textures: *TextureStore,
+    /// The allocator for memory that worker threads touch, such as decoded textures. It must be safe to use from
+    /// several threads. The engine passes the page allocator, which is.
+    worker_allocator: std.mem.Allocator = std.heap.page_allocator,
     /// The diagnostics collector. Game code may add its own counters to it in development builds. See
     /// docs/diagnostics.md.
     diagnostics: *collector.Collector,
@@ -156,35 +159,40 @@ pub const Context = struct {
         self.zoom_target = 1.0;
     }
 
-    /// Loads an image and uploads it as a texture. Missing and malformed assets are returned as
-    /// contextual asset errors; callers decide whether they are recoverable.
+    /// Loads an image and uploads it as a texture, on the calling thread. Missing and malformed assets are returned as
+    /// contextual asset errors; callers decide whether they are recoverable. Requested textures load in the background
+    /// instead (see core/texture_stream.zig), through the same staging step.
     pub fn loadTexture(self: *const Context, relative: []const u8) AssetError!Texture {
         const zone = profile.zoneNamed(@src(), "load texture");
         defer zone.End();
+        var staged = staging.stage(self.worker_allocator, staging.packagedReader(), relative, self.stageFormats()) catch |err| {
+            if (err == error.DecodeFailed) elog.warn("texture '{s}' could not be decoded", .{relative});
+            return assetErrorForStage(err);
+        };
+        defer staged.deinit();
+        elog.debug("loaded texture {s}{s} ({d}x{d})", .{ relative, staged.variant, staged.width, staged.height });
+        return self.uploadStaged(&staged);
+    }
+
+    /// The compressed formats the device can sample, which staging uses to choose a variant. Read on the calling
+    /// thread, because it asks the device.
+    pub fn stageFormats(self: *const Context) staging.Supported {
         const device = contextGpuDevice(self);
-        if (try variantOrError(self, relative, ".astc", .astc_4x4)) |texture| return texture;
-        if (try variantOrError(self, relative, ".bc3", .bc3)) |texture| return texture;
-        if (try variantOrError(self, relative, ".bc1", .bc1)) |texture| return texture;
-        if (try variantOrError(self, relative, ".rgba", .rgba8)) |texture| return texture;
-        var abs_buf: [max_full_path]u8 = undefined;
-        const abs = platform.files.absolutePath(.packaged, relative, &abs_buf) catch {
-            return error.PathTooLong;
+        return .{
+            .astc_4x4 = texture_renderer.supportsCompression(device, .astc_4x4),
+            .bc3 = texture_renderer.supportsCompression(device, .bc3),
+            .bc1 = texture_renderer.supportsCompression(device, .bc1),
         };
-        const bytes = platform.files.read(self.allocators.asset, .packaged, relative) catch |err| {
-            return switch (err) {
-                error.NotFound => error.FileNotFound,
-                error.OutOfMemory => error.OutOfMemory,
-                else => error.ReadFailed,
-            };
-        };
-        defer self.allocators.asset.free(bytes);
-        var img = image.decodeRgba8(bytes) catch |err| {
-            elog.warn("texture '{s}' ({s}) could not be decoded: {s}", .{ relative, abs, @errorName(err) });
-            return error.DecodeFailed;
-        };
-        defer img.deinit();
-        elog.debug("loaded texture {s} ({d}x{d})", .{ abs, img.width, img.height });
-        return texture_renderer.createRgba8(self.allocators.asset, device, img.width, img.height, img.pixels);
+    }
+
+    /// Uploads staged pixels to the GPU. It must run on the calling thread, since it talks to the device. The GPU copies
+    /// the pixels, so the caller may free `staged` as soon as this returns.
+    pub fn uploadStaged(self: *const Context, staged: *const staging.Staged) Texture {
+        const device = contextGpuDevice(self);
+        if (staged.format == .rgba8) {
+            return texture_renderer.createRgba8(self.allocators.asset, device, staged.width, staged.height, staged.payload());
+        }
+        return texture_renderer.createCompressed(self.allocators.asset, device, staged.width, staged.height, staged.format, staged.payload());
     }
 
     /// Gives the name `name` to the image at `path`, relative to the executable's folder. Names follow the
@@ -426,48 +434,14 @@ fn logAtlasIssues(path: []const u8, text: []const u8) void {
     }
 }
 
-/// Chooses a prebuilt GPU-native image variant only when SDL says the active device can sample it.
-/// A missing variant, or one that doesn't parse, falls through to the next format and ultimately the
-/// RGBA8 decoder. Any other read failure is returned to the caller.
-fn loadCompressedVariant(
-    ctx: *const Context,
-    relative: []const u8,
-    suffix: []const u8,
-    compression: image.Compression,
-) !?Texture {
-    const device = contextGpuDevice(ctx);
-    if (compression != .rgba8 and !texture_renderer.supportsCompression(device, compression)) return null;
-    var name_buf: [max_full_path]u8 = undefined;
-    const name = std.fmt.bufPrint(&name_buf, "{s}{s}", .{ relative, suffix }) catch return null;
-    const bytes = platform.files.read(ctx.allocators.asset, .packaged, name) catch |err| switch (err) {
-        error.NotFound => return null,
-        else => return err,
-    };
-    defer ctx.allocators.asset.free(bytes);
-    var compressed = image.parseCompressed(ctx.allocators.asset, bytes, compression) catch |err| {
-        // An unusable variant is expected for some builds, so the next format is tried. The reason is kept for debugging.
-        elog.debug("texture variant '{s}' is unusable ({s}), so the next format is tried", .{ name, @errorName(err) });
-        return null;
-    };
-    defer compressed.deinit();
-    elog.debug("using {s} texture variant {s} ({d}x{d})", .{ @tagName(compression), name, compressed.width, compressed.height });
-    if (compression == .rgba8) return texture_renderer.createRgba8(ctx.allocators.asset, device, compressed.width, compressed.height, compressed.blocks);
-    return texture_renderer.createCompressed(ctx.allocators.asset, device, compressed.width, compressed.height, compression, compressed.blocks);
-}
-
-/// Loads a prebuilt GPU-native variant, returning missing variants as fallback opportunities.
-fn variantOrError(
-    ctx: *const Context,
-    relative: []const u8,
-    suffix: []const u8,
-    compression: image.Compression,
-) AssetError!?Texture {
-    return loadCompressedVariant(ctx, relative, suffix, compression) catch |err| {
-        return switch (err) {
-            error.OutOfMemory => error.OutOfMemory,
-            error.PathTooLong => error.PathTooLong,
-            else => error.ReadFailed,
-        };
+/// Maps a staging failure onto the engine's public asset errors.
+fn assetErrorForStage(err: staging.Error) AssetError {
+    return switch (err) {
+        error.NotFound => error.FileNotFound,
+        error.ReadFailed => error.ReadFailed,
+        error.PathTooLong => error.PathTooLong,
+        error.DecodeFailed => error.DecodeFailed,
+        error.OutOfMemory => error.OutOfMemory,
     };
 }
 

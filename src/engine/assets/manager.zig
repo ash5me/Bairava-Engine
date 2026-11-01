@@ -30,6 +30,8 @@ pub fn Store(comptime T: type) type {
         pub const Stats = cache.Cache(T).Stats;
         /// How urgently a requested value loads. See cache.zig.
         pub const Priority = cache.Priority;
+        /// A requested value taken for loading off the cache's thread. See cache.zig `beginLoad`.
+        pub const Ticket = cache.LoadTicket;
         /// What one `pump` did. See cache.zig.
         pub const PumpResult = cache.PumpResult;
 
@@ -99,6 +101,21 @@ pub fn Store(comptime T: type) type {
         /// Loads up to `max_loads` requested values, highest priority first. See cache.zig.
         pub fn pump(self: *Self, max_loads: usize) PumpResult {
             return self.cached.pump(max_loads);
+        }
+
+        /// Takes the next requested value for loading elsewhere. See cache.zig `beginLoad`.
+        pub fn beginLoad(self: *Self) ?Ticket {
+            return self.cached.beginLoad();
+        }
+
+        /// Installs a value loaded for a ticket. See cache.zig `finishLoad`.
+        pub fn finishLoad(self: *Self, id: registry.AssetId, value: T) bool {
+            return self.cached.finishLoad(id, value);
+        }
+
+        /// Records that a ticket's load failed. See cache.zig `failLoad`.
+        pub fn failLoad(self: *Self, id: registry.AssetId) void {
+            self.cached.failLoad(id);
         }
     };
 }
