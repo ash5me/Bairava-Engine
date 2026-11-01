@@ -47,6 +47,7 @@
         "src",
         "shaders",
         "vendor",
+        "docs",
         // For example...
         //"LICENSE",
         //"README.md",

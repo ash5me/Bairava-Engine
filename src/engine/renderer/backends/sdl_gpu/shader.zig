@@ -77,6 +77,11 @@ pub fn pickFormat(device: *c.SDL_GPUDevice) Format {
     );
 }
 
+/// Whether the active device accepts this format. Build-time embedding is checked separately.
+pub fn supportsFormat(device: *c.SDL_GPUDevice, format: Format) bool {
+    return (c.SDL_GetGPUShaderFormats(device) & format.sdlFlag()) != 0;
+}
+
 /// Selects the first supported format in the engine's preference order. Kept separate from the SDL
 /// query so the selection logic can be covered without creating a GPU device.
 fn pickFormatFromFlags(supported: c.SDL_GPUShaderFormat) ?Format {

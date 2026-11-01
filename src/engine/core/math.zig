@@ -16,8 +16,14 @@
 //! or the logger.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 const c = @cImport({
+    // MinGW's fortified headers use constructs unsupported by Zig's C translator.
+    if (builtin.os.tag == .windows) {
+        @cUndef("_FORTIFY_SOURCE");
+        @cDefine("_FORTIFY_SOURCE", "0");
+    }
     // Match build.zig: no SIMD paths, so the translated headers and the compiled C agree.
     @cUndef("__SSE__");
     @cUndef("__SSE2__");

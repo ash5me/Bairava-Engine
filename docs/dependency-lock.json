@@ -1,0 +1,47 @@
+{
+  "format": 1,
+  "dependencies": [
+    {
+      "name": "cglm",
+      "version": "0.9.7",
+      "source": "https://github.com/recp/cglm",
+      "paths": ["vendor/cglm"],
+      "sha256": "1557fd3f7d9d74f6db729f31954a2c0d38a8d2807fe258e484fdab45348f4857"
+    },
+    {
+      "name": "FreeType",
+      "version": "2.15.0",
+      "source": "https://gitlab.freedesktop.org/freetype/freetype",
+      "paths": ["vendor/freetype-2.15.0"],
+      "sha256": "7ce272eca26563e6bd4b520c62ead04eac60e5fa773159d1f822cf0ee02bdfce"
+    },
+    {
+      "name": "stb",
+      "version": "image 2.30; image_write 1.16; rect_pack 1.01; truetype 1.26",
+      "source": "https://github.com/nothings/stb",
+      "paths": [
+        "vendor/stb_image.h",
+        "vendor/stb_image_write.h",
+        "vendor/stb_rect_pack.h",
+        "vendor/stb_truetype.h",
+        "vendor/stb_image_impl.c",
+        "vendor/stb_truetype_impl.c"
+      ],
+      "sha256": "8e60220c1e57fb64967ca9e447be621490d50c58e7cea0b3cf7b883e2d18667f"
+    },
+    {
+      "name": "rxi/log.c",
+      "version": "0.1.0",
+      "source": "https://github.com/rxi/log.c",
+      "paths": ["vendor/log.c", "vendor/log.h"],
+      "sha256": "4c1af86f4c62bf404a28d59e966065a2511724c892264a2f422fe3da8a133374"
+    },
+    {
+      "name": "Parson",
+      "version": "1.5.4",
+      "source": "https://github.com/kgabis/parson",
+      "paths": ["vendor/parson.c", "vendor/parson.h"],
+      "sha256": "d4fbb940392a9b51baa747295eeceaee7154b4d86a9955fb5e8e3815445e4b4f"
+    }
+  ]
+}

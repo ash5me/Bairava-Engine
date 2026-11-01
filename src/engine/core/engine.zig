@@ -16,6 +16,9 @@
 pub const Config = @import("application.zig").Config;
 pub const Context = @import("context.zig").Context;
 pub const AssetError = @import("context.zig").AssetError;
+pub const Capabilities = @import("../capabilities.zig").Capabilities;
+pub const ShaderFormats = @import("../capabilities.zig").ShaderFormats;
+pub const TextureFormats = @import("../capabilities.zig").TextureFormats;
 pub const DrawContext = @import("context.zig").DrawContext;
 pub const Allocators = @import("allocators.zig").ContextAllocators;
 pub const run = @import("runtime.zig").run;

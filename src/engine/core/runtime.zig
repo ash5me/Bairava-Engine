@@ -6,6 +6,7 @@
 //! once per frame and gets `alpha` to blend between the last two updates.
 
 const std = @import("std");
+const build_options = @import("build_options");
 const platform = @import("../platform/platform.zig");
 const application = @import("application.zig");
 const allocator_types = @import("allocators.zig");
@@ -78,6 +79,7 @@ pub fn run(comptime Game: type, config: Config) !void {
     // The log file sits beside the executable, which the platform resolves.
     lifecycle.openLog(config);
     defer logging.closeFile();
+    elog.info("build profile {s}", .{build_options.profile});
     elog.info("profiling zones {s}", .{if (profile.enabled) "on (Tracy)" else "off"});
     elog.info("development tools {s}", .{if (gate.enabled) "on" else "off"});
 

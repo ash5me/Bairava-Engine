@@ -11,7 +11,9 @@
 
 param(
     [string]$OutputDir = "zig-out\release",
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [ValidateSet("development", "debug", "release")]
+    [string]$Profile = "release"
 )
 
 Set-StrictMode -Version Latest
@@ -44,9 +46,15 @@ if (-not (Test-Path "build.zig")) {
     Fail "This script must run from the project root, next to build.zig."
 }
 
+Write-Host "Verifying vendored dependencies against docs/dependency-lock.json..."
+& python scripts/check-vendor-pins.py
+if ($LASTEXITCODE -ne 0) {
+    Fail "Vendored dependencies do not match docs/dependency-lock.json."
+}
+
 if (-not $SkipBuild) {
-    Write-Host "Building the executable and staged assets..."
-    & zig build
+    Write-Host "Building the executable and staged assets with the '$Profile' profile..."
+    & zig build "-Dprofile=$Profile"
     if ($LASTEXITCODE -ne 0) {
         Fail "zig build failed; fix the build before packaging a release artifact."
     }
@@ -82,10 +90,12 @@ if (Test-Path $assetSourceDir) {
     Copy-Item $assetSourceDir (Join-Path $releaseDir "assets") -Recurse -Force
 }
 
-foreach ($path in @("settings.txt", "README.md")) {
+foreach ($path in @("settings.txt", "README.md", "docs/build-profiles.md", "docs/dependency-policy.md", "docs/dependency-lock.json", "docs/platform-capabilities.md")) {
     $source = Join-Path $root $path
     if (Test-Path $source) {
-        Copy-Item $source (Join-Path $releaseDir (Split-Path $path -Leaf)) -Force
+        $destination = Join-Path $releaseDir $path
+        New-Item -ItemType Directory -Force (Split-Path $destination -Parent) | Out-Null
+        Copy-Item $source $destination -Force
     }
 }
 
@@ -103,11 +113,17 @@ if ($null -eq $commit -or $commit.Length -eq 0) {
 
 $manifestPath = Join-Path $releaseDir "release-manifest.txt"
 $generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+$dependencyLockPath = Join-Path $releaseDir "docs\dependency-lock.json"
+$dependencyLockHash = (Get-FileHash -LiteralPath $dependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$profileRecord = if ($SkipBuild) { "$Profile (supplied; prebuilt executable not verified)" } else { $Profile }
 $manifest = @(
     "project=Bairava Engine",
     "artifact_name=$((Split-Path $destExe -Leaf))",
     "generated_at_utc=$generatedAt",
     "git_commit=$commit",
+    "build_profile=$profileRecord",
+    "dependency_lock=docs/dependency-lock.json",
+    "dependency_lock_sha256=$dependencyLockHash",
     "runtime_assets=assets",
     "docs=README.md",
     "settings=settings.txt"
@@ -117,4 +133,4 @@ Set-Content -Path $manifestPath -Value $manifest -Encoding UTF8
 Assert-RequiredFiles @($destExe, (Join-Path $releaseDir "assets"), $manifestPath)
 
 Write-Host "Release package ready at: $releaseDir"
-Write-Host "Includes the executable, packaged runtime assets, the shipped settings/docs, and a release manifest."
+Write-Host "Includes the executable, runtime assets, build/dependency policy, vendored dependency pins, settings, and release manifest."

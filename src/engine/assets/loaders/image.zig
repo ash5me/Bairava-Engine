@@ -1,7 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 // Declarations only. The implementation is compiled from vendor/stb_image_impl.c.
 const stb = @cImport({
+    if (builtin.os.tag == .windows) {
+        @cUndef("_FORTIFY_SOURCE");
+        @cDefine("_FORTIFY_SOURCE", "0");
+    }
     @cInclude("stb_image.h");
 });
 

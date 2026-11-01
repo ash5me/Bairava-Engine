@@ -257,19 +257,33 @@ const atlas_manifest = @embedFile("assets/sprites.txt");
 /// General runtime assets are declared separately from the atlas packing inputs.
 const asset_manifest = @embedFile("assets/asset_manifest.txt");
 
+const BuildProfile = enum { development, debug, release };
+
+fn profileOptimizeMode(profile: BuildProfile) std.builtin.OptimizeMode {
+    return switch (profile) {
+        .development, .debug => .Debug,
+        .release => .ReleaseFast,
+    };
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    const build_profile = b.option(BuildProfile, "profile", "Build profile: development, debug, or release") orelse .development;
+    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Prioritize performance, safety, or binary size") orelse switch (b.release_mode) {
+        .off => profileOptimizeMode(build_profile),
+        .any => .ReleaseFast,
+        .fast => .ReleaseFast,
+        .safe => .ReleaseSafe,
+        .small => .ReleaseSmall,
+    };
 
-    // Usage: zig build run -Dgpu-debug=true
-    const gpu_debug = b.option(bool, "gpu-debug", "Enable SDL GPU validation layers") orelse false;
+    const gpu_debug = b.option(bool, "gpu-debug", "Enable SDL GPU validation layers") orelse (build_profile == .debug);
 
     const options = b.addOptions();
     options.addOption(bool, "gpu_debug", gpu_debug);
+    options.addOption([]const u8, "profile", @tagName(build_profile));
 
-    // Development tools: the debug overlay and its geometry, the console, and hot reload. On by default
-    // in Debug builds, and compiled out of release builds. See src/engine/diagnostics/gate.zig.
-    const dev_tools = b.option(bool, "dev-tools", "Include the debug overlay, console, and hot reload (default: on in Debug builds)") orelse (optimize == .Debug);
+    const dev_tools = b.option(bool, "dev-tools", "Include the debug overlay, console, and hot reload") orelse (build_profile == .development);
     options.addOption(bool, "dev_tools", dev_tools);
 
     const sdl = b.dependency("sdl", .{

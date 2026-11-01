@@ -4,6 +4,9 @@ const std = @import("std");
 test "the named Bairava module exports its public engine API" {
     _ = bairava.Config;
     _ = bairava.Context;
+    _ = bairava.Capabilities;
+    _ = bairava.ShaderFormats;
+    _ = bairava.TextureFormats;
     _ = bairava.run;
     _ = bairava.transform.Transform;
 }
@@ -27,6 +30,7 @@ test "Context does not expose a device field or SDL types" {
         if (comptime std.mem.eql(u8, field.name, "device")) @compileError("Context must not expose its GPU device");
     }
     expectNoSdlApi(bairava.Context);
+    expectNoSdlApi(bairava.Capabilities);
 }
 
 test "engine resource fields do not expose SDL types" {
@@ -96,4 +100,13 @@ test "texture handles and the context's texture functions expose no SDL types" {
     try std.testing.expect(@hasDecl(bairava.Context, "textureOf"));
     try std.testing.expect(@hasDecl(bairava.Context, "retainTexture"));
     try std.testing.expect(@hasDecl(bairava.Context, "releaseTexture"));
+}
+
+test "Context exposes an SDL-free runtime capabilities query" {
+    try std.testing.expect(@hasDecl(bairava.Context, "capabilities"));
+    try std.testing.expect(@hasField(bairava.Capabilities, "audio_playback"));
+    try std.testing.expect(@hasField(bairava.Capabilities, "shader_formats"));
+    try std.testing.expect(@hasField(bairava.Capabilities, "texture_formats"));
+    try std.testing.expect(@hasField(bairava.ShaderFormats, "spirv"));
+    try std.testing.expect(@hasField(bairava.TextureFormats, "astc_4x4"));
 }

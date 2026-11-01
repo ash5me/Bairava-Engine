@@ -12,6 +12,9 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 
 - [Requirements](#requirements)
 - [Building and running](#building-and-running)
+- [Build profiles](docs/build-profiles.md)
+- [Dependency policy](docs/dependency-policy.md)
+- [Platform capabilities](docs/platform-capabilities.md)
 - [Debugging](#debugging)
 - [Controls](#controls)
 - [Project structure](#project-structure)
@@ -31,7 +34,7 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 - **A GPU backend supported by SDL3.** The default build provides SPIR-V and requests Vulkan 1.2. `-Ddxil=true` adds DXIL for Direct3D 12, and `-Dmetal=true` adds MSL for Metal.
 - **Internet access for the first build**, so Zig can fetch SDL3. Later builds work offline.
 - **cglm 0.9.7** is vendored under `vendor/cglm/`, including the C sources and headers used by the build.
-- **`vendor/stb_rect_pack.h`, `vendor/stb_image_write.h`, and `vendor/stb_truetype.h`**. The build uses the first two to pack the texture atlas and `stb_truetype.h` for TrueType preprocessing. All three are single-file libraries from [nothings/stb](https://github.com/nothings/stb). Fetch them once before the first build: `curl -L -o vendor/stb_rect_pack.h https://raw.githubusercontent.com/nothings/stb/master/stb_rect_pack.h`, and the same for `stb_image_write.h` and `stb_truetype.h`.
+- **Vendored libraries** are already included in the repository. Their upstream versions and verified source-tree hashes are recorded in [docs/dependency-lock.json](docs/dependency-lock.json); check them with `python scripts/check-vendor-pins.py`. Do not replace them with files from a floating upstream branch.
 - **FreeType 2.15.0** is vendored under `vendor/freetype-2.15.0/` with its FreeType License. The minimal in-tree build rasterizes TrueType and OpenType CFF outlines and generates SDF glyphs.
 - **Optional:** the cross-platform checkerboard keyer can be built through Zig; see [Asset keyer](#asset-keyer).
 - **Optional:** Arm's `astcenc` on `PATH`, for ASTC 4x4 texture variants. The build doesn't need it for the other formats.
@@ -39,11 +42,13 @@ The package is named `Bairava` in `build.zig.zon`, the executable is `Semkootru`
 
 ## Building and running
 
-Run commands from the project root. The build installs `assets/` beside the executable in `zig-out/bin/assets/`, and shaders are embedded in the executable, so the game runs from any directory.
+Run commands from the project root. `zig build` defaults to the `development` profile. The build installs `assets/` beside the executable in `zig-out/bin/assets/`, and shaders are embedded in the executable, so the game runs from any directory.
 
 ```
 zig build                          # compile the executable and shaders into zig-out/
 zig build run                      # build and launch the game
+zig build run -Dprofile=debug      # Debug checks, no dev overlay, SDL GPU validation
+zig build -Dprofile=release        # optimized player build
 zig build run -Dgpu-debug=true     # launch with SDL GPU validation enabled
 zig build run -Dtracy=true         # launch with Tracy profiling zones, for a Tracy profiler that is already running
 zig build -Ddxil=true              # also compile DXIL shaders for Direct3D 12
@@ -56,7 +61,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
                                   # package the current build into zig-out/release for a ship-ready artifact
 ```
 
-`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. The helper script `scripts/package-release.ps1` packages the built executable plus the runtime assets and shipped docs into a clean `zig-out/release` folder without bringing in dev-only editor or console files. It also writes a `release-manifest.txt` in the package with the build timestamp, artifact name, and current git commit when available, so the release folder is easier to audit. Each manifest row declares a name, kind, source, runtime path, and named dependencies. Image, WAV, and TrueType/OpenType inputs are format-checked; maps and generic files are checked for existence. Image entries emit BC1, BC3, and RGBA8 GPU texture variants alongside the source image; when `astcenc` is installed and available on `PATH`, the builder also emits ASTC 4x4. The sprite atlas is packed from `assets/sprites.txt` and sent through the same texture processor, with its regions written to `atlas.txt`. At runtime, SDL's format support query picks ASTC, BC3, or BC1 when the active device can sample that format; otherwise the prebuilt RGBA8 variant or decoded source image is used. Audio entries are copied as WAV and encoded to compact IMA ADPCM sidecars; `wav` entries are copied uncompressed. Font entries generate `.bfnt` files containing a packed glyph atlas, metrics, codepoint range, and kerning pairs; bitmap atlases are default, while font rows may request SDF output. The UI and debug overlay load a sidecar that matches their configured pixel height and fall back to TTF baking if it is absent, malformed, or sized differently. The audio system prefers an IMA sidecar and falls back to WAV, then converts samples to the playback device's format.Run `zig build asset-build` to validate and stage the general asset set without installing the game. Use `audio` for uncompressed PCM WAV inputs that should also get an IMA ADPCM sidecar, or `wav` to keep only the WAV runtime file. Font rows include bake height, first codepoint, and glyph count after dependencies, for example `font font assets/font.ttf font.ttf - 10 32 224`; append `sdf` to generate a scalable distance-field atlas instead of the default bitmap atlas. The build graph tracks the manifest, its source files, and the generated atlas input, so edits rebuild the asset step. Install Arm's `astcenc` command line tool and put it on `PATH` to generate ASTC variants; BC1, BC3, RGBA8, IMA ADPCM, and `.bfnt` outputs do not need extra tools.
+`zig build` installs `zig-out/bin/Semkootru(.exe)`. The compiled shaders are embedded in that executable, so `zig-out/shaders/` is no longer written. The build validates and stages runtime files from `assets/asset_manifest.txt` under `zig-out/bin/assets/`, including a generated `asset-index.txt`. The helper script `scripts/package-release.ps1` packages the built executable plus the runtime assets and shipped docs into a clean `zig-out/release` folder without bringing in dev-only editor or console files. It also writes a `release-manifest.txt` in the package with the build timestamp, artifact name, and current git commit when available, so the release folder is easier to audit.
+
+ Each manifest row declares a name, kind, source, runtime path, and named dependencies. Image, WAV, and TrueType/OpenType inputs are format-checked; maps and generic files are checked for existence. Image entries emit BC1, BC3, and RGBA8 GPU texture variants alongside the source image; when `astcenc` is installed and available on `PATH`, the builder also emits ASTC 4x4. The sprite atlas is packed from `assets/sprites.txt` and sent through the same texture processor, with its regions written to `atlas.txt`. At runtime, SDL's format support query picks ASTC, BC3, or BC1 when the active device can sample that format; otherwise the prebuilt RGBA8 variant or decoded source image is used. Audio entries are copied as WAV and encoded to compact IMA ADPCM sidecars; `wav` entries are copied uncompressed. Font entries generate `.bfnt` files containing a packed glyph atlas, metrics, codepoint range, and kerning pairs; bitmap atlases are default, while font rows may request SDF output. The UI and debug overlay load a sidecar that matches their configured pixel height and fall back to TTF baking if it is absent, malformed, or sized differently. The audio system prefers an IMA sidecar and falls back to WAV, then converts samples to the playback device's format.Run `zig build asset-build` to validate and stage the general asset set without installing the game. Use `audio` for uncompressed PCM WAV inputs that should also get an IMA ADPCM sidecar, or `wav` to keep only the WAV runtime file. Font rows include bake height, first codepoint, and glyph count after dependencies, for example `font font assets/font.ttf font.ttf - 10 32 224`; append `sdf` to generate a scalable distance-field atlas instead of the default bitmap atlas. The build graph tracks the manifest, its source files, and the generated atlas input, so edits rebuild the asset step. Install Arm's `astcenc` command line tool and put it on `PATH` to generate ASTC variants; BC1, BC3, RGBA8, IMA ADPCM, and `.bfnt` outputs do not need extra tools.
+
+See [docs/build-profiles.md](docs/build-profiles.md) for the profile defaults and overrides, [docs/dependency-policy.md](docs/dependency-policy.md) for dependency updates and release provenance, and [docs/platform-capabilities.md](docs/platform-capabilities.md) for runtime feature queries and unsupported-feature behavior.
+
+
 
 ## P3 migration status
 
@@ -399,16 +410,16 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 |---|---|---|---|
 | Zig | 0.16.0-dev, pinned by `minimum_zig_version` | Language, build system, standard library | MIT |
 | SDL3 | 3.4.2, via the `sdl` 0.4.0 Zig wrapper on Codeberg (`brodo/SDL`), pinned to commit `95a338c` in `build.zig.zon` | Window, events, keyboard and gamepad state, SDL_GPU API, file loading, timing, memory, audio streams | zlib |
-| stb_image | Vendored in `vendor/` | Decoding PNG and other image formats to RGBA8, and image validation in the importer (`tools/assets/import.c`) and the keyer (`tools/assets/keyer.c`) | Public domain or MIT |
-| stb_image_write | Vendored in `vendor/` | Writing `atlas.png` in the build's atlas packer | Public domain or MIT |
-| stb_rect_pack | Vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
-| stb_truetype | Vendored in `vendor/` | Build-time font preprocessing and TTF fallback baking (`tools/assets/build.c`, `src/engine/text/text.c`) | Public domain or MIT |
+| stb_image | 2.30, vendored in `vendor/` | Decoding PNG and other image formats to RGBA8, and image validation in the importer (`tools/assets/import.c`) and the keyer (`tools/assets/keyer.c`) | Public domain or MIT |
+| stb_image_write | 1.16, vendored in `vendor/` | Writing `atlas.png` in the build's atlas packer | Public domain or MIT |
+| stb_rect_pack | 1.01, vendored in `vendor/` | Packing sprites into the texture atlas at build time (`tools/atlas/pack.c`) | Public domain or MIT |
+| stb_truetype | 1.26, vendored in `vendor/` | Build-time font preprocessing and TTF fallback baking (`tools/assets/build.c`, `src/engine/text/text.c`) | Public domain or MIT |
 | FreeType | 2.15.0, vendored in `vendor/freetype-2.15.0/` | CFF-capable font baking, SDF rasterization, and dynamic glyph caching | FreeType License |
 | cglm | 0.9.7, vendored in `vendor/cglm/`: headers, the 46 C sources its CMake lists, and its license | Vector and matrix math, the pixel projection, and transforms | MIT |
 | log.c | rxi's log.c, 2020 (`log_Event` API), vendored in `vendor/log.c` and `vendor/log.h` | Delivers each message to the log file through `src/engine/logging/log_file.c` | MIT |
 | ztracy | Zig bindings, pinned to commit `2d06ebe` in `build.zig.zon` | Tracy zones and frame marks, compiled in with `-Dtracy=true` through `src/engine/profiling/profile.zig` | MIT |
 | Tracy client | 0.14.1, bundled in ztracy's `libs/tracy/` and built from source with `-Dtracy=true` | The profiler's runtime: records zones and sends them to the Tracy viewer | 3-clause BSD |
-| Slang (`slangc`) | Installed separately, on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
+| Slang (`slangc`) | 2026.20, installed by CI; local builds need it on `PATH` | Compiles `shaders/default.slang` to SPIR-V (pinned to the SPIR-V 1.5 profile) and, with `-Ddxil=true`, to DXIL (`sm_6_0`) | Apache 2.0 with LLVM exception |
 | Arm astcenc | Optional, installed separately and on `PATH` | ASTC 4x4 texture variants, encoded at build time (`tools/assets/build.c`) | Apache 2.0 |
 | Vulkan | System driver, selected by SDL_GPU | GPU backend that runs the SPIR-V shaders | Driver, not bundled |
 | Direct3D 12 | System driver, selected by SDL_GPU | Optional GPU backend that runs the DXIL shaders | Driver, not bundled |

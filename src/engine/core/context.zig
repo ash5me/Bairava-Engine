@@ -26,6 +26,7 @@ const debug_draw = @import("../diagnostics/debug_draw.zig");
 const hot_reload = @import("../assets/hot_reload.zig");
 const validate = @import("../assets/validate.zig");
 const gate = @import("../diagnostics/gate.zig");
+const capability = @import("../capabilities.zig");
 
 const ScaleMode = view.ScaleMode;
 const elog = logging.scoped("engine");
@@ -72,6 +73,7 @@ pub const TextureHandle = TextureStore.Handle;
 /// The most textures the game can register by name. The store reserves a slot for each one up front,
 /// so a handle never has to move when more textures are loaded.
 pub const max_registered_textures: u32 = 256;
+pub const Capabilities = capability.Capabilities;
 
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
 pub const Context = struct {
@@ -118,6 +120,11 @@ pub const Context = struct {
     /// `input.mouse_x`, which is in window points.
     pub fn mouseWorld(self: *const Context) view.Point {
         return view.windowToWorld(self.layout, self.camera, .{ .x = self.input.mouse_x, .y = self.input.mouse_y });
+    }
+
+    /// Reports features available to this running game build on the active GPU and audio device.
+    pub fn capabilities(self: *const Context) Capabilities {
+        return capability.query(contextGpuDevice(self), self.audio.device != null);
     }
 
     /// Multiplies the zoom target by `factor`, within the zoom bounds. Use a factor above 1 to zoom
@@ -372,7 +379,6 @@ fn logAtlasIssues(path: []const u8, text: []const u8) void {
     }
 }
 
-
 /// Chooses a prebuilt GPU-native image variant only when SDL says the active device can sample it.
 /// A missing variant, or one that doesn't parse, falls through to the next format and ultimately the
 /// RGBA8 decoder. Any other read failure is returned to the caller.
@@ -417,7 +423,6 @@ fn variantOrError(
         };
     };
 }
-
 
 /// What the game needs to queue sprites for one frame.
 pub const DrawContext = struct {

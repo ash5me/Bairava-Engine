@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  SLANG_VERSION: 2026.20
+
 jobs:
   build-and-test:
     name: ${{ matrix.os }}
@@ -27,6 +30,9 @@ jobs:
       - name: Platform boundary self-test
         run: python scripts/boundary_scan.py --self-test
 
+      - name: Verify vendored dependency pins
+        run: python scripts/check-vendor-pins.py
+
       - name: Platform boundary check
         run: python scripts/boundary_scan.py --fail
 
@@ -36,8 +42,6 @@ jobs:
       - name: Install Slang on Linux and macOS
         if: runner.os != 'Windows'
         shell: bash
-        env:
-          SLANG_VERSION: 2026.20
         run: |
           case "${RUNNER_OS}-${RUNNER_ARCH}" in
             Linux-X64) archive="slang-${SLANG_VERSION}-linux-x86_64-glibc-2.27.tar.gz" ;;
@@ -70,8 +74,6 @@ jobs:
       - name: Install Slang on Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          SLANG_VERSION: 2026.20
         run: |
           $archive = "slang-$env:SLANG_VERSION-windows-x86_64.zip"
           $url = "https://github.com/shader-slang/slang/releases/download/v$env:SLANG_VERSION/$archive"
@@ -105,8 +107,14 @@ jobs:
           echo "Dependency fetch failed after 4 attempts." >&2
           exit 1
 
-      - name: Build
+      - name: Build development profile
         run: zig build
+
+      - name: Build debug profile
+        run: zig build -Dprofile=debug
+
+      - name: Build release profile
+        run: zig build -Dprofile=release
 
       - name: Check asset manifests and the installed atlas index
         run: zig build check-assets
