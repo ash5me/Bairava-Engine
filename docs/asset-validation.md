@@ -10,12 +10,18 @@ development builds.
 Run it from the project root. It checks, without a window or a GPU:
 
 - `assets/asset_manifest.txt`: names, types, source and output paths, dependencies, and font fields.
+- Every `map` source with the runtime tilemap parser, including dimensions, layers, rows, and tile IDs.
+- `.spawn` file sources against the dimensions of their dependent map.
+- `.anim` file sources with the runtime animation parser. Animation manifest entries must depend on
+  their atlas image asset; when the built atlas index is available, frame rectangles are checked
+  against that sprite's dimensions.
 - `assets/sprites.txt`: sprite names and image paths.
 - `zig-out/bin/assets/atlas.txt` and `atlas.png`, when a build has produced them. The index and the
   image must agree on size.
 
-Each problem prints as `path:line: reason`. The step fails when there is any problem, and CI runs it
-after the build.
+Content parser errors print as `source-path: ParserError`; manifest and atlas format errors include
+their source line. The step fails when there is any problem, and CI runs it after the build so the
+animation bounds check can use the generated atlas index.
 
 ## Rules
 

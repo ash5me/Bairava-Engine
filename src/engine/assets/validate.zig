@@ -397,6 +397,25 @@ pub fn checkAtlasIndex(path: []const u8, text: []const u8, image: ?ImageSize, re
     if (size == null) report.add(path, 0, "the file has no size line");
 }
 
+/// Finds a sprite's dimensions in an atlas index after `checkAtlasIndex` has validated its format.
+pub fn atlasSpriteSize(text: []const u8, wanted: []const u8) ?ImageSize {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    _ = lines.next() orelse return null;
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var fields = std.mem.tokenizeAny(u8, line, " \t");
+        const name = fields.next() orelse continue;
+        if (!std.mem.eql(u8, name, wanted)) continue;
+        _ = fields.next() orelse return null;
+        _ = fields.next() orelse return null;
+        const w = parseU32(fields.next() orelse return null) orelse return null;
+        const h = parseU32(fields.next() orelse return null) orelse return null;
+        return .{ .w = w, .h = h };
+    }
+    return null;
+}
+
 /// The size of a PNG image, read from its header. Null when the bytes are not a PNG with a nonzero size.
 pub fn pngSize(bytes: []const u8) ?ImageSize {
     const signature = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
@@ -511,6 +530,8 @@ test "a clean atlas index reports nothing, and matches its image" {
     var report = Report{};
     checkAtlasIndex("assets/atlas.txt", text, .{ .w = 64, .h = 64 }, &report);
     try std.testing.expect(report.ok());
+    try std.testing.expectEqualDeep(ImageSize{ .w = 16, .h = 32 }, atlasSpriteSize(text, "warrior").?);
+    try std.testing.expect(atlasSpriteSize(text, "missing") == null);
 }
 
 test "an atlas sprite past the edge, a duplicate, and a zero size are each reported with a line" {

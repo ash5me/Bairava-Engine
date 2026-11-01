@@ -18,6 +18,20 @@ extern "c" fn fread(buffer: [*]u8, size: usize, count: usize, file: *File) usize
 
 const seek_set: c_int = 0;
 const seek_end: c_int = 2;
+const max_manifest_assets = 256;
+
+const ManifestAsset = struct {
+    name: []const u8,
+    kind: []const u8,
+    source: []const u8,
+    dependencies: []const u8,
+    map_size: ?MapSize = null,
+};
+
+const MapSize = struct {
+    cols: u32,
+    rows: u32,
+};
 
 /// Reads a whole file. Returns null when it can't be opened or read. The caller frees the bytes.
 fn readFile(allocator: std.mem.Allocator, path: []const u8) ?[]u8 {
@@ -48,6 +62,136 @@ fn fileExists(context: *anyopaque, path: []const u8) bool {
     return true;
 }
 
+fn collectManifestAssets(text: []const u8, assets: *[max_manifest_assets]ManifestAsset) usize {
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        var fields = std.mem.tokenizeAny(u8, line, " \t\r");
+        const name = fields.next() orelse continue;
+        const kind = fields.next() orelse continue;
+        const source = fields.next() orelse continue;
+        _ = fields.next() orelse continue;
+        const dependencies = fields.next() orelse continue;
+        if (count == assets.len) break;
+        assets[count] = .{
+            .name = name,
+            .kind = kind,
+            .source = source,
+            .dependencies = dependencies,
+        };
+        count += 1;
+    }
+    return count;
+}
+
+fn isExtension(path: []const u8, extension: []const u8) bool {
+    const dot = std.mem.lastIndexOfScalar(u8, path, '.') orelse return false;
+    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse 0;
+    return dot >= slash and std.ascii.eqlIgnoreCase(path[dot + 1 ..], extension);
+}
+
+fn dependencyMapSize(asset: *const ManifestAsset, assets: []const ManifestAsset) ?MapSize {
+    if (std.mem.eql(u8, asset.dependencies, "-")) return null;
+    var dependencies = std.mem.splitScalar(u8, asset.dependencies, ',');
+    while (dependencies.next()) |name| {
+        for (assets) |dependency| {
+            if (std.mem.eql(u8, dependency.name, name) and std.mem.eql(u8, dependency.kind, "map")) {
+                return dependency.map_size;
+            }
+        }
+    }
+    return null;
+}
+
+fn dependencyImageName(asset: *const ManifestAsset, assets: []const ManifestAsset) ?[]const u8 {
+    if (std.mem.eql(u8, asset.dependencies, "-")) return null;
+    var dependencies = std.mem.splitScalar(u8, asset.dependencies, ',');
+    while (dependencies.next()) |name| {
+        for (assets) |dependency| {
+            if (std.mem.eql(u8, dependency.name, name) and std.mem.eql(u8, dependency.kind, "image")) {
+                return dependency.name;
+            }
+        }
+    }
+    return null;
+}
+
+fn checkAssetContent(
+    allocator: std.mem.Allocator,
+    manifest_text: []const u8,
+    atlas_index_text: ?[]const u8,
+    report: *check.validate.Report,
+) void {
+    var assets: [max_manifest_assets]ManifestAsset = undefined;
+    const asset_count = collectManifestAssets(manifest_text, &assets);
+    const project_assets = assets[0..asset_count];
+
+    for (project_assets) |*asset| {
+        if (!std.mem.eql(u8, asset.kind, "map")) continue;
+        if (!check.validate.isSafePath(asset.source)) continue;
+        const text = readFile(allocator, asset.source) orelse {
+            report.add(asset.source, 0, "file could not be read");
+            continue;
+        };
+        defer allocator.free(text);
+        var map = check.tilemap.TileMap.parse(allocator, text) catch |err| {
+            report.add(asset.source, 0, @errorName(err));
+            continue;
+        };
+        asset.map_size = .{ .cols = map.cols, .rows = map.rows };
+        map.deinit(allocator);
+    }
+
+    for (project_assets) |*asset| {
+        if (!std.mem.eql(u8, asset.kind, "file")) continue;
+        if (!check.validate.isSafePath(asset.source)) continue;
+
+        if (isExtension(asset.source, "spawn")) {
+            const dimensions = dependencyMapSize(asset, project_assets) orelse {
+                report.add(asset.source, 0, "spawn metadata must depend on a valid map asset");
+                continue;
+            };
+            const text = readFile(allocator, asset.source) orelse {
+                report.add(asset.source, 0, "file could not be read");
+                continue;
+            };
+            defer allocator.free(text);
+            _ = check.level_data.parseSpawn(dimensions.cols, dimensions.rows, text) catch |err| {
+                report.add(asset.source, 0, @errorName(err));
+                continue;
+            };
+        } else if (isExtension(asset.source, "anim")) {
+            const image_name = dependencyImageName(asset, project_assets) orelse {
+                report.add(asset.source, 0, "animation asset must depend on its atlas image asset");
+                continue;
+            };
+            const text = readFile(allocator, asset.source) orelse {
+                report.add(asset.source, 0, "file could not be read");
+                continue;
+            };
+            defer allocator.free(text);
+
+            var dimensions = check.validate.ImageSize{
+                .w = std.math.maxInt(u32),
+                .h = std.math.maxInt(u32),
+            };
+            if (atlas_index_text) |index_text| {
+                dimensions = check.validate.atlasSpriteSize(index_text, image_name) orelse {
+                    report.add(asset.source, 0, "animation image dependency is missing from the built atlas");
+                    continue;
+                };
+            }
+            var library = check.animation.Library.parse(allocator, text, dimensions.w, dimensions.h) catch |err| {
+                report.add(asset.source, 0, @errorName(err));
+                continue;
+            };
+            library.deinit();
+        }
+    }
+}
+
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
     var marker: u8 = 0;
@@ -55,8 +199,10 @@ pub fn main() !void {
     var report = check.validate.Report{};
 
     const manifest_path = "assets/asset_manifest.txt";
+    var manifest_text: ?[]u8 = null;
+    defer if (manifest_text) |text| allocator.free(text);
     if (readFile(allocator, manifest_path)) |text| {
-        defer allocator.free(text);
+        manifest_text = text;
         check.validate.checkManifest(manifest_path, text, files, &report);
     } else {
         report.add(manifest_path, 0, "file could not be read");
@@ -74,8 +220,9 @@ pub fn main() !void {
     // and that is not a problem with the project.
     const index_path = "zig-out/bin/assets/atlas.txt";
     const image_path = "zig-out/bin/assets/atlas.png";
-    if (readFile(allocator, index_path)) |index_text| {
-        defer allocator.free(index_text);
+    const atlas_index_text = readFile(allocator, index_path);
+    defer if (atlas_index_text) |text| allocator.free(text);
+    if (atlas_index_text) |index_text| {
         var image_size: ?check.validate.ImageSize = null;
         if (readFile(allocator, image_path)) |png| {
             defer allocator.free(png);
@@ -85,6 +232,9 @@ pub fn main() !void {
             report.add(image_path, 0, "installed atlas image is missing");
         }
         check.validate.checkAtlasIndex(index_path, index_text, image_size, &report);
+    }
+    if (manifest_text) |text| {
+        checkAssetContent(allocator, text, atlas_index_text, &report);
     }
 
     if (report.ok()) {
