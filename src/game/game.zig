@@ -13,6 +13,8 @@ const Player = @import("player.zig").Player;
 const save_store = @import("save.zig");
 const script_host = @import("script_host.zig");
 const prefab = @import("prefab.zig");
+const level_data = @import("level_data.zig");
+const enemy = @import("enemy.zig");
 
 const log = engine.log.scoped("game");
 
@@ -45,6 +47,14 @@ pub const Game = struct {
     prefabs: prefab.Registry,
     /// One entity for each placement the level metadata makes. Each row names the prefab it was made from.
     entities: engine.entity.World(Placed, .aos),
+    /// The enemies the level places, each with its own brain and route. The list is freed in `deinit`.
+    enemies: []enemy.Enemy,
+    /// The warrior's clips, which enemies play. They point into `animations`, which lives as long as the game.
+    enemy_clips: enemy.Clips,
+    /// Plans the enemies' routes. Its arrays grow to the map's size on the first search, and are reused after that.
+    pathfinder: engine.navigation.Pathfinder,
+    /// The allocator the enemy list came from, so `deinit` can free it.
+    allocator: std.mem.Allocator,
     /// Immediate-mode UI for the demo panel. It owns its font and its widget state.
     ui: engine.ui.Ui,
     /// Demo panel state: how often the button was clicked, and the slider value.
@@ -90,6 +100,10 @@ pub const Game = struct {
                 return error.InvalidAnimation;
             }
         }
+        const enemy_clips = enemy.Clips.resolve(&animations) orelse {
+            log.err("animation data '{s}' is missing a clip that enemies play", .{config.animation_path});
+            return error.InvalidAnimation;
+        };
         const registry = loadPrefabs(ctx, config.prefab_path) catch |err| {
             log.err("required prefab file '{s}' failed to load: {s}", .{ config.prefab_path, @errorName(err) });
             return err;
@@ -139,6 +153,11 @@ pub const Game = struct {
             break :blk null;
         };
 
+        // Nothing below can fail, so these need no cleanup on the error paths above.
+        var pathfinder = engine.navigation.Pathfinder.init(ctx.allocators.game) catch return error.OutOfMemory;
+        errdefer pathfinder.deinit();
+        const enemies = spawnEnemies(ctx.allocators.game, level.enemies, &enemy_clips) catch return error.OutOfMemory;
+
         var game: Game = .{
             .level = level,
             .player = player,
@@ -158,6 +177,10 @@ pub const Game = struct {
             .bindings = bindings,
             .asset_graph_watched = asset_graph_watched,
             .input = ctx.input,
+            .enemies = enemies,
+            .enemy_clips = enemy_clips,
+            .pathfinder = pathfinder,
+            .allocator = ctx.allocators.game,
         };
         game.loadSave(ctx);
         game.attachScript(ctx);
@@ -175,6 +198,11 @@ pub const Game = struct {
             @intFromBool(self.bindings.held(self.input, .move_down)),
             self.clicks,
         });
+        var chasing: usize = 0;
+        for (self.enemies) |*each| {
+            if (each.isChasing()) chasing += 1;
+        }
+        out.print("enemies {d}, chasing {d}", .{ self.enemies.len, chasing });
     }
 
     /// The actions held now, as the game's bindings resolve them from the held keys. The overlay lists them.
@@ -189,6 +217,8 @@ pub const Game = struct {
         self.level.deinit();
         self.player.deinit();
         self.entities.deinit();
+        self.allocator.free(self.enemies);
+        self.pathfinder.deinit();
         self.animations.deinit();
         self.atlas.deinit();
         self.ui.deinit();
@@ -237,6 +267,7 @@ pub const Game = struct {
         if (self.bindings.held(input, .move_down)) dy += 1;
 
         self.player.update(dx, dy, ctx.dt, &self.level.map, &self.animations);
+        self.updateEnemies(ctx.dt);
         if (ctx.diagnostics_enabled) self.publishEntitySnapshot(ctx);
         self.updateUi(ctx);
         self.runScript(ctx);
@@ -497,6 +528,7 @@ pub const Game = struct {
         if (dc.layers.ground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .ground, .{});
         if (dc.layers.decoration) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .decoration, .{});
         self.drawPlaced(dc.batch, tiles, dc.cam);
+        self.drawEnemies(dc.batch, tiles, dc.cam, dc.alpha);
         self.player.draw(dc.batch, tiles, self.warrior, dc.cam, dc.alpha);
         if (dc.layers.foreground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .foreground, .{});
 
@@ -508,12 +540,33 @@ pub const Game = struct {
             dc.debug.outline(dc.cam.screenX(feet.x), dc.cam.screenY(feet.y), feet.w, feet.h, player_box_color);
         }
         if (dc.show.entities) {
+            for (self.enemies) |*each| each.drawDebug(dc.debug, dc.cam);
             const player_center = self.player.drawCenter(dc.alpha);
             dc.debug.point(dc.cam.screenX(player_center.x), dc.cam.screenY(player_center.y), player_marker_color);
         }
 
         // The panel goes last. Its quads were built in the update step, so this only queues them.
         self.ui.queue(dc.batch, ui_z);
+    }
+
+    /// Runs every enemy for one update step. The enemies aim at the center of the player's feet, which is where the
+    /// player's collision box is, so the sight line and the route end on the cell the player stands in.
+    fn updateEnemies(self: *Game, dt: f32) void {
+        const feet = self.player.collisionBox(1);
+        const center = engine.tilemap.Point{ .x = feet.x + feet.w / 2.0, .y = feet.y + feet.h / 2.0 };
+        const stage = enemy.Stage{
+            .map = &self.level.map,
+            .finder = &self.pathfinder,
+            .target = .{ .center = center, .cell = engine.navigation.cellOf(center) },
+            .clips = &self.enemy_clips,
+            .dt = dt,
+        };
+        for (self.enemies) |*each| each.update(stage);
+    }
+
+    /// Queues every enemy's frame. They are drawn before the player, so the player stands in front of them.
+    fn drawEnemies(self: *const Game, batch: *engine.SpriteBatch, texture: *const engine.Texture, cam: *const engine.Camera, alpha: f32) void {
+        for (self.enemies) |*each| each.draw(batch, texture, self.warrior, cam, alpha);
     }
 
     /// Queues one sprite for each placed entity. The sprite is the tile its prefab names, read from the tileset the same
@@ -563,6 +616,17 @@ pub const Game = struct {
         ui.end();
     }
 };
+
+/// One enemy for each home cell the level names. Each enemy gets its own brain seed, so the enemies wander differently.
+fn spawnEnemies(allocator: std.mem.Allocator, homes: []const level_data.Spawn, clips: *const enemy.Clips) std.mem.Allocator.Error![]enemy.Enemy {
+    const enemies = try allocator.alloc(enemy.Enemy, homes.len);
+    for (homes, 0..) |home, index| {
+        const seed: u32 = @as(u32, @intCast(index + 1)) *% 2654435761;
+        const cell = engine.navigation.Cell{ .col = @intCast(home.col), .row = @intCast(home.row) };
+        enemies[index] = enemy.Enemy.spawn(cell, seed, clips);
+    }
+    return enemies;
+}
 
 /// Reads and parses the prefab file. A file that cannot be read or parsed stops startup, the same as a bad map.
 fn loadPrefabs(ctx: *const engine.Context, path: []const u8) engine.AssetError!prefab.Registry {

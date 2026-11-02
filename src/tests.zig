@@ -85,6 +85,10 @@ test {
     _ = @import("engine/assets/manager.zig");
     _ = @import("engine/scene/scene_manager.zig");
     _ = @import("engine/scene/host.zig");
+    _ = @import("engine/navigation/grid.zig");
+    _ = @import("engine/navigation/pathfind.zig");
+    _ = @import("engine/navigation/follow.zig");
+    _ = @import("game/enemy_ai.zig");
 }
 
 const testTexture = fixtures.texture;

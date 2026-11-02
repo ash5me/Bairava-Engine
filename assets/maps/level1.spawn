@@ -3,3 +3,7 @@ spawn 20 12
 place marker 3 3
 place marker 36 3
 place marker 3 20
+# Enemies: one line per home cell. The first is inside the walled room, so it must leave by the door to chase.
+enemy 12 7
+enemy 30 4
+enemy 14 19

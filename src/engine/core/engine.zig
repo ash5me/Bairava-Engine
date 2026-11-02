@@ -102,6 +102,9 @@ pub const entity = @import("../ecs/entity.zig");
 pub const tilemap = @import("../scene/tilemap.zig");
 /// Queues tile map layers as sprites, one per visible tile. The map itself stays SDL-free.
 pub const tilemap_draw = @import("../renderer/tilemap_draw.zig");
+
+/// Walkable grid, A* paths, and the path follower for AI. See docs/navigation.md.
+pub const navigation = @import("../navigation/navigation.zig");
 /// Queues a skeleton's attachments as sprites, with each pivot on its bone. The skeleton data stays SDL-free.
 pub const skeleton_draw = @import("../renderer/skeleton_draw.zig");
 /// Sprite-sheet animation: clips that name a row of frames, and an animator that plays them.

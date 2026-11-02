@@ -20,19 +20,24 @@ Any other line is an error. The file holds at most 64 templates.
 
 ## Level metadata
 
-`assets/maps/level1.spawn` holds the level's game metadata. It has one `spawn` line and any number of `place` lines:
+`assets/maps/level1.spawn` holds the level's game metadata. It has one `spawn` line, and any number of `place` and
+`enemy` lines:
 
 ```
 spawn 20 12
 place marker 3 3
 place marker 36 3
+enemy 12 7
 ```
 
 - `spawn <col> <row>` is the cell where the player starts. It is required, and it appears once.
 - `place <prefab> <col> <row>` spawns one entity from the named template on that cell. A level holds at most 4096
   placements.
+- `enemy <col> <row>` starts one enemy on that cell, and the cell is its home. Enemies wander near it, chase the player
+  when they can see it, and walk home after losing it. A level holds at most 64 enemies. See
+  [navigation](navigation.md).
 
-The file keeps its `.spawn` name for now, although it also holds placements.
+The file keeps its `.spawn` name for now, although it also holds placements and enemies.
 
 ## Checks
 
@@ -45,6 +50,6 @@ The file keeps its `.spawn` name for now, although it also holds placements.
 ## Limits
 
 - The only component is `tile`. A placed entity draws its tile and blocks nothing, so the player walks through it.
-- Placed entities are not saved. Loading the level spawns them again from the metadata.
+- Placed entities and enemies are not saved. Loading the level spawns them again from the metadata.
 - The prefab file and the level metadata are read at startup only. Edits take effect after a restart.
 - The example `marker` tile is a placeholder. It was chosen for contrast with the ground, not for its art.

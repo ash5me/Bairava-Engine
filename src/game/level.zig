@@ -17,6 +17,8 @@ pub const Level = struct {
     spawn: level_data.Spawn,
     /// The entities the level metadata places. The game spawns one for each.
     placements: []level_data.Placement,
+    /// The home cell of each enemy the level metadata names. The game spawns one enemy on each.
+    enemies: []level_data.Spawn,
     allocator: std.mem.Allocator,
 
     /// Reads and parses the map file. Missing or malformed game assets return an error to the
@@ -53,11 +55,18 @@ pub const Level = struct {
                 else => error.InvalidLevel,
             };
         };
-        return .{ .map = map, .spawn = data.spawn, .placements = data.placements, .allocator = allocator };
+        return .{
+            .map = map,
+            .spawn = data.spawn,
+            .placements = data.placements,
+            .enemies = data.enemies,
+            .allocator = allocator,
+        };
     }
 
     pub fn deinit(self: *const Level) void {
         self.allocator.free(self.placements);
+        self.allocator.free(self.enemies);
         self.map.deinit(self.allocator);
     }
 
