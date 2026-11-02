@@ -21,7 +21,40 @@ pub const ReadError = error{ NotFound, ReadFailed, PathTooLong, OutOfMemory };
 
 /// Why a stage failed. A missing source image is `NotFound`; a file that is present but unreadable as an image
 /// is `DecodeFailed`.
-pub const Error = error{ NotFound, ReadFailed, PathTooLong, DecodeFailed, OutOfMemory };
+pub const Error = error{ NotFound, ReadFailed, PathTooLong, DecodeFailed, OutOfMemory, BudgetExceeded, BudgetUnavailable };
+
+/// Thread-safe budget for decoded/staged texture payloads. Reservations remain held until the staged payload
+/// is uploaded or explicitly deinitialized.
+pub const Budget = struct {
+    limit: usize,
+    used: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+
+    pub fn init(limit: usize) Budget {
+        return .{ .limit = if (limit == 0) std.math.maxInt(usize) else limit };
+    }
+
+    pub fn usedBytes(self: *const Budget) usize {
+        return self.used.load(.acquire);
+    }
+
+    fn reserve(self: *Budget, bytes: usize) error{ BudgetExceeded, BudgetUnavailable }!void {
+        if (bytes > self.limit) return error.BudgetExceeded;
+        var current = self.used.load(.acquire);
+        while (true) {
+            if (bytes > self.limit - current) return error.BudgetUnavailable;
+            if (self.used.cmpxchgWeak(current, current + bytes, .acq_rel, .acquire)) |observed| {
+                current = observed;
+            } else {
+                return;
+            }
+        }
+    }
+
+    fn release(self: *Budget, bytes: usize) void {
+        const previous = self.used.fetchSub(bytes, .acq_rel);
+        std.debug.assert(previous >= bytes);
+    }
+};
 
 /// Which compressed formats the device can sample. The main thread fills this in before a stage starts, because
 /// asking the device is not something a worker may do. RGBA8 is always available.
@@ -48,6 +81,8 @@ pub const Staged = struct {
     format: image.Compression,
     /// The variant suffix the data came from, such as ".bc3", for debug logs. Empty for the source image.
     variant: []const u8,
+    budget: ?*Budget = null,
+    budget_bytes: usize = 0,
     data: union(enum) {
         /// An image decoded by stb_image. Its own `deinit` frees it.
         decoded: image.Image,
@@ -68,6 +103,9 @@ pub const Staged = struct {
             .decoded => |*img| img.deinit(),
             .blocks => |*blocks| blocks.deinit(),
         }
+        if (self.budget) |budget| budget.release(self.budget_bytes);
+        self.budget = null;
+        self.budget_bytes = 0;
     }
 };
 
@@ -75,6 +113,27 @@ pub const Staged = struct {
 /// device supports, or else the source image. Every allocation goes through `allocator`, which must be safe to use
 /// from the calling thread. A failed stage allocates nothing that it keeps.
 pub fn stage(allocator: std.mem.Allocator, reader: Reader, relative: []const u8, supported: Supported) Error!Staged {
+    return stageInternal(allocator, reader, relative, supported, null);
+}
+
+/// Stages a texture while reserving its retained payload against a shared streaming budget.
+pub fn stageBudgeted(
+    allocator: std.mem.Allocator,
+    reader: Reader,
+    relative: []const u8,
+    supported: Supported,
+    budget: *Budget,
+) Error!Staged {
+    return stageInternal(allocator, reader, relative, supported, budget);
+}
+
+fn stageInternal(
+    allocator: std.mem.Allocator,
+    reader: Reader,
+    relative: []const u8,
+    supported: Supported,
+    budget: ?*Budget,
+) Error!Staged {
     const variants = [_]struct { suffix: []const u8, format: image.Compression }{
         .{ .suffix = ".astc", .format = .astc_4x4 },
         .{ .suffix = ".bc3", .format = .bc3 },
@@ -83,9 +142,9 @@ pub fn stage(allocator: std.mem.Allocator, reader: Reader, relative: []const u8,
     };
     for (variants) |variant| {
         if (!supported.allows(variant.format)) continue;
-        if (try stageVariant(allocator, reader, relative, variant.suffix, variant.format)) |staged| return staged;
+        if (try stageVariant(allocator, reader, relative, variant.suffix, variant.format, budget)) |staged| return staged;
     }
-    return stageSource(allocator, reader, relative);
+    return stageSource(allocator, reader, relative, budget);
 }
 
 /// Tries one variant file. A missing or unusable file gives null, so the next variant is tried.
@@ -95,6 +154,7 @@ fn stageVariant(
     relative: []const u8,
     suffix: []const u8,
     format: image.Compression,
+    budget: ?*Budget,
 ) Error!?Staged {
     var name_buf: [platform.max_full_path]u8 = undefined;
     const name = std.fmt.bufPrint(&name_buf, "{s}{s}", .{ relative, suffix }) catch return null;
@@ -105,21 +165,35 @@ fn stageVariant(
         error.ReadFailed => return error.ReadFailed,
     };
     defer allocator.free(bytes);
+    const payload_size = compressedPayloadSize(bytes, format) orelse return null;
+    var reserved = false;
+    if (budget) |limit| {
+        limit.reserve(payload_size) catch |err| return err;
+        reserved = true;
+    }
+    errdefer if (reserved) budget.?.release(payload_size);
     // A corrupt variant is skipped, but running out of memory is a real failure and is reported.
     const blocks = image.parseCompressed(allocator, bytes, format) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => return null,
+        else => {
+            if (reserved) budget.?.release(payload_size);
+            reserved = false;
+            return null;
+        },
     };
+    reserved = false;
     return .{
         .width = blocks.width,
         .height = blocks.height,
         .format = format,
         .variant = suffix,
+        .budget = budget,
+        .budget_bytes = if (budget != null) payload_size else 0,
         .data = .{ .blocks = blocks },
     };
 }
 
-fn stageSource(allocator: std.mem.Allocator, reader: Reader, relative: []const u8) Error!Staged {
+fn stageSource(allocator: std.mem.Allocator, reader: Reader, relative: []const u8, budget: ?*Budget) Error!Staged {
     const bytes = reader.read(reader.context, allocator, relative) catch |err| return switch (err) {
         error.NotFound => error.NotFound,
         error.OutOfMemory => error.OutOfMemory,
@@ -127,14 +201,53 @@ fn stageSource(allocator: std.mem.Allocator, reader: Reader, relative: []const u
         error.ReadFailed => error.ReadFailed,
     };
     defer allocator.free(bytes);
+    const payload_size = image.decodedRgba8Size(bytes) catch |err| return switch (err) {
+        error.ImageTooLarge => error.BudgetExceeded,
+        else => error.DecodeFailed,
+    };
+    var reserved = false;
+    if (budget) |limit| {
+        limit.reserve(payload_size) catch |err| return err;
+        reserved = true;
+    }
+    errdefer if (reserved) budget.?.release(payload_size);
     const decoded = image.decodeRgba8(bytes) catch return error.DecodeFailed;
+    reserved = false;
     return .{
         .width = decoded.width,
         .height = decoded.height,
         .format = .rgba8,
         .variant = "",
+        .budget = budget,
+        .budget_bytes = if (budget != null) payload_size else 0,
         .data = .{ .decoded = decoded },
     };
+}
+
+fn compressedPayloadSize(bytes: []const u8, format: image.Compression) ?usize {
+    if (bytes.len < 16 or !std.mem.eql(u8, bytes[0..4], "BRTX") or bytes[4] != @intFromEnum(format)) return null;
+    const width = readU32(bytes[8..12]);
+    const height = readU32(bytes[12..16]);
+    if (width == 0 or height == 0) return null;
+    const payload_size = if (format == .rgba8) blk: {
+        const pixels = std.math.mul(usize, width, height) catch return null;
+        break :blk std.math.mul(usize, pixels, 4) catch return null;
+    } else blk: {
+        const blocks_x = (@as(usize, width) + 3) / 4;
+        const blocks_y = (@as(usize, height) + 3) / 4;
+        const blocks = std.math.mul(usize, blocks_x, blocks_y) catch return null;
+        const bytes_per_block: usize = if (format == .bc1) 8 else 16;
+        break :blk std.math.mul(usize, blocks, bytes_per_block) catch return null;
+    };
+    if (bytes.len - 16 != payload_size) return null;
+    return payload_size;
+}
+
+fn readU32(bytes: []const u8) u32 {
+    return @as(u32, bytes[0]) |
+        (@as(u32, bytes[1]) << 8) |
+        (@as(u32, bytes[2]) << 16) |
+        (@as(u32, bytes[3]) << 24);
 }
 
 fn readPackaged(context: *anyopaque, allocator: std.mem.Allocator, relative: []const u8) ReadError![]u8 {
@@ -222,6 +335,29 @@ test "an unusable variant falls through to the next one" {
     var staged = try stage(std.testing.allocator, files.reader(), "tile.png", .{ .bc3 = true, .bc1 = true });
     defer staged.deinit();
     try std.testing.expectEqual(image.Compression.bc1, staged.format);
+}
+
+test "budgeted staging reserves payload bytes until upload ownership is released" {
+    const bc3 = try fixtures.compressedImageVariant(std.testing.allocator, @intFromEnum(image.Compression.bc3), 4, 4, 16);
+    defer std.testing.allocator.free(bc3);
+    var files = FakeFiles{ .entries = &.{.{ .name = "tile.png.bc3", .bytes = bc3 }} };
+    var budget = Budget.init(16);
+
+    var staged = try stageBudgeted(std.testing.allocator, files.reader(), "tile.png", .{ .bc3 = true }, &budget);
+    try std.testing.expectEqual(@as(usize, 16), budget.usedBytes());
+    try std.testing.expectError(error.BudgetUnavailable, stageBudgeted(std.testing.allocator, files.reader(), "tile.png", .{ .bc3 = true }, &budget));
+    staged.deinit();
+    try std.testing.expectEqual(@as(usize, 0), budget.usedBytes());
+
+    var too_small = Budget.init(8);
+    try std.testing.expectError(error.BudgetExceeded, stageBudgeted(std.testing.allocator, files.reader(), "tile.png", .{ .bc3 = true }, &too_small));
+    try std.testing.expectEqual(@as(usize, 0), too_small.usedBytes());
+
+    var unlimited = Budget.init(0);
+    var unrestricted = try stageBudgeted(std.testing.allocator, files.reader(), "tile.png", .{ .bc3 = true }, &unlimited);
+    try std.testing.expectEqual(@as(usize, 16), unlimited.usedBytes());
+    unrestricted.deinit();
+    try std.testing.expectEqual(@as(usize, 0), unlimited.usedBytes());
 }
 
 test "a source image that is missing reports NotFound, and one that is not an image reports DecodeFailed" {

@@ -87,7 +87,9 @@ pub const Context = struct {
     /// Restricted allocators for game-owned, asset-owned, and current-frame data.
     allocators: allocator_types.ContextAllocators,
     /// Held keys, presses, releases, and clicks for this update step.
-    input: *const Input,
+    input: *Input,
+    /// Zero-based index of the fixed-step simulation update currently running.
+    simulation_tick: u64 = 0,
     /// Ordered translated platform events waiting for game code.
     event_reader: *game_events.Reader,
     /// Length of one update step in seconds. This is always the fixed step.
@@ -465,6 +467,7 @@ fn assetErrorForStage(err: staging.Error) AssetError {
         error.PathTooLong => error.PathTooLong,
         error.DecodeFailed => error.DecodeFailed,
         error.OutOfMemory => error.OutOfMemory,
+        error.BudgetExceeded, error.BudgetUnavailable => error.TextureLoadFailed,
     };
 }
 

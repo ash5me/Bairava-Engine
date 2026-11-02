@@ -12,7 +12,10 @@ pub const Accumulator = struct {
     }
 
     pub fn addFrameTime(self: *Accumulator, elapsed_seconds: f32) f32 {
-        const frame_dt = @min(elapsed_seconds, max_frame_dt);
+        const frame_dt = if (std.math.isFinite(elapsed_seconds) and elapsed_seconds > 0)
+            @min(elapsed_seconds, max_frame_dt)
+        else
+            0;
         self.remaining += frame_dt;
         return frame_dt;
     }
@@ -74,4 +77,12 @@ test "fixed timestep clamps long frames and bounds interpolation alpha" {
     try std.testing.expect(steps <= 6);
     const alpha = accumulator.interpolationAlpha();
     try std.testing.expect(alpha >= 0.0 and alpha <= 1.0);
+}
+
+test "fixed timestep ignores non-finite and negative frame durations" {
+    var accumulator = Accumulator.init(60);
+    try std.testing.expectEqual(@as(f32, 0), accumulator.addFrameTime(std.math.nan(f32)));
+    try std.testing.expectEqual(@as(f32, 0), accumulator.addFrameTime(-1));
+    try std.testing.expectEqual(@as(f32, 0), accumulator.remaining);
+    try std.testing.expect(!accumulator.hasStep());
 }

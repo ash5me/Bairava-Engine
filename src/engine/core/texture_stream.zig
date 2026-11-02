@@ -28,11 +28,13 @@ const Slot = struct {
     counter: jobs.Counter = std.mem.zeroes(jobs.Counter),
     active: bool = false,
     id: u32 = 0,
+    priority: context.TexturePriority = .low,
     path: [platform.max_full_path]u8 = undefined,
     path_len: usize = 0,
     reader: staging.Reader = undefined,
     allocator: std.mem.Allocator = undefined,
     supported: staging.Supported = .{},
+    budget: *staging.Budget = undefined,
     /// Written by the worker. The main thread reads it only after the counter reports the job done.
     staged: ?staging.Staged = null,
     failure: ?staging.Error = null,
@@ -41,7 +43,7 @@ const Slot = struct {
 /// Runs on a worker thread. It reads and decodes one texture into its slot, and touches nothing else.
 fn decode(slot: *Slot) void {
     const path = slot.path[0..slot.path_len];
-    if (staging.stage(slot.allocator, slot.reader, path, slot.supported)) |staged| {
+    if (staging.stageBudgeted(slot.allocator, slot.reader, path, slot.supported, slot.budget)) |staged| {
         slot.staged = staged;
     } else |err| {
         slot.failure = err;
@@ -55,6 +57,7 @@ pub const Streamer = struct {
     reader: staging.Reader,
     /// Allocates decoded data. It must be safe to use from worker threads.
     allocator: std.mem.Allocator,
+    staging_budget: staging.Budget,
     slots: [max_in_flight]Slot = [_]Slot{.{}} ** max_in_flight,
 
     /// What one `pump` did this frame.
@@ -62,10 +65,20 @@ pub const Streamer = struct {
         started: usize = 0,
         uploaded: usize = 0,
         failed: usize = 0,
+        deferred: usize = 0,
     };
 
-    pub fn init(pool: *jobs.Pool, reader: staging.Reader, allocator: std.mem.Allocator) Streamer {
-        return .{ .pool = pool, .reader = reader, .allocator = allocator };
+    pub fn init(pool: *jobs.Pool, reader: staging.Reader, allocator: std.mem.Allocator, staging_budget_bytes: usize) Streamer {
+        return .{
+            .pool = pool,
+            .reader = reader,
+            .allocator = allocator,
+            .staging_budget = staging.Budget.init(staging_budget_bytes),
+        };
+    }
+
+    pub fn stagedBytes(self: *const Streamer) usize {
+        return self.staging_budget.usedBytes();
     }
 
     /// Runs one frame's worth of work. Call it on the main thread, once per frame, before the updates. `max_uploads`
@@ -79,9 +92,14 @@ pub const Streamer = struct {
             if (slot.failure) |err| {
                 slot.active = false;
                 slot.failure = null;
-                store.failLoad(slot.id);
-                report.failed += 1;
-                elog.warn("texture '{s}' could not be loaded: {s}", .{ slot.path[0..slot.path_len], @errorName(err) });
+                if (err == error.BudgetUnavailable) {
+                    store.retryLoad(slot.id, slot.priority);
+                    report.deferred += 1;
+                } else {
+                    store.failLoad(slot.id);
+                    report.failed += 1;
+                    elog.warn("texture '{s}' could not be loaded: {s}", .{ slot.path[0..slot.path_len], @errorName(err) });
+                }
                 continue;
             }
             if (report.uploaded >= max_uploads) continue;
@@ -116,9 +134,11 @@ pub const Streamer = struct {
             @memcpy(slot.path[0..ticket.path.len], ticket.path);
             slot.path_len = ticket.path.len;
             slot.id = ticket.id;
+            slot.priority = ticket.priority;
             slot.reader = self.reader;
             slot.allocator = self.allocator;
             slot.supported = supported;
+            slot.budget = &self.staging_budget;
             slot.staged = null;
             slot.failure = null;
             slot.active = true;

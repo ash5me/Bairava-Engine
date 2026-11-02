@@ -122,3 +122,16 @@ pub fn decodeRgba8(bytes: []const u8) !Image {
         .pixels = ptr[0..len],
     };
 }
+
+/// Returns the decoded RGBA8 allocation size without allocating the pixel buffer.
+pub fn decodedRgba8Size(bytes: []const u8) !usize {
+    if (bytes.len == 0 or bytes.len > std.math.maxInt(c_int)) return error.DecodeFailed;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    var channels: c_int = 0;
+    if (stb.stbi_info_from_memory(bytes.ptr, @intCast(bytes.len), &width, &height, &channels) == 0 or width <= 0 or height <= 0) {
+        return error.DecodeFailed;
+    }
+    const pixels = std.math.mul(usize, @intCast(width), @intCast(height)) catch return error.ImageTooLarge;
+    return std.math.mul(usize, pixels, 4) catch return error.ImageTooLarge;
+}

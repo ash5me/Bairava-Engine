@@ -117,6 +117,11 @@ pub fn Store(comptime T: type) type {
         pub fn failLoad(self: *Self, id: registry.AssetId) void {
             self.cached.failLoad(id);
         }
+
+        /// Requeues a background load that was deferred for a transient resource limit.
+        pub fn retryLoad(self: *Self, id: registry.AssetId, priority: Priority) void {
+            self.cached.retryLoad(id, priority);
+        }
     };
 }
 

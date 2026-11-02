@@ -172,6 +172,7 @@ pub fn run(comptime Game: type, config: Config) !void {
     var last_mode = ctx.scale_mode;
     var last_ns = platform.clock.nowNs();
     var total_frames: u64 = 0;
+    var simulation_tick: u64 = 0;
     var last_draw_calls: u32 = 0;
 
     while (ctx.running) {
@@ -229,12 +230,14 @@ pub fn run(comptime Game: type, config: Config) !void {
         while (timestep.hasStep() and ctx.running) {
             session.input.latch();
             ctx.dt = timestep.fixed_dt;
+            ctx.simulation_tick = simulation_tick;
             const update_start = clockIf();
             {
                 const zone = profile.zoneNamed(@src(), "update");
                 defer zone.End();
                 game.update(ctx);
             }
+            simulation_tick +%= 1;
             update_seconds += secondsBetween(update_start, clockIf());
             timestep.consumeStep();
             steps += 1;

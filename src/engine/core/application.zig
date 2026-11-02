@@ -60,6 +60,9 @@ pub const Config = struct {
     /// Most bytes the texture cache may hold, counted at four bytes per texel. Idle textures are unloaded, least
     /// recently used first, to stay within it. Zero means no budget.
     texture_budget_bytes: usize = 0,
+    /// Most decoded/compressed texture payload bytes held while background decodes await upload. Zero removes the cap.
+    /// Files that exceed the whole budget fail; loads deferred because other textures currently use the budget retry.
+    texture_staging_budget_bytes: usize = 128 * 1024 * 1024,
     /// Requested textures the runtime loads each frame, between frames. Zero turns preloading off.
     texture_loads_per_frame: usize = 2,
     /// Measures the GPU's share of each frame by waiting for the GPU to finish it. Development builds only. The wait

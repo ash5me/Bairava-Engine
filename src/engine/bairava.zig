@@ -56,6 +56,7 @@ pub const tilemap = engine.tilemap;
 pub const tilemap_draw = engine.tilemap_draw;
 pub const navigation = engine.navigation;
 pub const ai = engine.ai;
+pub const replay = engine.replay;
 pub const skeleton_draw = engine.skeleton_draw;
 pub const animation = engine.animation;
 pub const audio = engine.audio;

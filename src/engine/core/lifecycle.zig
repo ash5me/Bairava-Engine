@@ -189,7 +189,12 @@ pub const Session = struct {
         try self.textures.init(self.engine_allocator, context.max_registered_textures, context.textureLoader(&self.ctx));
         self.textures.setBudget(config.texture_budget_bytes);
         self.textures_ready = true;
-        self.streamer = texture_stream.Streamer.init(&self.jobs_pool, staging.packagedReader(), config.allocator);
+        self.streamer = texture_stream.Streamer.init(
+            &self.jobs_pool,
+            staging.packagedReader(),
+            config.allocator,
+            config.texture_staging_budget_bytes,
+        );
         self.streamer_ready = true;
         self.stage = .ready;
     }

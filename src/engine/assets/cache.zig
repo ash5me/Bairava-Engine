@@ -52,6 +52,7 @@ pub const PumpResult = struct { loaded: usize = 0, failed: usize = 0 };
 /// A requested asset that the caller has taken for loading outside the cache. See `Cache.beginLoad`.
 pub const LoadTicket = struct {
     id: assets.AssetId,
+    priority: Priority,
     /// The asset's path, relative to the executable's folder. It stays valid for the table's lifetime.
     path: []const u8,
 };
@@ -293,6 +294,7 @@ pub fn Cache(comptime T: type) type {
         pub fn beginLoad(self: *Self) ?LoadTicket {
             const id = self.nextRequest() orelse return null;
             const slot = &self.slots[id];
+            const priority: Priority = @enumFromInt(slot.pending);
             slot.pending = 0;
             slot.loading = true;
             self.counts.misses += 1;
@@ -300,7 +302,7 @@ pub fn Cache(comptime T: type) type {
                 slot.loading = false;
                 return null;
             };
-            return .{ .id = id, .path = path.slice() };
+            return .{ .id = id, .priority = priority, .path = path.slice() };
         }
 
         /// Installs a value that the caller loaded for `id` after `beginLoad`. If the value was loaded some other way
@@ -324,6 +326,14 @@ pub fn Cache(comptime T: type) type {
             const slot = &self.slots[id];
             slot.loading = false;
             self.counts.failed_loads += 1;
+        }
+
+        /// Returns a transiently deferred background load to the request queue without counting it as a failure.
+        pub fn retryLoad(self: *Self, id: assets.AssetId, priority: Priority) void {
+            const slot = &self.slots[id];
+            if (!slot.loading or slot.loaded) return;
+            slot.loading = false;
+            slot.pending = @max(slot.pending, @intFromEnum(priority));
         }
 
         /// Advances the use clock and returns the new value. Each slot records it when the slot is loaded or
@@ -891,6 +901,26 @@ test "a background load is taken once, installed by finishLoad, and then shared 
     try std.testing.expectEqual(@as(u64, 1), cache.stats().hits);
     try std.testing.expectEqual(@as(u64, 1), cache.stats().misses);
     try cache.release(&tile);
+}
+
+test "a deferred background load returns to the priority queue without counting failure" {
+    var table = try assets.Table.init(std.testing.allocator, 8);
+    defer table.deinit();
+    try registerTestAssets(&table);
+    var source = FakeSource{};
+    var cache = try fakeCache(std.testing.allocator, &table, &source);
+    defer cache.deinit();
+
+    try cache.request("tile", .high);
+    const ticket = cache.beginLoad() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(Priority.high, ticket.priority);
+    cache.retryLoad(ticket.id, ticket.priority);
+    try std.testing.expectEqual(@as(u64, 0), cache.stats().failed_loads);
+    const retried = cache.beginLoad() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(ticket.id, retried.id);
+    try std.testing.expectEqual(Priority.high, retried.priority);
+    cache.failLoad(retried.id);
+    try std.testing.expectEqual(@as(u64, 1), cache.stats().failed_loads);
 }
 
 test "a value that is loading takes no new requests, and beginLoad hands out nothing more" {

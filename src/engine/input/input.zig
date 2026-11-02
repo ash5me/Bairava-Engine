@@ -127,6 +127,20 @@ const mouse_count = std.enums.values(MouseButton).len;
 /// Input state. Held keys are set by the platform once per frame. Presses, releases, and clicks
 /// gather as events arrive, and `latch` hands them to the game one update step at a time.
 pub const Input = struct {
+    /// State visible to one deterministic simulation update. Platform-pending events are excluded.
+    pub const Snapshot = struct {
+        held_keys: [key_count]bool,
+        pressed: [key_count]bool,
+        released: [key_count]bool,
+        mouse_held: [mouse_count]bool,
+        mouse_pressed: [mouse_count]bool,
+        mouse_released: [mouse_count]bool,
+        mouse_x: f32,
+        mouse_y: f32,
+        pads: [types.max_gamepads]gamepad.Slot,
+        connections: u64,
+    };
+
     /// Held state of each key, indexed by `@intFromEnum(key)`, as of the latest event pump.
     held_keys: [key_count]bool = [_]bool{false} ** key_count,
     /// Key events gathered since the last `latch`.
@@ -162,6 +176,44 @@ pub const Input = struct {
         @memset(&self.pending_mouse_pressed, false);
         @memset(&self.pending_mouse_released, false);
         for (&self.pads) |*pad| pad.latch();
+    }
+
+    /// Copies the exact input state visible to the current fixed-step update.
+    pub fn snapshot(self: *const Input) Snapshot {
+        return .{
+            .held_keys = self.held_keys,
+            .pressed = self.pressed,
+            .released = self.released,
+            .mouse_held = self.mouse_held,
+            .mouse_pressed = self.mouse_pressed,
+            .mouse_released = self.mouse_released,
+            .mouse_x = self.mouse_x,
+            .mouse_y = self.mouse_y,
+            .pads = self.pads,
+            .connections = self.connections,
+        };
+    }
+
+    /// Replaces live input with one fixed-step snapshot and clears platform events pending for a later step.
+    pub fn restoreSnapshot(self: *Input, snapshot_value: Snapshot) void {
+        self.held_keys = snapshot_value.held_keys;
+        self.pressed = snapshot_value.pressed;
+        self.released = snapshot_value.released;
+        self.mouse_held = snapshot_value.mouse_held;
+        self.mouse_pressed = snapshot_value.mouse_pressed;
+        self.mouse_released = snapshot_value.mouse_released;
+        self.mouse_x = snapshot_value.mouse_x;
+        self.mouse_y = snapshot_value.mouse_y;
+        self.pads = snapshot_value.pads;
+        self.connections = snapshot_value.connections;
+        @memset(&self.pending_pressed, false);
+        @memset(&self.pending_released, false);
+        @memset(&self.pending_mouse_pressed, false);
+        @memset(&self.pending_mouse_released, false);
+        for (&self.pads) |*pad| {
+            @memset(&pad.pending_pressed, false);
+            @memset(&pad.pending_released, false);
+        }
     }
 
     /// True while the key is held down, as of the latest event pump.
