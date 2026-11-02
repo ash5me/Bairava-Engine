@@ -178,7 +178,7 @@ pub const Audio = struct {
     /// Holds one panned run at a time. Its bytes are copied into a stream, so every voice shares it.
     scratch: [scratch_bytes]u8 = undefined,
     /// Holds one chunk of a streamed voice at a time, decoded or converted. Every voice shares it, like `scratch`.
-    stream_chunk: [stream_chunk_bytes]u8 = undefined,
+    stream_chunk: [stream_chunk_bytes]u8 align(16) = undefined,
 
     /// Opens the default playback device. This never fails: without a device the object stays silent,
     /// and the platform logs why.

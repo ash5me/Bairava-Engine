@@ -90,8 +90,9 @@ pub fn createConverter(src: types.PcmFormat, dst: types.PcmFormat) ?*types.Audio
     return streamHandle(stream);
 }
 
-/// Copies converted bytes out of a stream into `out`. Returns how many were copied, or -1 when SDL refuses.
-pub fn getStreamData(stream: *types.AudioStream, out: []u8) i32 {
+/// Copies converted bytes out of a stream into 16-byte-aligned `out`, as SDL may write samples through SIMD code.
+/// Returns how many bytes were copied, or -1 when SDL refuses.
+pub fn getStreamData(stream: *types.AudioStream, out: []align(16) u8) i32 {
     if (out.len > std.math.maxInt(c_int)) return -1;
     return @intCast(c.SDL_GetAudioStreamData(streamOf(stream), out.ptr, @intCast(out.len)));
 }
@@ -222,9 +223,10 @@ fn fromSpec(spec: c.SDL_AudioSpec) ?types.PcmFormat {
 /// A 16-bit mono WAV at 22050 Hz with two samples, 1000 and -1000, built in memory so that the test
 /// needs no file and no device.
 const mono_wav = [_]u8{
-    'R', 'I', 'F', 'F', 40, 0, 0, 0, 'W', 'A', 'V', 'E',
-    'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 1, 0, 0x22, 0x56, 0, 0, 0x44, 0xAC, 0, 0, 2, 0, 16, 0,
-    'd', 'a', 't', 'a', 4, 0, 0, 0, 0xE8, 0x03, 0x18, 0xFC,
+    'R',  'I',  'F', 'F', 40,   0,    0, 0, 'W',  'A',  'V',  'E',
+    'f',  'm',  't', ' ', 16,   0,    0, 0, 1,    0,    1,    0,
+    0x22, 0x56, 0,   0,   0x44, 0xAC, 0, 0, 2,    0,    16,   0,
+    'd',  'a',  't', 'a', 4,    0,    0, 0, 0xE8, 0x03, 0x18, 0xFC,
 };
 
 test "WAV decodes from bytes without an audio device" {
@@ -252,7 +254,7 @@ test "a converter turns mono PCM into stereo float, in whole frames, without a d
     defer destroyStream(converter);
     try std.testing.expect(putStreamData(converter, &.{ 0xE8, 0x03, 0x18, 0xFC }));
     flushStream(converter);
-    var out: [256]u8 = undefined;
+    var out: [256]u8 align(16) = undefined;
     const got = getStreamData(converter, &out);
     try std.testing.expect(got > 0);
     // Two channels of four-byte floats make eight bytes a frame.

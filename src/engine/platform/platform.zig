@@ -232,8 +232,9 @@ pub const audio = struct {
         return sdl_audio.createConverter(src, dst);
     }
 
-    /// Copies converted bytes out of a stream into `out`. Returns how many were copied, or -1 when the platform refuses.
-    pub fn getStreamData(stream: *types.AudioStream, out: []u8) i32 {
+    /// Copies converted bytes out of a stream into 16-byte-aligned `out`, as the converter may use SIMD sample writes.
+    /// Returns how many bytes were copied, or -1 when the platform refuses.
+    pub fn getStreamData(stream: *types.AudioStream, out: []align(16) u8) i32 {
         return sdl_audio.getStreamData(stream, out);
     }
 
