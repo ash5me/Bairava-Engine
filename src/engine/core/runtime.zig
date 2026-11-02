@@ -335,7 +335,13 @@ pub fn run(comptime Game: type, config: Config) !void {
             if (comptime @hasDecl(@TypeOf(game), "debugText")) game.debugText(&collector.text);
             if (comptime @hasDecl(@TypeOf(game), "sceneInfo")) {
                 const info = game.sceneInfo();
-                collector.snapshot.scene = .{ .name = info.name, .pending = info.pending, .switches = info.switches };
+                collector.snapshot.scene = .{
+                    .name = info.name,
+                    .pending = info.pending,
+                    .switches = info.switches,
+                    .depth = info.depth,
+                    .stack = info.stack,
+                };
             }
             const textures = ctx.textureStats();
             collector.snapshot.assets = .{

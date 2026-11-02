@@ -61,6 +61,10 @@ A name list keeps 72 bytes of joined names. Names past that are counted and show
 
 The `audio` console command prints whether a playback device is open and its sample rate and channel count, the busy and maximum voice counts, the master gain, and the first three busy voices. Each voice line gives whether it loops, its own gain, and the length of its sound in bytes. Sounds do not keep their names yet, so voices are listed by slot.
 
+## Scene hierarchy
+
+The `scene` console command prints the open scenes as a path from the root to the active scene, marked `(active)`. Below that line come the number of open scenes, the switch count, and the change waiting for the next safe point, if there is one. A scene opened with `push` sits one level above the scene it was pushed onto, and the scenes below it are suspended. A pending change appears as `push NAME`, `pop`, or the name of the scene a switch will open. The switch count includes pushed scenes, and the first scene counts as one. The path holds up to eight scenes, which is the scene stack's limit.
+
 ## Inspecting entities and components
 
 The `entities` console command lists the entity count and the names/IDs of published snapshots.
@@ -114,7 +118,7 @@ allocations.
   pure. They import no SDL, no GPU, and no build options, so `zig build test` covers them.
 - `gate.zig` is the only file in this group that reads the build options.
 - Overlays read only the collector's published snapshot. They never reach into a subsystem.
-- The scene host publishes the active scene's name through `sceneInfo()`. The runtime reads it.
+- The scene host publishes the open scenes, the active scene's name, and any pending change through `sceneInfo()`. The runtime reads it.
 
 ## Cost
 

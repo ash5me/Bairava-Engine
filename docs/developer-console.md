@@ -8,7 +8,7 @@ access files, memory, or code.
 | Command | Purpose |
 |---|---|
 | `help` | List registered commands |
-| `scene` | Show the active scene and pending transition |
+| `scene` | Show the scene hierarchy: open scenes from the root to the active one, the switch count, and any pending transition |
 | `entities` | Show the published entity count |
 | `assets` | Show texture cache counts and estimated bytes |
 | `performance` | Show average, p95, and maximum frame time plus phase averages |

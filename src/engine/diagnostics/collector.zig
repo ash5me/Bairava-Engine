@@ -48,14 +48,28 @@ pub const Layers = struct {
     foreground: bool = true,
 };
 
-/// The active scene and whether a switch is waiting, from the scene host.
+/// The most open scenes the snapshot keeps. It matches `scene_manager.max_depth`; the runtime's copy from the scene
+/// host does not build if the two differ.
+pub const max_scene_depth = 8;
+
+/// The scene host's state: the open scenes, the active one, and whether a change is waiting for the next safe point.
 pub const Scene = struct {
+    /// Name of the active scene, which is the last of the open scenes.
     name: []const u8 = "none",
     /// What the change waiting for the next safe point does: a scene's name for a switch, `push <name>`, or
     /// `pop`. Null when none is pending.
     pending: ?[]const u8 = null,
     /// Scenes opened so far, counting the first.
     switches: u32 = 0,
+    /// Scenes open now. A pushed scene sits one level above the scene it was pushed onto.
+    depth: usize = 0,
+    /// The open scenes' names, root first. Only the first `depth` entries are set.
+    stack: [max_scene_depth][]const u8 = [_][]const u8{""} ** max_scene_depth,
+
+    /// The open scenes' names, root first. The last one is the active scene.
+    pub fn openNames(self: *const Scene) []const []const u8 {
+        return self.stack[0..@min(self.depth, max_scene_depth)];
+    }
 };
 
 /// Asset counters, from the texture store.

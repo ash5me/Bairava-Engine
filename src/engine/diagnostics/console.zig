@@ -113,12 +113,7 @@ pub const Console = struct {
                 },
                 .scene => {
                     if (count != 1) return self.usage(entry);
-                    const scene = collector.snapshot.scene;
-                    if (scene.pending) |pending| {
-                        self.setOutput("{s} -> {s} (transition pending)", .{ scene.name, pending });
-                    } else {
-                        self.setOutput("{s} (no transition pending)", .{scene.name});
-                    }
+                    self.writeScene(collector.snapshot.scene);
                 },
                 .entities => {
                     if (count > 2) return self.usage(entry);
@@ -261,6 +256,25 @@ pub const Console = struct {
         self.setOutput("commands: help scene entities [id] assets audio performance tile\ncontrols: diagnostics on|off|toggle; collision on|off|toggle; tiles on|off|toggle; layer NAME on|off|toggle", .{});
     }
 
+    /// Two lines: the open scenes as a path from the root to the active scene, then the count of open scenes, the
+    /// switch count, and the change waiting for the next safe point.
+    fn writeScene(self: *Console, scene: collector_mod.Scene) void {
+        const path = scene.openNames();
+        if (path.len == 0) {
+            self.setOutput("scene hierarchy: none open", .{});
+        } else {
+            self.setOutput("scene hierarchy: {s}", .{path[0]});
+            for (path[1..]) |name| self.appendOutput(" > {s}", .{name});
+            self.appendOutput(" (active)", .{});
+        }
+        self.appendOutput("\n{d} open, {d} switches, ", .{ path.len, scene.switches });
+        if (scene.pending) |pending| {
+            self.appendOutput("transition pending: {s}", .{pending});
+        } else {
+            self.appendOutput("no transition pending", .{});
+        }
+    }
+
     fn writeEntities(self: *Console, total: u32, inspection: collector_mod.Inspection) void {
         self.setOutput("entities: {d}", .{total});
         const shown = @min(inspection.entitySlice().len, 4);
@@ -362,7 +376,7 @@ fn switchMode(mode: []const u8, current: bool) error{InvalidMode}!bool {
 test "registry commands inspect published state and reject invalid arguments" {
     const Diagnostics = struct {
         snapshot: struct {
-            scene: struct { name: []const u8 = "test", pending: ?[]const u8 = null } = .{},
+            scene: collector_mod.Scene = .{ .name = "test" },
             assets: struct { loaded: usize = 2, bytes: usize = 1024, hits: u64 = 3, misses: u64 = 1, failed: u64 = 0 } = .{},
             memory: struct {
                 engine: struct { allocation_count: u64 = 2, free_count: u64 = 1, failed_allocations: u64 = 0, live_bytes: usize = 64, high_water_bytes: usize = 96, arena_capacity_bytes: usize = 128 } = .{},
@@ -459,6 +473,46 @@ test "console input is bounded, ignores control characters, and supports backspa
     console.close();
     console.append("ignored");
     try std.testing.expectEqual(@as(usize, 0), console.input_len);
+}
+
+test "the scene command shows the open scenes root first, the active one, the switch count, and any pending change" {
+    var console = Console{};
+    var collector = collector_mod.Collector{};
+    var overlay = true;
+
+    console.execute("scene", &collector, &overlay);
+    try std.testing.expectEqualStrings(
+        "scene hierarchy: none open\n0 open, 0 switches, no transition pending",
+        console.outputText(),
+    );
+
+    var stack = [_][]const u8{""} ** collector_mod.max_scene_depth;
+    stack[0] = "main.Red";
+    stack[1] = "main.Blue";
+    stack[2] = "main.Swarm";
+    collector.snapshot.scene = .{ .name = "main.Swarm", .pending = "pop", .switches = 5, .depth = 3, .stack = stack };
+    console.execute("scene", &collector, &overlay);
+    try std.testing.expect(!console.output_is_error);
+    try std.testing.expectEqualStrings(
+        "scene hierarchy: main.Red > main.Blue > main.Swarm (active)\n3 open, 5 switches, transition pending: pop",
+        console.outputText(),
+    );
+
+    collector.snapshot.scene.pending = null;
+    console.execute("scene", &collector, &overlay);
+    try std.testing.expectEqualStrings(
+        "scene hierarchy: main.Red > main.Blue > main.Swarm (active)\n3 open, 5 switches, no transition pending",
+        console.outputText(),
+    );
+
+    collector.snapshot.scene.depth = 1;
+    collector.snapshot.scene.name = "main.Red";
+    collector.snapshot.scene.switches = 1;
+    console.execute("scene", &collector, &overlay);
+    try std.testing.expectEqualStrings(
+        "scene hierarchy: main.Red (active)\n1 open, 1 switches, no transition pending",
+        console.outputText(),
+    );
 }
 
 test "the audio command reports the device, the busy voices, and the first few by slot" {

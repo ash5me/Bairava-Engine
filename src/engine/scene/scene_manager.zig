@@ -71,10 +71,13 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
         /// The most scenes the stack holds at once. A push past this is refused.
         pub const max_depth = 8;
 
-        /// What the diagnostics show about the scenes: the active scene's name, the change waiting for the next safe
-        /// point, how many scenes have opened so far, and how many are open now.
+        /// What the diagnostics show about the scenes: the open scenes from the root up, the active scene's name, the
+        /// change waiting for the next safe point, how many scenes have opened so far, and how many are open now.
         pub const Info = struct {
+            /// Name of the active scene, or "none" when no scene is open.
             name: []const u8,
+            /// The open scenes' names, root first. Only the first `depth` entries are set.
+            stack: [max_depth][]const u8,
             pending: ?[]const u8,
             switches: u32,
             depth: usize,
@@ -180,11 +183,15 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
             for (self.stack[0..self.depth]) |instance| instance.draw(dc);
         }
 
-        /// The active scene's name, the change waiting for the next safe point, and the counts, for the diagnostics.
+        /// The open scenes' names, the active scene's name, the change waiting for the next safe point, and the
+        /// counts, for the diagnostics.
         pub fn info(self: *const Self) Info {
             const pending: ?[]const u8 = if (self.navigator.pending) |request| labelOf(request) else null;
+            var names = [_][]const u8{""} ** max_depth;
+            for (self.stack[0..self.depth], 0..) |instance, index| names[index] = instance.name;
             return .{
                 .name = self.active_name,
+                .stack = names,
                 .pending = pending,
                 .switches = self.switches,
                 .depth = self.depth,
@@ -529,6 +536,34 @@ test "the manager names the active scene, and reports a switch as pending until 
     try std.testing.expect(manager.info().pending == null);
     try std.testing.expectEqualStrings(@typeName(Alpha), manager.info().name);
     try std.testing.expectEqual(@as(u32, 1), manager.info().switches);
+}
+
+test "the diagnostics list the open scenes root first, and the list shrinks when a scene is popped" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+    defer manager.deinit();
+    try std.testing.expectEqual(@as(usize, 0), manager.info().depth);
+
+    manager.switchTo(Beta);
+    try manager.applyPending(&ctx);
+    manager.push(Gamma);
+    try manager.applyPending(&ctx);
+    manager.push(Gamma);
+    try manager.applyPending(&ctx);
+
+    const deep = manager.info();
+    try std.testing.expectEqual(@as(usize, 3), deep.depth);
+    try std.testing.expectEqualStrings(@typeName(Beta), deep.stack[0]);
+    try std.testing.expectEqualStrings(@typeName(Gamma), deep.stack[1]);
+    try std.testing.expectEqualStrings(@typeName(Gamma), deep.stack[2]);
+    try std.testing.expectEqualStrings(@typeName(Gamma), deep.name);
+
+    manager.pop();
+    try manager.applyPending(&ctx);
+    const shallow = manager.info();
+    try std.testing.expectEqual(@as(usize, 2), shallow.depth);
+    try std.testing.expectEqualStrings(@typeName(Beta), shallow.stack[0]);
+    try std.testing.expectEqualStrings(@typeName(Gamma), shallow.stack[1]);
 }
 
 test "an empty manager ignores update, draw, and applyPending" {
