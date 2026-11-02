@@ -32,6 +32,17 @@ crosses, in order, so it cannot step past a thin wall at a corner.
 A search can visit every cell of the map, so its worst case grows with the map. Enemies keep the cost low: a chasing
 enemy replans every 0.4 seconds, or as soon as the player moves into another cell.
 
+## Navigation agent
+
+`navigation.Agent` composes a reusable A* pathfinder and route follower for one moving unit. Initialize it with an
+allocator, call `plan(grid, start, goal)`, then pass the map, the unit's collision box, speed, and fixed update delta to
+`step`. `goal`, `hasPath`, `atGoal`, and `nextWaypoint` expose the current route state. `clear` drops both the route and
+its remembered goal. The agent owns its pathfinder, so call `deinit` when it is no longer needed.
+
+Planning is transactional: if a new goal is blocked, unreachable, outside the grid, too far for the route buffer, or
+allocation fails, the current route remains available and `plan` returns the error. The caller chooses when to replan
+for moving targets or changed world state. The map and grid remain caller-owned; the map must outlive each `step`.
+
 ## Following a route
 
 `navigation.Follower` holds a route of up to `max_path` (128) cells. Its `step` moves a box toward the next waypoint,
@@ -81,8 +92,8 @@ Enemies are placed with `enemy <col> <row>` lines in the level's metadata file. 
 
 ## Tests
 
-`zig build test` runs the grid, pathfinder, and follower tests, and the brain's tests in `enemy_ai.zig`. The enemy
-glue in `enemy.zig` imports the engine, so the tests do not cover it. The game is the check for that part.
+`zig build test` runs the grid, pathfinder, follower, navigation agent, and behavior brain tests. The enemy glue in
+`enemy.zig` imports the engine, so the tests do not cover it. The game is the check for that part.
 
 ## Limits
 

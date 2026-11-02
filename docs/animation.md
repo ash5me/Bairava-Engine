@@ -107,6 +107,7 @@ bone arm torso 4 0 0 1
 attach torso 0 0 16 16 0 0 8 8
 attach arm 16 0 8 4 0 0 0 2
 anim swing loop 1
+event 0.25 footstep
 key arm rotate 0 0
 key arm rotate 0.5 0.5
 key arm rotate 1 0
@@ -130,6 +131,9 @@ lie inside the rectangle. Attachments draw in the order they are listed.
 `anim NAME loop|once LENGTH` starts an animation whose length is in seconds. Every `bone` and `attach` line comes before
 the first `anim`.
 
+`event TIME NAME` adds a marker to the current animation. Event times must be in increasing order and lie from zero
+through the animation length. Names use lowercase letters, digits, and underscores.
+
 `key BONE rotate|scale TIME VALUE` and `key BONE translate TIME X Y` add keys. A rotate or scale key replaces the bone's
 rotation or scale, and a translate key replaces its position. The keys of one property on one bone must be listed
 together, in increasing time order, and they must lie within the animation's length. A bone and property that appears
@@ -142,12 +146,27 @@ its last key after the end. A property with no keys keeps its rest value. A chil
 scaled space, and it inherits the parent's rotation and scale.
 
 `skeleton.Player` plays one animation. It holds a pointer to the data, the animation, and a time, and it offers `init`,
-`play`, `update(dt)`, `finished`, and `pose`. The player points into the data, so the data must outlive it.
+`play`, `update(dt)`, `finished`, and `pose`. `pollEvent()` returns crossed event markers in playback order. Up to 16
+events wait in its queue; excess events are dropped and counted in `dropped`. A looping clip emits a marker again each
+time playback crosses it.
+
+Root translation on bone 0 is extracted as motion. `rootMotionDelta()` returns the displacement from the most recent
+update, including loop wraps; apply it to the owning entity. Use `poseWithoutRootMotion()` when drawing that entity, so
+the root's accumulated translation is not applied a second time. The player points into the data, so the data must
+outlive it.
+
+`skeleton.BlendTree` blends a sorted set of `BlendNode { threshold, animation }` entries as a one-dimensional blend
+space. `BlendTree.init(&data, &nodes)` rejects empty trees, non-finite or unordered thresholds, invalid durations, and
+animations from another data set. `tree.evaluate(parameter, phase, &pose)` clamps the parameter to the endpoint clips
+or interpolates between the adjacent clips; `phase` is normalized time from zero to one and each clip is sampled at the
+same phase. Bone positions and scales are linear blends, and rotations use the shortest angular path. This API is
+allocation-free; the caller owns the node array and advances the normalized phase.
 
 `skeleton.place(bone, attachment)` returns one attachment's rectangle, origin, and rotation in the pose's pixels. The
 renderer's `engine.skeleton_draw.drawPose(batch, texture, data, pose, sheet_x, sheet_y, x, y, tint, alpha)` queues every
 attachment through `SpriteBatch.drawSprite`. The pivot stays on its bone, and the sprite turns with the bone.
 
-Version 1 has these limits. Keys interpolate linearly, and scale is uniform. There is no blending between two skeleton
-animations and no inverse kinematics. Attachments have no tint, flip, or draw order of their own, so they draw in file
-order. The warrior and the sample game do not use skeletons yet.
+Version 1 has these limits. Keys interpolate linearly, and scale is uniform. Blend trees are one-dimensional; the
+caller advances their normalized phase. Root motion is extracted from the first bone's translation track. There is no
+inverse kinematics. Attachments have no tint, flip, or draw order of their own, so they draw in file order. The warrior
+and the sample game do not use skeletons yet.

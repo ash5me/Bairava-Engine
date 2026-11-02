@@ -89,7 +89,108 @@ pub const Animation = struct {
     length: f32,
     looping: bool,
     tracks: []const Track,
+    events: []const EventMarker = &.{},
+    event_start: usize = 0,
 };
+
+/// An animation event at a time measured in seconds from the start of its clip.
+pub const EventMarker = struct {
+    time: f32,
+    name: []const u8,
+};
+
+/// An event emitted by `Player`, read with `pollEvent`.
+pub const Event = struct {
+    name: []const u8,
+};
+
+/// A point in a one-dimensional blend space. The animation is sampled at normalized clip time.
+pub const BlendNode = struct {
+    threshold: f32,
+    animation: *const Animation,
+};
+
+/// A piecewise-linear one-dimensional blend space over skeletal animations.
+pub const BlendTree = struct {
+    data: *const Data,
+    nodes: []const BlendNode,
+
+    pub fn init(data: *const Data, nodes: []const BlendNode) error{InvalidBlendTree}!BlendTree {
+        if (nodes.len == 0) return error.InvalidBlendTree;
+        for (nodes, 0..) |node, index| {
+            if (!std.math.isFinite(node.threshold) or !std.math.isFinite(node.animation.length) or node.animation.length <= 0) {
+                return error.InvalidBlendTree;
+            }
+            if (index > 0 and node.threshold <= nodes[index - 1].threshold) return error.InvalidBlendTree;
+            var belongs_to_data = false;
+            for (data.animation_storage[0..data.animation_count]) |*animation| {
+                if (animation == node.animation) {
+                    belongs_to_data = true;
+                    break;
+                }
+            }
+            if (!belongs_to_data) return error.InvalidBlendTree;
+        }
+        return .{ .data = data, .nodes = nodes };
+    }
+
+    /// Evaluates between the neighboring thresholds. `phase` is normalized clip time, clamped to 0..1.
+    pub fn evaluate(self: BlendTree, value: f32, phase: f32, out: *Pose) void {
+        const parameter = if (std.math.isFinite(value)) value else self.nodes[0].threshold;
+        const normalized_time = if (std.math.isFinite(phase)) std.math.clamp(phase, 0, 1) else 0;
+        if (parameter <= self.nodes[0].threshold) {
+            evaluateNode(self, self.nodes[0], normalized_time, out);
+            return;
+        }
+        const last = self.nodes.len - 1;
+        if (parameter >= self.nodes[last].threshold) {
+            evaluateNode(self, self.nodes[last], normalized_time, out);
+            return;
+        }
+        for (self.nodes[1..], 1..) |upper, index| {
+            if (parameter > upper.threshold) continue;
+            const lower = self.nodes[index - 1];
+            const weight = (parameter - lower.threshold) / (upper.threshold - lower.threshold);
+            var from = Pose{};
+            var to = Pose{};
+            evaluateNode(self, lower, normalized_time, &from);
+            evaluateNode(self, upper, normalized_time, &to);
+            blendPoses(from, to, weight, out);
+            return;
+        }
+        unreachable;
+    }
+};
+
+fn evaluateNode(tree: BlendTree, node: BlendNode, phase: f32, out: *Pose) void {
+    evaluate(tree.data, node.animation, phase * node.animation.length, out);
+}
+
+/// Blends every world-space bone transform, taking the shortest path between rotations.
+pub fn blendPoses(from: Pose, to: Pose, weight: f32, out: *Pose) void {
+    const t = std.math.clamp(weight, 0, 1);
+    out.count = @min(from.count, to.count);
+    for (0..out.count) |index| {
+        const a = from.bones[index];
+        const b = to.bones[index];
+        out.bones[index] = .{
+            .x = lerp(a.x, b.x, t),
+            .y = lerp(a.y, b.y, t),
+            .rotation = lerpAngle(a.rotation, b.rotation, t),
+            .scale = lerp(a.scale, b.scale, t),
+        };
+    }
+}
+
+fn lerp(a: f32, b: f32, t: f32) f32 {
+    return a + (b - a) * t;
+}
+
+fn lerpAngle(a: f32, b: f32, t: f32) f32 {
+    const tau = 2.0 * std.math.pi;
+    const difference = @mod(b - a + std.math.pi, tau) - std.math.pi;
+    return a + difference * t;
+}
 
 /// The world transform of every bone at one moment. `bones[i]` belongs to bone `i`, and only the first `count` are set.
 pub const Pose = struct {
@@ -104,6 +205,7 @@ pub const ParseError = std.mem.Allocator.Error || error{
     BadAttachment,
     BadAnimation,
     BadKey,
+    BadEvent,
     OutOfBounds,
     DuplicateName,
     UnknownBone,
@@ -149,6 +251,8 @@ pub const Data = struct {
     track_count: usize,
     key_storage: []Key,
     key_count: usize,
+    event_storage: []EventMarker,
+    event_count: usize,
 
     /// Parses skeleton text. `region_w` and `region_h` give the size of the source region that attachment rectangles
     /// are relative to, as they do for animation frames.
@@ -166,6 +270,8 @@ pub const Data = struct {
         errdefer allocator.free(tracks);
         const keys = try allocator.alloc(Key, capacity);
         errdefer allocator.free(keys);
+        const events = try allocator.alloc(EventMarker, capacity);
+        errdefer allocator.free(events);
 
         var result = Data{
             .allocator = allocator,
@@ -180,6 +286,8 @@ pub const Data = struct {
             .track_count = 0,
             .key_storage = keys,
             .key_count = 0,
+            .event_storage = events,
+            .event_count = 0,
         };
         var have_header = false;
         var in_animations = false;
@@ -214,6 +322,9 @@ pub const Data = struct {
             } else if (std.mem.eql(u8, keyword, "key")) {
                 if (!in_animations) return error.BadKey;
                 track_key_start = try result.addKey(fields, first_track, track_key_start);
+            } else if (std.mem.eql(u8, keyword, "event")) {
+                if (!in_animations) return error.BadEvent;
+                try result.addEvent(fields);
             } else {
                 return error.BadHeader;
             }
@@ -226,6 +337,7 @@ pub const Data = struct {
 
     pub fn deinit(self: *Data) void {
         self.allocator.free(self.key_storage);
+        self.allocator.free(self.event_storage);
         self.allocator.free(self.track_storage);
         self.allocator.free(self.animation_storage);
         self.allocator.free(self.attachment_storage);
@@ -342,8 +454,23 @@ pub const Data = struct {
             .length = length,
             .looping = looping,
             .tracks = self.track_storage[self.track_count..self.track_count],
+            .events = self.event_storage[self.event_count..self.event_count],
+            .event_start = self.event_count,
         };
         self.animation_count += 1;
+    }
+
+    // `event TIME NAME` adds a marker to the current animation.
+    fn addEvent(self: *Data, fields: []const []const u8) ParseError!void {
+        if (fields.len != 3 or self.animation_count == 0) return error.BadEvent;
+        const animation = &self.animation_storage[self.animation_count - 1];
+        const time = try parseFinite(fields[1], error.BadEvent);
+        if (time < 0 or time > animation.length or !validName(fields[2])) return error.BadEvent;
+        if (self.event_count == self.event_storage.len) return error.BadEvent;
+        if (animation.events.len > 0 and time < animation.events[animation.events.len - 1].time) return error.BadEvent;
+        self.event_storage[self.event_count] = .{ .time = time, .name = fields[2] };
+        self.event_count += 1;
+        animation.events = self.event_storage[animation.event_start..self.event_count];
     }
 
     // `key BONE rotate|scale TIME VALUE` or `key BONE translate TIME X Y`. The keys of one track must be contiguous and
@@ -449,12 +576,25 @@ pub fn place(bone: World, attachment: Attachment) Placement {
     };
 }
 
+/// Maximum number of skeletal animation events waiting to be polled.
+pub const event_queue_len = 16;
+
+const EventOccurrence = struct {
+    offset: f32,
+    name: []const u8,
+};
+
 /// Plays one animation of a skeleton. The player points into the data, so the data must outlive it.
 pub const Player = struct {
     data: *const Data,
     animation: *const Animation,
     /// Seconds into the animation. A looping animation keeps it inside one play-through.
     time: f32 = 0,
+    /// Root-bone translation produced by the most recent update, in skeleton-space pixels.
+    root_motion_delta: [2]f32 = .{ 0, 0 },
+    queue: [event_queue_len]Event = undefined,
+    queued: usize = 0,
+    dropped: u32 = 0,
 
     pub fn init(data: *const Data, animation: *const Animation) Player {
         return .{ .data = data, .animation = animation };
@@ -471,11 +611,14 @@ pub const Player = struct {
     pub fn update(self: *Player, dt: f32) void {
         if (!std.math.isFinite(dt) or dt <= 0) return;
         const length = self.animation.length;
+        const previous_time = self.time;
+        self.root_motion_delta = rootMotionBetween(self.data, self.animation, previous_time, dt);
         if (self.animation.looping) {
             self.time = @mod(self.time + dt, length);
         } else {
             self.time = @min(self.time + dt, length);
         }
+        self.collectEvents(previous_time, dt);
     }
 
     /// True when a one-shot animation has reached its end.
@@ -487,7 +630,130 @@ pub const Player = struct {
     pub fn pose(self: *const Player, out: *Pose) void {
         evaluate(self.data, self.animation, self.time, out);
     }
+
+    /// Evaluates a pose with accumulated root translation removed from the root bone. Pair this with
+    /// `rootMotionDelta` when applying movement to the owning entity to avoid moving twice.
+    pub fn poseWithoutRootMotion(self: *const Player, out: *Pose) void {
+        evaluate(self.data, self.animation, self.time, out);
+        if (out.count == 0) return;
+        const origin = rootPositionAt(self.data, self.animation, 0);
+        const current = rootPositionAt(self.data, self.animation, self.time);
+        out.bones[0].x -= current[0] - origin[0];
+        out.bones[0].y -= current[1] - origin[1];
+    }
+
+    /// Root displacement from the most recent update. It is zero before the first update.
+    pub fn rootMotionDelta(self: *const Player) [2]f32 {
+        return self.root_motion_delta;
+    }
+
+    /// The next queued event, oldest first, or null when none is waiting.
+    pub fn pollEvent(self: *Player) ?Event {
+        if (self.queued == 0) return null;
+        const event = self.queue[0];
+        var index: usize = 1;
+        while (index < self.queued) : (index += 1) self.queue[index - 1] = self.queue[index];
+        self.queued -= 1;
+        return event;
+    }
+
+    fn collectEvents(self: *Player, previous_time: f32, dt: f32) void {
+        var occurrences: [event_queue_len]EventOccurrence = undefined;
+        var occurrence_count: usize = 0;
+        var total: u64 = 0;
+        const length = self.animation.length;
+
+        for (self.animation.events) |marker| {
+            if (!self.animation.looping) {
+                if (marker.time <= previous_time or marker.time > previous_time + dt) continue;
+                total += 1;
+                insertOccurrence(&occurrences, &occurrence_count, .{
+                    .offset = marker.time - previous_time,
+                    .name = marker.name,
+                });
+                continue;
+            }
+
+            const first = if (marker.time > previous_time)
+                marker.time - previous_time
+            else
+                length - previous_time + marker.time;
+            if (first > dt) continue;
+            const hits_float = @floor((@as(f64, dt) - @as(f64, first)) / @as(f64, length)) + 1.0;
+            const hits = if (hits_float >= @as(f64, @floatFromInt(std.math.maxInt(u64))))
+                std.math.maxInt(u64)
+            else
+                @as(u64, @intFromFloat(hits_float));
+            total = if (hits > std.math.maxInt(u64) - total) std.math.maxInt(u64) else total + hits;
+            const retained = @min(hits, event_queue_len);
+            var hit_index: usize = 0;
+            while (hit_index < retained) : (hit_index += 1) {
+                insertOccurrence(&occurrences, &occurrence_count, .{
+                    .offset = first + @as(f32, @floatFromInt(hit_index)) * length,
+                    .name = marker.name,
+                });
+            }
+        }
+
+        const available = event_queue_len - self.queued;
+        const delivered = @min(occurrence_count, available);
+        for (occurrences[0..delivered]) |occurrence| {
+            self.queue[self.queued] = .{ .name = occurrence.name };
+            self.queued += 1;
+        }
+        const dropped_now = total - delivered;
+        self.dropped = @intCast(@min(@as(u64, self.dropped) + dropped_now, std.math.maxInt(u32)));
+    }
 };
+
+fn insertOccurrence(items: *[event_queue_len]EventOccurrence, count: *usize, occurrence: EventOccurrence) void {
+    var index: usize = 0;
+    while (index < count.* and items[index].offset <= occurrence.offset) : (index += 1) {}
+    if (count.* == event_queue_len and index == event_queue_len) return;
+    const new_count = @min(count.* + 1, event_queue_len);
+    var move = new_count;
+    while (move > index + 1) : (move -= 1) items[move - 1] = items[move - 2];
+    items[index] = occurrence;
+    count.* = new_count;
+}
+
+fn rootMotionBetween(data: *const Data, animation: *const Animation, start: f32, dt: f32) [2]f32 {
+    if (!animation.looping) {
+        const before = rootPositionAt(data, animation, start);
+        const after = rootPositionAt(data, animation, @min(start + dt, animation.length));
+        return .{ after[0] - before[0], after[1] - before[1] };
+    }
+
+    const end_time = start + dt;
+    const before = rootPositionUnwrapped(data, animation, start);
+    const after = rootPositionUnwrapped(data, animation, end_time);
+    return .{ after[0] - before[0], after[1] - before[1] };
+}
+
+fn rootPositionUnwrapped(data: *const Data, animation: *const Animation, time: f32) [2]f32 {
+    const length = animation.length;
+    const cycles = @floor(time / length);
+    const local_time = @mod(time, length);
+    const origin = rootPositionAt(data, animation, 0);
+    const end = rootPositionAt(data, animation, length);
+    const current = rootPositionAt(data, animation, local_time);
+    return .{
+        cycles * (end[0] - origin[0]) + current[0],
+        cycles * (end[1] - origin[1]) + current[1],
+    };
+}
+
+fn rootPositionAt(data: *const Data, animation: *const Animation, time: f32) [2]f32 {
+    const root = data.bone_storage[0].rest;
+    var position = [2]f32{ root.x, root.y };
+    for (animation.tracks) |track| {
+        if (track.bone != 0 or track.kind != .translate or track.keys.len == 0) continue;
+        const sampled = sampleKeys(track.keys, time, animation.length, false);
+        position = sampled;
+        break;
+    }
+    return position;
+}
 
 fn compose(parent: World, local: Local) World {
     const c = @cos(parent.rotation);
@@ -589,6 +855,8 @@ test "skeleton data rejects bad versions, names, parents, bounds, and key order"
     try std.testing.expectError(error.BadKey, Data.parse(allocator, "skeleton 1\nbone root - 0 0 0 1\nanim a once 1\nkey root rotate 1.5 0\n", 16, 16));
     try std.testing.expectError(error.BadKey, Data.parse(allocator, "skeleton 1\nbone root - 0 0 0 1\nanim a loop 1\nkey root scale 0 0\n", 16, 16));
     try std.testing.expectError(error.BadKey, Data.parse(allocator, "skeleton 1\nbone root - 0 0 0 1\nanim a loop 1\nkey root rotate 0 0\nkey root translate 0.5 1 1\nkey root rotate 0.8 1\n", 16, 16));
+    try std.testing.expectError(error.BadEvent, Data.parse(allocator, "skeleton 1\nbone root - 0 0 0 1\nanim a loop 1\nevent 1.1 footstep\n", 16, 16));
+    try std.testing.expectError(error.BadEvent, Data.parse(allocator, "skeleton 1\nbone root - 0 0 0 1\nanim a once 1\nevent 0.8 late\nevent 0.2 early\n", 16, 16));
 }
 
 test "a child's world transform follows its parent's rotation and scale" {
@@ -697,4 +965,76 @@ test "a player wraps a looping animation and holds a one-shot at its end" {
     player.update(5);
     try std.testing.expect(player.finished());
     try std.testing.expectApproxEqAbs(@as(f32, 2), player.time, 1e-5);
+}
+
+test "a blend tree interpolates neighboring animations at normalized time" {
+    const source =
+        \\skeleton 1
+        \\bone root - 0 0 0 1
+        \\anim idle once 1
+        \\key root translate 0 0 0
+        \\key root translate 1 0 0
+        \\anim run once 2
+        \\key root translate 0 0 0
+        \\key root translate 2 10 0
+    ;
+    var data = try Data.parse(std.testing.allocator, source, 16, 16);
+    defer data.deinit();
+    const nodes = [_]BlendNode{
+        .{ .threshold = 0, .animation = data.findAnimation("idle").? },
+        .{ .threshold = 1, .animation = data.findAnimation("run").? },
+    };
+    const tree = try BlendTree.init(&data, &nodes);
+    var pose = Pose{};
+    tree.evaluate(0.5, 0.5, &pose);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.5), pose.bones[0].x, 1e-5);
+    tree.evaluate(-1, 0.5, &pose);
+    try std.testing.expectApproxEqAbs(@as(f32, 0), pose.bones[0].x, 1e-5);
+    try std.testing.expectError(error.InvalidBlendTree, BlendTree.init(&data, &.{}));
+    const unsorted = [_]BlendNode{ nodes[1], nodes[0] };
+    try std.testing.expectError(error.InvalidBlendTree, BlendTree.init(&data, &unsorted));
+}
+
+test "a skeletal player emits crossed events in order and extracts looping root motion" {
+    const source =
+        \\skeleton 1
+        \\bone root - 0 0 0 1
+        \\anim walk loop 1
+        \\event 0.25 left_foot
+        \\event 0.75 right_foot
+        \\key root translate 0 0 0
+        \\key root translate 1 10 0
+    ;
+    var data = try Data.parse(std.testing.allocator, source, 16, 16);
+    defer data.deinit();
+    var player = Player.init(&data, data.findAnimation("walk").?);
+
+    player.update(0.5);
+    try std.testing.expectApproxEqAbs(@as(f32, 5), player.rootMotionDelta()[0], 1e-5);
+    var pose = Pose{};
+    player.poseWithoutRootMotion(&pose);
+    try std.testing.expectApproxEqAbs(@as(f32, 0), pose.bones[0].x, 1e-5);
+    const initial_event = player.pollEvent() orelse return error.TestExpectedEvent;
+    try std.testing.expectEqualStrings("left_foot", initial_event.name);
+
+    player.update(0.75);
+    try std.testing.expectApproxEqAbs(@as(f32, 7.5), player.rootMotionDelta()[0], 1e-5);
+    const first = player.pollEvent() orelse return error.TestExpectedEvent;
+    const second = player.pollEvent() orelse return error.TestExpectedEvent;
+    try std.testing.expectEqualStrings("right_foot", first.name);
+    try std.testing.expectEqualStrings("left_foot", second.name);
+    try std.testing.expect(player.pollEvent() == null);
+}
+
+test "a skeletal player's bounded event queue counts every excess loop event" {
+    const source = "skeleton 1\nbone root - 0 0 0 1\nanim loop loop 0.2\nevent 0.1 tick\n";
+    var data = try Data.parse(std.testing.allocator, source, 16, 16);
+    defer data.deinit();
+    var player = Player.init(&data, data.findAnimation("loop").?);
+    player.update(100);
+    try std.testing.expectEqual(@as(usize, event_queue_len), player.queued);
+    try std.testing.expectEqual(@as(u32, 484), player.dropped);
+    var count: usize = 0;
+    while (player.pollEvent()) |_| count += 1;
+    try std.testing.expectEqual(event_queue_len, count);
 }

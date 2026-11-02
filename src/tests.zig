@@ -90,6 +90,8 @@ test {
     _ = @import("engine/navigation/grid.zig");
     _ = @import("engine/navigation/pathfind.zig");
     _ = @import("engine/navigation/follow.zig");
+    _ = @import("engine/navigation/agent.zig");
+    _ = @import("engine/ai.zig");
     _ = @import("game/enemy_ai.zig");
 }
 

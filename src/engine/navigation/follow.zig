@@ -70,6 +70,13 @@ pub const Follower = struct {
     /// Collision is the same as for the player: the box slides along walls and stops where a solid tile blocks it.
     /// `moved` tells the caller whether the box went anywhere this step.
     pub fn step(self: *Follower, map: *const tilemap.TileMap, box: tilemap.Box, speed: f32, dt: f32) tilemap.Point {
+        if (!std.math.isFinite(speed) or speed <= 0 or !std.math.isFinite(dt) or dt <= 0 or
+            !std.math.isFinite(box.x) or !std.math.isFinite(box.y) or
+            !std.math.isFinite(box.w) or !std.math.isFinite(box.h) or box.w <= 0 or box.h <= 0)
+        {
+            self.moved = false;
+            return .{ .x = box.x, .y = box.y };
+        }
         var position = tilemap.Point{ .x = box.x, .y = box.y };
 
         // Waypoints the box has already reached are passed. An open one is also snapped to, so the box lines up with
@@ -237,4 +244,21 @@ test "a box that starts off-center on an open waypoint snaps onto its center" {
     try std.testing.expectApproxEqAbs(@as(f32, 32), next.x, 1e-4);
     try std.testing.expectApproxEqAbs(@as(f32, 32), next.y, 1e-4);
     try std.testing.expect(follower.atGoal());
+}
+
+test "invalid movement steps do not corrupt a route or position" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, open_text);
+    defer map.deinit(allocator);
+    var follower = Follower{};
+    follower.buffer()[0] = .{ .col = 1, .row = 1 };
+    follower.buffer()[1] = .{ .col = 4, .row = 1 };
+    follower.commit(2);
+    const box = tilemap.Box{ .x = 16, .y = 16, .w = 16, .h = 16 };
+
+    const result = follower.step(&map, box, 60, std.math.nan(f32));
+    try std.testing.expectEqual(box.x, result.x);
+    try std.testing.expectEqual(box.y, result.y);
+    try std.testing.expect(follower.hasPath());
+    try std.testing.expect(!follower.moved);
 }

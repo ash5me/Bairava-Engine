@@ -5,6 +5,7 @@
 const grid = @import("grid.zig");
 const pathfind = @import("pathfind.zig");
 const follow = @import("follow.zig");
+const agent = @import("agent.zig");
 
 /// A cell of the map, counted from the top-left corner.
 pub const Cell = grid.Cell;
@@ -22,3 +23,6 @@ pub const FindError = pathfind.FindError;
 pub const Follower = follow.Follower;
 /// The most cells one route may hold.
 pub const max_path = follow.max_path;
+
+/// Owns an A* pathfinder and a follower for an entity navigating to one goal.
+pub const Agent = agent.Agent;

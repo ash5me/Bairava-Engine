@@ -49,6 +49,7 @@ pub const Brain = struct {
 
     /// Moves the decision on by one update step of `dt` seconds, and returns the order the enemy's code must carry out.
     pub fn update(self: *Brain, senses: Senses, dt: f32) Order {
+        if (!std.math.isFinite(dt) or dt <= 0) return .none;
         switch (self.state) {
             .idle => {
                 if (senses.sees_target) return self.enter(.chase, .chase);
@@ -173,4 +174,12 @@ test "waits stay inside the idle range, and the same seed gives the same waits" 
         try std.testing.expectEqual(a, b);
         try std.testing.expect(a >= idle_min and a <= idle_max);
     }
+}
+
+test "invalid update steps do not advance the brain timers or state" {
+    var brain = Brain{ .seed = 13, .timer = 0.5, .wait = 1.0 };
+    const order = brain.update(.{ .sees_target = true, .path_done = false }, std.math.nan(f32));
+    try std.testing.expectEqual(Order.none, order);
+    try std.testing.expectEqual(State.idle, brain.state);
+    try std.testing.expectEqual(@as(f32, 0.5), brain.timer);
 }
