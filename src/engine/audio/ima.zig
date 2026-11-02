@@ -68,7 +68,9 @@ fn readU32(bytes: []const u8) u32 {
     return @as(u32, bytes[0]) | (@as(u32, bytes[1]) << 8) | (@as(u32, bytes[2]) << 16) | (@as(u32, bytes[3]) << 24);
 }
 
-fn decodeNibble(code: u4, step_index: *i32, predictor: i32) i32 {
+/// Applies one 4-bit code to a predictor and its step index, and returns the new predictor. The whole-file decoder and
+/// the streaming decoder both use it, so they cannot disagree.
+pub fn decodeNibble(code: u4, step_index: *i32, predictor: i32) i32 {
     const code_value: i32 = code;
     const step = step_table[@intCast(step_index.*)];
     var difference = step >> 3;

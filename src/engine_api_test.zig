@@ -63,6 +63,7 @@ test "engine resource fields do not expose SDL types" {
     expectNoSdlApi(bairava.ui.Ui);
     expectNoSdlApi(bairava.audio.Audio);
     expectNoSdlApi(bairava.audio.Sound);
+    expectNoSdlApi(bairava.audio.StreamedSound);
     expectNoSdlApi(bairava.Input);
 }
 

@@ -50,6 +50,7 @@ test {
     _ = @import("engine/audio/spatial.zig");
     _ = @import("engine/audio/audio.zig");
     _ = @import("engine/audio/ima.zig");
+    _ = @import("engine/audio/streaming.zig");
     _ = @import("engine/assets/loaders/image.zig");
     _ = @import("engine/assets/loaders/atlas.zig");
     _ = @import("engine/memory/vector.zig");

@@ -134,6 +134,11 @@ pub fn feedTarget(positional: bool, whole_bytes: usize, lookahead_bytes: usize) 
     return if (positional) lookahead_bytes else whole_bytes;
 }
 
+/// How many bytes a streamed voice keeps queued: `seconds` of frames at `sample_rate`, each `frame_bytes` long.
+pub fn streamTargetBytes(sample_rate: u32, frame_bytes: usize, seconds: u32) usize {
+    return @as(usize, sample_rate) * frame_bytes * @as(usize, seconds);
+}
+
 /// True when a stream holds less than its target, so the voice needs more input queued. Adding input before the queue
 /// runs dry is what keeps a loop seamless.
 pub fn needsInput(queued_bytes: i32, target_bytes: usize) bool {
@@ -247,6 +252,12 @@ test "a positional voice keeps its lookahead queued, rather than a whole sound" 
     try std.testing.expect(needsInput(3999, 4000));
     try std.testing.expect(!needsInput(4000, 4000));
     try std.testing.expect(needsInput(-1, 4000));
+}
+
+test "a streamed voice keeps whole seconds of frames queued, at the device's rate" {
+    try std.testing.expectEqual(@as(usize, 48000 * 8), streamTargetBytes(48000, 8, 1));
+    try std.testing.expectEqual(@as(usize, 0), streamTargetBytes(48000, 8, 0));
+    try std.testing.expect(needsInput(0, streamTargetBytes(22050, 4, 1)));
 }
 
 test "whole bytes drop a partial frame at the end" {

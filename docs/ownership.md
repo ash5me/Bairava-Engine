@@ -35,6 +35,7 @@ it is returned and must release it.
 | Atlas | `ctx.loadAtlas` | `LoadedAtlas.deinit` |
 | UI font | `ctx.loadFont`, then passed to `ui.Ui.init` | `Ui.deinit` |
 | Sound | `ctx.loadSound` | `Sound.deinit` |
+| Streamed sound | `ctx.openStreamed` | Nothing to free. Each playing voice opens its own reader and closes it when the voice ends |
 | File bytes | `ctx.readFile(allocator, ...)` | the caller, with the same allocator |
 
 The debug overlay takes ownership of its font when it is created, and `Overlay.deinit` frees it.

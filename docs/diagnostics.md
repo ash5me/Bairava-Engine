@@ -59,7 +59,7 @@ A name list keeps 72 bytes of joined names. Names past that are counted and show
 
 ## Audio state
 
-The `audio` console command prints whether a playback device is open and its sample rate and channel count, the busy and maximum voice counts, the master gain, and the first three busy voices. Each voice line gives whether it loops, its own gain, and the length of its sound in bytes. Sounds do not keep their names yet, so voices are listed by slot.
+The `audio` console command prints whether a playback device is open and its sample rate and channel count, the busy and maximum voice counts, the master gain, and the first three busy voices. Each voice line gives whether it loops, its own gain, and the length of its sound in bytes. A streamed voice reports the size of its file. Sounds do not keep their names yet, so voices are listed by slot.
 
 ## Scene hierarchy
 

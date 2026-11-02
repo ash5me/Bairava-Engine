@@ -119,6 +119,10 @@ pub const AudioDevice = opaque {};
 /// A playback stream that is bound to a device. Like `AudioDevice`, the backend gives it meaning.
 pub const AudioStream = opaque {};
 
+/// A file open for reads at chosen offsets, so a stream can read it a piece at a time. Only the SDL backend knows what
+/// it holds. Close it with `platform.files.close`.
+pub const OpenFile = opaque {};
+
 /// Bounded text from one platform text-input event, copied out of the backend's event storage.
 pub const TextInput = struct {
     bytes: [32]u8 = undefined,

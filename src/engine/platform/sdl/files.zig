@@ -108,6 +108,65 @@ pub fn modifiedNs(location: Location, path: []const u8) ?i64 {
     return @as(i64, @intCast(info.modify_time));
 }
 
+/// Opens a file for reads at chosen offsets. `error.NotFound` means the path does not exist. Any other failure to open is
+/// `ReadFailed`. Close the file with `close`.
+pub fn open(location: Location, path: []const u8) FileError!*types.OpenFile {
+    var buf: [max_full_path]u8 = undefined;
+    const full = try absolutePath(location, path, &buf);
+    var info: c.SDL_PathInfo = undefined;
+    if (!c.SDL_GetPathInfo(full.ptr, &info)) return error.NotFound;
+    const io = c.SDL_IOFromFile(full.ptr, "rb") orelse return error.ReadFailed;
+    const file: *types.OpenFile = @ptrCast(io);
+    return file;
+}
+
+/// Closes a file made by `open`.
+pub fn close(file: *types.OpenFile) void {
+    _ = c.SDL_CloseIO(ioOf(file));
+}
+
+/// The size of an open file, in bytes.
+pub fn fileSize(file: *types.OpenFile) FileError!u64 {
+    const bytes = c.SDL_GetIOSize(ioOf(file));
+    if (bytes < 0) return error.ReadFailed;
+    return @as(u64, @intCast(bytes));
+}
+
+/// Reads up to `dst.len` bytes of an open file, starting at `offset`, and returns how many were read. SDL gives 0 both at
+/// the end of the file and on a failure, so a caller that needs a full count treats a 0 as an error.
+pub fn readAt(file: *types.OpenFile, offset: u64, dst: []u8) FileError!usize {
+    if (dst.len == 0) return 0;
+    if (offset > std.math.maxInt(i64)) return error.ReadFailed;
+    const io = ioOf(file);
+    if (c.SDL_SeekIO(io, @intCast(offset), c.SDL_IO_SEEK_SET) < 0) return error.ReadFailed;
+    return c.SDL_ReadIO(io, dst.ptr, dst.len);
+}
+
+fn ioOf(file: *types.OpenFile) *c.SDL_IOStream {
+    return @ptrCast(file);
+}
+
+test "an open file reads from any offset, and reports its size" {
+    const name = "stream_files_test.tmp";
+    try write(.beside_executable, name, "0123456789");
+    var buf: [max_full_path]u8 = undefined;
+    const full = try absolutePath(.beside_executable, name, &buf);
+    defer _ = c.SDL_RemovePath(full.ptr);
+
+    const file = try open(.beside_executable, name);
+    defer close(file);
+    try std.testing.expectEqual(@as(u64, 10), try fileSize(file));
+    var out: [4]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 4), try readAt(file, 3, &out));
+    try std.testing.expectEqualSlices(u8, "3456", &out);
+    // Past the end there is nothing to read.
+    try std.testing.expectEqual(@as(usize, 0), try readAt(file, 10, &out));
+}
+
+test "a missing file can't be opened for streaming" {
+    try std.testing.expectError(error.NotFound, open(.packaged, "stream_no_such_file.tmp"));
+}
+
 test "a missing file has no modification time" {
     try std.testing.expectEqual(@as(?i64, null), modifiedNs(.packaged, "no-such-file-for-the-test.txt"));
 }

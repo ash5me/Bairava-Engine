@@ -81,6 +81,21 @@ pub fn putStreamData(stream: *types.AudioStream, bytes: []const u8) bool {
     return c.SDL_PutAudioStreamData(streamOf(stream), bytes.ptr, @intCast(bytes.len));
 }
 
+/// A stream that turns PCM from `src` into `dst`, with no device. Bytes go in as `src` and come out as `dst`. It keeps
+/// its resampling state between puts, so a sound fed in pieces converts the same as one fed whole.
+pub fn createConverter(src: types.PcmFormat, dst: types.PcmFormat) ?*types.AudioStream {
+    const src_spec = toSpec(src) orelse return null;
+    const dst_spec = toSpec(dst) orelse return null;
+    const stream = c.SDL_CreateAudioStream(&src_spec, &dst_spec) orelse return null;
+    return streamHandle(stream);
+}
+
+/// Copies converted bytes out of a stream into `out`. Returns how many were copied, or -1 when SDL refuses.
+pub fn getStreamData(stream: *types.AudioStream, out: []u8) i32 {
+    if (out.len > std.math.maxInt(c_int)) return -1;
+    return @intCast(c.SDL_GetAudioStreamData(streamOf(stream), out.ptr, @intCast(out.len)));
+}
+
 /// Pushes out whatever the stream still holds, so a non-looping sound can finish.
 pub fn flushStream(stream: *types.AudioStream) void {
     _ = c.SDL_FlushAudioStream(streamOf(stream));
@@ -228,6 +243,20 @@ test "WAV decoding rejects bytes that are not a WAV file" {
 
     try std.testing.expectError(error.DecodeFailed, decodeWav(std.testing.allocator, "this is not a wav file"));
     try std.testing.expectError(error.DecodeFailed, decodeWav(std.testing.allocator, ""));
+}
+
+test "a converter turns mono PCM into stereo float, in whole frames, without a device" {
+    const src = types.PcmFormat{ .sample_rate = 22050, .channels = 1, .kind = .int16 };
+    const dst = types.PcmFormat{ .sample_rate = 48000, .channels = 2, .kind = .float32 };
+    const converter = createConverter(src, dst) orelse return error.SkipZigTest;
+    defer destroyStream(converter);
+    try std.testing.expect(putStreamData(converter, &.{ 0xE8, 0x03, 0x18, 0xFC }));
+    flushStream(converter);
+    var out: [256]u8 = undefined;
+    const got = getStreamData(converter, &out);
+    try std.testing.expect(got > 0);
+    // Two channels of four-byte floats make eight bytes a frame.
+    try std.testing.expectEqual(@as(i32, 0), @rem(got, 8));
 }
 
 test "conversion to the same format returns the same samples" {

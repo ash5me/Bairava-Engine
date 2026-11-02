@@ -22,6 +22,7 @@ pub const FileError = types.FileError;
 pub const max_full_path = types.max_full_path;
 pub const AudioDevice = types.AudioDevice;
 pub const AudioStream = types.AudioStream;
+pub const OpenFile = types.OpenFile;
 pub const PcmFormat = types.PcmFormat;
 pub const PcmBuffer = types.PcmBuffer;
 pub const OpenedAudio = types.OpenedAudio;
@@ -89,6 +90,27 @@ pub const files = struct {
     /// can't be examined. Hot reload compares these to notice a change.
     pub fn modifiedNs(location: Location, path: []const u8) ?i64 {
         return sdl_files.modifiedNs(location, path);
+    }
+
+    /// Opens a file for reads at chosen offsets, so a stream can read it a piece at a time. `error.NotFound` means the
+    /// path does not exist. Close the file with `close`.
+    pub fn open(location: Location, path: []const u8) FileError!*types.OpenFile {
+        return sdl_files.open(location, path);
+    }
+
+    /// Closes a file made by `open`.
+    pub fn close(file: *types.OpenFile) void {
+        sdl_files.close(file);
+    }
+
+    /// The size of an open file, in bytes.
+    pub fn size(file: *types.OpenFile) FileError!u64 {
+        return sdl_files.fileSize(file);
+    }
+
+    /// Reads up to `dst.len` bytes of an open file, starting at `offset`. Returns how many were read.
+    pub fn readAt(file: *types.OpenFile, offset: u64, dst: []u8) FileError!usize {
+        return sdl_files.readAt(file, offset, dst);
     }
 };
 
@@ -196,6 +218,18 @@ pub const audio = struct {
     /// Converted bytes a stream holds ready to play.
     pub fn streamAvailableBytes(stream: *types.AudioStream) i32 {
         return sdl_audio.streamAvailableBytes(stream);
+    }
+
+    /// A stream that turns PCM from `src` into `dst`, with no device, for sound that is decoded a piece at a time. Bytes
+    /// go in as `src` and come out as `dst`, and the stream keeps its resampling state between them. Free it with
+    /// `destroyStream`.
+    pub fn createConverter(src: types.PcmFormat, dst: types.PcmFormat) ?*types.AudioStream {
+        return sdl_audio.createConverter(src, dst);
+    }
+
+    /// Copies converted bytes out of a stream into `out`. Returns how many were copied, or -1 when the platform refuses.
+    pub fn getStreamData(stream: *types.AudioStream, out: []u8) i32 {
+        return sdl_audio.getStreamData(stream, out);
     }
 
     /// Decodes WAV bytes into PCM the caller owns. Needs no device.

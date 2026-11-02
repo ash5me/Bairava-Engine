@@ -255,6 +255,13 @@ pub const Context = struct {
         return self.audio.loadSound(self.allocators.asset, relative);
     }
 
+    /// Opens a long sound to stream from disk, so only a chunk of it is in memory at a time. Use it for music and
+    /// ambience, and `loadSound` for short effects. Play the result with `ctx.audio.playStreamed`. Nothing needs freeing:
+    /// each voice opens and closes its own reader.
+    pub fn openStreamed(self: *const Context, relative: []const u8) audio.Error!audio.StreamedSound {
+        return self.audio.openStreamed(relative);
+    }
+
     /// Reads a whole packaged file using `allocator`. The caller owns the result and frees it with
     /// that allocator. A missing file gives `error.FileNotFound`; other failures give `error.ReadFailed`.
     pub fn readFile(_: *const Context, allocator: std.mem.Allocator, relative: []const u8) ![]u8 {
