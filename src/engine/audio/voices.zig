@@ -115,16 +115,52 @@ fn clamp01(x: f32) f32 {
     return x;
 }
 
-/// A voice has finished when it isn't looping and nothing is left in its stream, neither queued
-/// input nor converted output. A looping voice never finishes on its own.
-pub fn isFinished(looping: bool, queued_bytes: i32, available_bytes: i32) bool {
-    return !looping and queued_bytes <= 0 and available_bytes <= 0;
+/// A voice has finished when it isn't looping, its whole sound has been fed to its stream, and nothing is left in the
+/// stream, neither queued input nor converted output. A looping voice never finishes on its own.
+pub fn isFinished(looping: bool, fed: bool, queued_bytes: i32, available_bytes: i32) bool {
+    return !looping and fed and queued_bytes <= 0 and available_bytes <= 0;
 }
 
-/// A looping voice needs another copy of its sound when less than one full copy is still queued.
-/// Adding the copy before the queue runs dry is what keeps the loop seamless.
-pub fn needsLoopCopy(queued_bytes: i32, sound_bytes: i32) bool {
-    return queued_bytes < sound_bytes;
+/// The bytes of a sound that make up whole frames: its length, less any partial frame at the end.
+pub fn wholeBytes(sound_bytes: usize, frame_bytes: usize) usize {
+    if (frame_bytes == 0) return 0;
+    return sound_bytes - sound_bytes % frame_bytes;
+}
+
+/// How many bytes a voice keeps queued ahead of playback. A positional voice keeps `lookahead_bytes`, so a change of
+/// pan or distance reaches the output within that much time. Any other voice keeps a full copy of its sound queued, as
+/// it always has, so a long stall in the game loop can't leave it silent.
+pub fn feedTarget(positional: bool, whole_bytes: usize, lookahead_bytes: usize) usize {
+    return if (positional) lookahead_bytes else whole_bytes;
+}
+
+/// True when a stream holds less than its target, so the voice needs more input queued. Adding input before the queue
+/// runs dry is what keeps a loop seamless.
+pub fn needsInput(queued_bytes: i32, target_bytes: usize) bool {
+    if (queued_bytes < 0) return true;
+    return @as(u64, @intCast(queued_bytes)) < target_bytes;
+}
+
+/// A run of bytes of a sound to feed next: `len` bytes from offset `start`.
+pub const Run = struct {
+    start: usize,
+    len: usize,
+};
+
+/// The next run of whole frames to feed from `cursor`, at most `max_bytes` long. `whole_bytes` is the sound's length in
+/// whole frames. A looping sound wraps to its start after its last frame. Returns null when nothing can be fed: a
+/// non-looping sound is at its end, or no whole frame fits in `max_bytes`.
+pub fn nextRun(cursor: usize, whole_bytes: usize, frame_bytes: usize, max_bytes: usize, looping: bool) ?Run {
+    if (frame_bytes == 0 or whole_bytes == 0) return null;
+    var start = cursor;
+    if (start >= whole_bytes) {
+        if (!looping) return null;
+        start = 0;
+    }
+    const cap = max_bytes - max_bytes % frame_bytes;
+    const len = @min(cap, whole_bytes - start);
+    if (len == 0) return null;
+    return .{ .start = start, .len = len };
 }
 
 test "acquire hands out distinct handles until the pool is full" {
@@ -189,16 +225,66 @@ test "gain multiplies voice and master gain, each clamped to [0, 1]" {
     try std.testing.expectEqual(@as(f32, 0.5), effectiveGain(1.0, 0.5));
 }
 
-test "a non-looping voice finishes only when nothing is queued or available" {
-    try std.testing.expect(!isFinished(false, 100, 0));
-    try std.testing.expect(!isFinished(false, 0, 64));
-    try std.testing.expect(isFinished(false, 0, 0));
-    try std.testing.expect(!isFinished(true, 0, 0));
+test "a non-looping voice finishes only when it is fed and nothing is queued or available" {
+    try std.testing.expect(!isFinished(false, true, 100, 0));
+    try std.testing.expect(!isFinished(false, true, 0, 64));
+    try std.testing.expect(!isFinished(false, false, 0, 0));
+    try std.testing.expect(isFinished(false, true, 0, 0));
+    try std.testing.expect(!isFinished(true, true, 0, 0));
 }
 
 test "a looping voice is topped up when less than one copy is queued" {
-    try std.testing.expect(needsLoopCopy(0, 1000));
-    try std.testing.expect(needsLoopCopy(999, 1000));
-    try std.testing.expect(!needsLoopCopy(1000, 1000));
-    try std.testing.expect(!needsLoopCopy(1500, 1000));
+    const target = feedTarget(false, 1000, 4000);
+    try std.testing.expectEqual(@as(usize, 1000), target);
+    try std.testing.expect(needsInput(0, target));
+    try std.testing.expect(needsInput(999, target));
+    try std.testing.expect(!needsInput(1000, target));
+    try std.testing.expect(!needsInput(1500, target));
+}
+
+test "a positional voice keeps its lookahead queued, rather than a whole sound" {
+    try std.testing.expectEqual(@as(usize, 4000), feedTarget(true, 1000, 4000));
+    try std.testing.expect(needsInput(3999, 4000));
+    try std.testing.expect(!needsInput(4000, 4000));
+    try std.testing.expect(needsInput(-1, 4000));
+}
+
+test "whole bytes drop a partial frame at the end" {
+    try std.testing.expectEqual(@as(usize, 16), wholeBytes(19, 8));
+    try std.testing.expectEqual(@as(usize, 0), wholeBytes(7, 8));
+    try std.testing.expectEqual(@as(usize, 0), wholeBytes(7, 0));
+}
+
+test "runs cover a sound in order, each capped by the limit and in whole frames" {
+    // Eight-byte frames and 40 bytes of whole frames. A limit of 12 bytes rounds down to one frame, so every run is 8.
+    var cursor: usize = 0;
+    var runs: usize = 0;
+    while (nextRun(cursor, 40, 8, 12, false)) |run| {
+        try std.testing.expectEqual(cursor, run.start);
+        try std.testing.expectEqual(@as(usize, 8), run.len);
+        cursor = run.start + run.len;
+        runs += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 5), runs);
+    try std.testing.expectEqual(@as(usize, 40), cursor);
+}
+
+test "a looping sound wraps to its start, and a run never crosses the end" {
+    const first = nextRun(0, 40, 8, 100, true).?;
+    try std.testing.expectEqual(@as(usize, 0), first.start);
+    try std.testing.expectEqual(@as(usize, 40), first.len);
+
+    const wrapped = nextRun(40, 40, 8, 100, true).?;
+    try std.testing.expectEqual(@as(usize, 0), wrapped.start);
+    try std.testing.expectEqual(@as(usize, 40), wrapped.len);
+
+    const tail = nextRun(32, 40, 8, 100, true).?;
+    try std.testing.expectEqual(@as(usize, 32), tail.start);
+    try std.testing.expectEqual(@as(usize, 8), tail.len);
+}
+
+test "nothing is fed when no whole frame fits the limit, or the sound has no frames" {
+    try std.testing.expect(nextRun(0, 40, 8, 7, false) == null);
+    try std.testing.expect(nextRun(0, 0, 8, 100, true) == null);
+    try std.testing.expect(nextRun(0, 40, 0, 100, true) == null);
 }

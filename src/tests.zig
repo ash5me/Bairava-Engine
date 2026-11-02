@@ -47,6 +47,7 @@ test {
     _ = @import("engine/assets/validate.zig");
     _ = @import("engine/assets/hot_reload.zig");
     _ = @import("engine/audio/voices.zig");
+    _ = @import("engine/audio/spatial.zig");
     _ = @import("engine/audio/audio.zig");
     _ = @import("engine/audio/ima.zig");
     _ = @import("engine/assets/loaders/image.zig");

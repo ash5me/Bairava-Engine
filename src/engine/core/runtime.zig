@@ -243,8 +243,9 @@ pub fn run(comptime Game: type, config: Config) !void {
         if (steps > 4) {
             elog.debug("{d} update steps in one frame, so the frame took {d:.1} ms", .{ steps, frame_dt * 1000.0 });
         }
-        // Free finished voices and keep looping voices fed. Once per frame is enough, because a
-        // looping voice queues a full copy of its sound ahead of time.
+        // Free finished voices, keep voices fed, and move positional voices to the listener. Once per frame is
+        // enough: a looping voice keeps a full copy of its sound queued, and a positional voice keeps a tenth of a
+        // second queued, so a frame shorter than that cannot starve either.
         const audio_start = clockIf();
         {
             const zone = profile.zoneNamed(@src(), "audio");
