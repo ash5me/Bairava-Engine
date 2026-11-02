@@ -8,6 +8,7 @@
 const std = @import("std");
 const c = @import("c.zig").c;
 const input = @import("../input/input.zig");
+const action = @import("../input/action.zig");
 const sprite = @import("../renderer/sprite.zig");
 const view = @import("../renderer/view.zig");
 const text_layout = @import("../text/layout.zig");
@@ -184,7 +185,9 @@ pub const Ui = struct {
     }
 
     /// Starts the frame's widgets in the column (x, y, width), in view pixels. The pointer comes
-    /// from `in_state` in window points, so it is mapped through `layout` first.
+    /// from `in_state` in window points, so it is mapped through `layout` first. Keybind rows take
+    /// their control from `in_state` too: the first bindable control pressed this frame, and Escape
+    /// as the cancel.
     pub fn begin(self: *Ui, in_state: *const input.Input, layout: view.Layout, x: f32, y: f32, width: f32) void {
         const safe_layout: view.Layout = if (std.math.isFinite(layout.pixel_density) and layout.pixel_density > 0 and
             std.math.isFinite(layout.dst_x) and std.math.isFinite(layout.dst_y) and
@@ -212,6 +215,8 @@ pub const Ui = struct {
             .mouse_down = @intFromBool(in_state.mouseDown(.left)),
             .mouse_pressed = @intFromBool(in_state.mousePressed(.left)),
             .mouse_released = @intFromBool(in_state.mouseReleased(.left)),
+            .control = @intCast(action.pressedCode(in_state)),
+            .cancel = @intFromBool(in_state.wasPressed(.escape)),
         };
         c.ui_begin(self.ctx, &frame, if (std.math.isFinite(x)) x else 0, if (std.math.isFinite(y)) y else 0, if (std.math.isFinite(width) and width > 0) width else 1);
     }
@@ -237,6 +242,22 @@ pub const Ui = struct {
     pub fn slider(self: *Ui, str: []const u8, value: *f32, lo: f32, hi: f32) bool {
         var buf: CString = undefined;
         return c.ui_slider(self.ctx, cstring(&buf, str), value, lo, hi) != 0;
+    }
+
+    /// A row that rebinds one action, showing `value` (its current bindings) at the right. Clicking
+    /// it waits for the next key, mouse button other than the left, or gamepad control, and returns
+    /// that binding on the frame it is pressed. Escape cancels the wait. Returns null on every other frame.
+    pub fn keybind(self: *Ui, str: []const u8, value: []const u8) ?action.Binding {
+        var label_buf: CString = undefined;
+        var value_buf: CString = undefined;
+        const code = c.ui_keybind(self.ctx, cstring(&label_buf, str), cstring(&value_buf, value));
+        return action.bindingOf(@intCast(code));
+    }
+
+    /// True while a keybind row waits for a control. The game holds its actions then, so the key that
+    /// picks a binding does not also act.
+    pub fn listening(self: *const Ui) bool {
+        return self.ctx.listening != 0;
     }
 
     /// Queues this frame's widgets as sprites at depth `z`.
@@ -311,4 +332,32 @@ test "ui begin substitutes a safe layout and origin when input is invalid" {
         .view_w = 0,
         .view_h = 0,
     }, std.math.nan(f32), std.math.inf(f32), 0);
+}
+
+test "ui begin passes Escape as the cancel, and the key pressed as its control" {
+    var ui = Ui.init(std.testing.allocator, .{
+        .texture = .{},
+        .baked = .{
+            .white = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
+        },
+    });
+    defer ui.deinit();
+
+    var input_state = input.Input{};
+    input_state.keyDown(.escape);
+    input_state.latch();
+    ui.begin(&input_state, .{
+        .pixel_density = 1,
+        .dst_x = 0,
+        .dst_y = 0,
+        .dst_w = 320,
+        .dst_h = 180,
+        .view_w = 320,
+        .view_h = 180,
+    }, 0, 0, 100);
+    const escape_code: u32 = action.codeOf(.{ .key = .escape });
+    try std.testing.expectEqual(@as(c_int, 1), ui.ctx.in.cancel);
+    try std.testing.expectEqual(escape_code, @as(u32, @intCast(ui.ctx.in.control)));
+    ui.end();
+    try std.testing.expect(!ui.listening());
 }

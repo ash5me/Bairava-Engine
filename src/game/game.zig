@@ -21,6 +21,11 @@ const log = engine.log.scoped("game");
 /// Draw order of the panel. Sprites sort by z, so this places the panel above the world and the player.
 const ui_z: i32 = 1000;
 
+/// Width of the panel in view pixels. Wide enough for a keybind row: the action's name at the left, its keys at the right.
+const panel_w: f32 = 180;
+/// Actions on each page of the Controls list. A page, with its title and buttons, fits the native 180-pixel view.
+const controls_page_size = 4;
+
 /// Colors of the debug geometry the game draws: the player's collision box and its center marker.
 const player_box_color = engine.diagnostics.Color{ .r = 0.3, .g = 1.0, .b = 0.4, .a = 0.9 };
 const player_marker_color = engine.diagnostics.Color{ .r = 1.0, .g = 0.85, .b = 0.2, .a = 1.0 };
@@ -60,6 +65,9 @@ pub const Game = struct {
     /// Demo panel state: how often the button was clicked, and the slider value.
     clicks: u32,
     volume: f32,
+    /// Whether the panel shows the Controls list, and which page of it. Neither is saved.
+    controls_open: bool = false,
+    controls_page: usize = 0,
     audio: *engine.audio.Audio,
     ambient_sound: ?engine.audio.Sound,
     ambient_voice: ?engine.audio.Handle,
@@ -231,21 +239,23 @@ pub const Game = struct {
         self.reloadAtlasIfChanged(ctx);
         self.startAmbient();
         const input = ctx.input;
-        if (self.bindings.pressed(input, .quit)) {
+        // While a keybind row waits, the key pressed picks the binding, so no action runs. Escape then only cancels the wait.
+        const acting = !self.ui.listening();
+        if (acting and self.bindings.pressed(input, .quit)) {
             log.info("quit action pressed", .{});
             ctx.running = false;
         }
-        if (self.bindings.pressed(input, .save_game)) self.saveGame(ctx);
-        if (self.bindings.pressed(input, .load_game)) self.loadSave(ctx);
-        if (self.bindings.pressed(input, .toggle_scale)) {
+        if (acting and self.bindings.pressed(input, .save_game)) self.saveGame(ctx);
+        if (acting and self.bindings.pressed(input, .load_game)) self.loadSave(ctx);
+        if (acting and self.bindings.pressed(input, .toggle_scale)) {
             ctx.scale_mode = switch (ctx.scale_mode) {
                 .fit => .integer,
                 .integer => .fit,
             };
         }
-        if (self.bindings.pressed(input, .zoom_in)) ctx.zoomBy(config.zoom_step);
-        if (self.bindings.pressed(input, .zoom_out)) ctx.zoomBy(1.0 / config.zoom_step);
-        if (self.bindings.pressed(input, .zoom_reset)) ctx.resetZoom();
+        if (acting and self.bindings.pressed(input, .zoom_in)) ctx.zoomBy(config.zoom_step);
+        if (acting and self.bindings.pressed(input, .zoom_out)) ctx.zoomBy(1.0 / config.zoom_step);
+        if (acting and self.bindings.pressed(input, .zoom_reset)) ctx.resetZoom();
         if (ctx.diagnostics_enabled) {
             const world = &ctx.diagnostics.snapshot.world;
             world.collision_queries += 1;
@@ -261,10 +271,12 @@ pub const Game = struct {
         // Each movement action contributes one unit on its axis.
         var dx: f32 = 0;
         var dy: f32 = 0;
-        if (self.bindings.held(input, .move_left)) dx -= 1;
-        if (self.bindings.held(input, .move_right)) dx += 1;
-        if (self.bindings.held(input, .move_up)) dy -= 1;
-        if (self.bindings.held(input, .move_down)) dy += 1;
+        if (acting) {
+            if (self.bindings.held(input, .move_left)) dx -= 1;
+            if (self.bindings.held(input, .move_right)) dx += 1;
+            if (self.bindings.held(input, .move_up)) dy -= 1;
+            if (self.bindings.held(input, .move_down)) dy += 1;
+        }
 
         self.player.update(dx, dy, ctx.dt, &self.level.map, &self.animations);
         self.updateEnemies(ctx.dt);
@@ -595,12 +607,24 @@ pub const Game = struct {
         }
     }
 
-    /// Builds the demo panel for this frame. It runs in the update step, so each press and release
-    /// reaches the widgets exactly once.
+    /// Builds the panel for this frame. It runs in the update step, so each press and release reaches the widgets
+    /// exactly once. The panel shows the demo, or the Controls list when it is open.
     fn updateUi(self: *Game, ctx: *engine.Context) void {
         const ui = &self.ui;
-        const panel = engine.ui.anchorBounds(ctx.layout.view_w, ctx.layout.view_h, 120, 130, .top_left, 4, 4);
+        const panel = engine.ui.anchorBounds(ctx.layout.view_w, ctx.layout.view_h, panel_w, 130, .top_left, 4, 4);
         ui.begin(ctx.input, ctx.layout, panel.x, panel.y, panel.w);
+        if (self.controls_open) {
+            self.updateControls(ctx);
+        } else {
+            self.updateDemo();
+        }
+        self.audio.setMasterGain(self.volume);
+        ui.end();
+    }
+
+    /// The demo rows: a label, the click counter, and the volume slider. The last row opens the Controls list.
+    fn updateDemo(self: *Game) void {
+        const ui = &self.ui;
         ui.label("Semkootru");
         ui.label("F5 save  F9 load");
         if (ui.button("Click me##go")) self.clicks += 1;
@@ -612,8 +636,33 @@ pub const Game = struct {
         var level_buf: [32]u8 = undefined;
         ui.label(std.fmt.bufPrint(&level_buf, "Level: {d:.2}", .{self.volume}) catch
             std.debug.panic("level label does not fit its buffer", .{}));
-        self.audio.setMasterGain(self.volume);
-        ui.end();
+        if (ui.button("Controls")) self.controls_open = true;
+    }
+
+    /// The Controls list: a keybind row for each action on the current page, then Next and Back. Picking a row
+    /// rebinds its action to the binding pressed next, which replaces the action's earlier bindings.
+    fn updateControls(self: *Game, ctx: *engine.Context) void {
+        const ui = &self.ui;
+        const actions = std.enums.values(controls.Action);
+        const pages = (actions.len + controls_page_size - 1) / controls_page_size;
+        if (self.controls_page >= pages) self.controls_page = 0;
+
+        var title_buf: [32]u8 = undefined;
+        ui.label(std.fmt.bufPrint(&title_buf, "Controls {d}/{d}", .{ self.controls_page + 1, pages }) catch
+            std.debug.panic("controls title does not fit its buffer", .{}));
+        const first = self.controls_page * controls_page_size;
+        const last = @min(first + controls_page_size, actions.len);
+        for (actions[first..last]) |which| {
+            var value_buf: [engine.bindings.binding_text_capacity]u8 = undefined;
+            const current = engine.bindings.bindingsText(&value_buf, self.bindings.bindingsOf(which));
+            if (ui.keybind(@tagName(which), current)) |binding| {
+                controls.rebind(ctx, &self.bindings, which, &.{binding}) catch |err| {
+                    log.warn("binding for {s} was not saved: {s}", .{ @tagName(which), @errorName(err) });
+                };
+            }
+        }
+        if (ui.button("Next")) self.controls_page = (self.controls_page + 1) % pages;
+        if (ui.button("Back")) self.controls_open = false;
     }
 };
 

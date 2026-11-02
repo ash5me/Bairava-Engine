@@ -53,8 +53,10 @@ static void fill(ui_context *ui, ui_rect r, ui_color c) {
 }
 
 /* The press logic every widget shares. Hover is only claimed while nothing is active, so a widget
- * being pressed keeps the pointer even after the pointer leaves it. Returns 1 while `id` is active. */
+ * being pressed keeps the pointer even after the pointer leaves it. Returns 1 while `id` is active.
+ * A keybind row that waits owns the pointer for the whole frame, so every other widget returns 0 here. */
 static int interact(ui_context *ui, unsigned id, ui_rect r) {
+    if (ui->locked_by && ui->locked_by != id) return 0;
     if (!ui->active && inside(r, ui->in.mouse_x, ui->in.mouse_y)) ui->hot = id;
     if (!ui->active && ui->hot == id && ui->in.mouse_pressed) ui->active = id;
     return ui->active == id;
@@ -82,6 +84,8 @@ void ui_begin(ui_context *ui, const ui_input *in, float x, float y, float w) {
     ui->w = w;
     ui->cursor_y = y;
     ui->hot = 0;
+    ui->locked_by = ui->listening;
+    ui->listening_drawn = 0;
     ui->list.count = 0;
     ui->list.dropped = 0;
 }
@@ -90,6 +94,8 @@ void ui_end(ui_context *ui) {
     /* A press lasts until the button comes up, so the next frame starts with nothing active,
      * even if the widget that owned the press was not drawn this frame. */
     if (!ui->in.mouse_down) ui->active = 0;
+    /* A keybind row that waits but was not drawn this frame cannot be answered, so its wait ends here. */
+    if (!ui->listening_drawn) ui->listening = 0;
 }
 
 void ui_label(ui_context *ui, const char *text) {
@@ -135,4 +141,47 @@ int ui_slider(ui_context *ui, const char *label, float *value, float lo, float h
     fill(ui, (ui_rect){ knob_x - 2, r.y + pad, 4, r.h - 2 * pad }, ui->active == id ? ui->theme.fill : ui->theme.knob);
     ui_font_draw_text(ui->font, &ui->list, r.x + pad, r.y + pad, label, shown, ui->theme.text);
     return changed;
+}
+
+unsigned ui_keybind(ui_context *ui, const char *label, const char *value) {
+    size_t n = strlen(label), shown = shown_len(label, n);
+    unsigned id = id_for(label, n);
+    float pad = ui->theme.pad;
+    ui_rect r = next_row(ui, row_height(ui));
+    /* The label takes the left 40% of the row, as the slider's does, and the box holds the binding. */
+    ui_rect box = { r.x + r.w * 0.4f, r.y, r.w * 0.6f, r.h };
+    const char *text;
+    ui_color c;
+    float tw, tx;
+    unsigned bound = 0;
+
+    if (ui->listening == id) {
+        /* Cancel is checked first, so a cancel that arrives with a control binds nothing. A row does not
+         * call interact while it waits, so the press that binds a control cannot also make it active. */
+        if (ui->in.cancel) {
+            ui->listening = 0;
+        } else if (ui->in.control) {
+            bound = ui->in.control;
+            ui->listening = 0;
+        }
+    } else if (interact(ui, id, box) && ui->in.mouse_released && inside(box, ui->in.mouse_x, ui->in.mouse_y)) {
+        ui->listening = id;
+    }
+    if (ui->listening == id) ui->listening_drawn = 1;
+
+    if (ui->listening == id) {
+        text = "Press input...";
+        c = ui->theme.button_active;
+    } else {
+        text = value;
+        c = ui->active == id ? ui->theme.button_active : ui->hot == id ? ui->theme.button_hot : ui->theme.button;
+    }
+    tw = ui_font_text_width(ui->font, text, strlen(text));
+    /* The text sits at the right of the box, and stays at its left edge when it is too wide to fit. */
+    tx = box.x + box.w - pad - tw;
+    if (tx < box.x + pad) tx = box.x + pad;
+    fill(ui, box, c);
+    ui_font_draw_text(ui->font, &ui->list, tx, r.y + pad, text, strlen(text), ui->theme.text);
+    ui_font_draw_text(ui->font, &ui->list, r.x + pad, r.y + pad, label, shown, ui->theme.text);
+    return bound;
 }

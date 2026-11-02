@@ -153,6 +153,62 @@ fn valueBy(state: *const Input, binding: Binding) f32 {
     };
 }
 
+/// Each bindable control has a code, so a widget can report the control a player pressed without seeing a key or a
+/// button. Codes run from 1 up to `control_code_count`, and 0 means no control. Keys come first, in `Key` order, then
+/// the mouse buttons, then the gamepad controls from gamepad.zig: the buttons, then each stick and trigger half.
+const key_count = std.enums.values(Key).len;
+const mouse_count = std.enums.values(types.MouseButton).len;
+pub const control_code_count: u32 = @intCast(key_count + mouse_count + gamepad.control_count);
+
+/// The code of the control at `index`, counting keys, then mouse buttons, then gamepad controls.
+fn codeAt(index: usize) u32 {
+    return @intCast(index + 1);
+}
+
+/// The code that names `binding`.
+pub fn codeOf(binding: Binding) u32 {
+    return switch (binding) {
+        .key => |key| codeAt(@intFromEnum(key)),
+        .mouse => |button| codeAt(key_count + @as(usize, @intFromEnum(button))),
+        .gamepad_button => |button| codeAt(key_count + mouse_count + gamepad.buttonControl(button)),
+        .gamepad_axis => |axis| codeAt(key_count + mouse_count + gamepad.axisControl(axis.axis, axis.direction)),
+    };
+}
+
+/// The binding that `code` names. Null for code 0, for a code past `control_code_count`, and for the negative half
+/// of a trigger, which no binding names because a trigger has only its positive half.
+pub fn bindingOf(code: u32) ?Binding {
+    if (code == 0 or code > control_code_count) return null;
+    const index: usize = code - 1;
+    if (index < key_count) return .{ .key = @enumFromInt(index) };
+    if (index < key_count + mouse_count) return .{ .mouse = @enumFromInt(index - key_count) };
+    const control = index - key_count - mouse_count;
+    if (control < gamepad.button_count) return .{ .gamepad_button = @enumFromInt(control) };
+    const half = control - gamepad.button_count;
+    const direction: gamepad.Direction = @enumFromInt(half % 2);
+    const axis: types.GamepadAxis = @enumFromInt(half / 2);
+    if (direction == .negative and (axis == .left_trigger or axis == .right_trigger)) return null;
+    return .{ .gamepad_axis = .{ .axis = axis, .direction = direction } };
+}
+
+/// The code of the first bindable control that went down this frame, or 0 when none did. Keys are checked first,
+/// then the mouse buttons other than the left, then the primary gamepad. The left button is never reported: the
+/// UI's own pointer uses it, so a click on the Controls list cannot bind it.
+pub fn pressedCode(state: *const Input) u32 {
+    for (std.enums.values(Key)) |key| {
+        if (state.wasPressed(key)) return codeOf(.{ .key = key });
+    }
+    for (std.enums.values(types.MouseButton)) |button| {
+        if (button != .left and state.mousePressed(button)) return codeOf(.{ .mouse = button });
+    }
+    if (state.primaryPad()) |pad| {
+        for (0..gamepad.control_count) |control| {
+            if (pad.pressed[control]) return codeAt(key_count + mouse_count + control);
+        }
+    }
+    return 0;
+}
+
 const TestAction = enum { jump, fire, pause };
 
 const pad_a = types.GamepadId{ .slot = 0, .generation = 1 };
@@ -355,4 +411,39 @@ test "held action names are the actions whose bindings are down" {
     map.addHeldNames(&state, &sink);
     try std.testing.expectEqual(@as(usize, 1), sink.n);
     try std.testing.expectEqualStrings("jump", sink.seen[0]);
+}
+
+test "every code names one binding, and that binding names the code back" {
+    var code: u32 = 1;
+    while (code <= control_code_count) : (code += 1) {
+        // The negative half of a trigger has no binding, so its code names nothing.
+        const binding = bindingOf(code) orelse continue;
+        try std.testing.expectEqual(code, codeOf(binding));
+    }
+    try std.testing.expect(bindingOf(0) == null);
+    try std.testing.expect(bindingOf(control_code_count + 1) == null);
+}
+
+test "the pressed code is the first bindable control down this frame, and the left button is never it" {
+    var state = Input{};
+    try std.testing.expectEqual(@as(u32, 0), pressedCode(&state));
+
+    state.mouseButton(.left, true);
+    state.latch();
+    try std.testing.expectEqual(@as(u32, 0), pressedCode(&state));
+
+    state.mouseButton(.left, false);
+    state.mouseButton(.right, true);
+    state.keyDown(.q);
+    state.latch();
+    // Keys are checked before mouse buttons, so the key is the one reported.
+    try std.testing.expectEqual(codeOf(.{ .key = .q }), pressedCode(&state));
+
+    state.latch();
+    try std.testing.expectEqual(@as(u32, 0), pressedCode(&state));
+
+    state.gamepadAdded(pad_a);
+    state.gamepadButton(pad_a, .south, true);
+    state.latch();
+    try std.testing.expectEqual(codeOf(.{ .gamepad_button = .south }), pressedCode(&state));
 }

@@ -204,6 +204,25 @@ fn formatBindingLine(buffer: []u8, which: anytype, bindings: []const Binding) []
     return buffer[0 .. used + 1];
 }
 
+/// Room for the text of one action's bindings: four names, the longest of them 18 bytes, and the commas between.
+pub const binding_text_capacity = 96;
+
+/// Writes `bindings` the way a settings line spells them: names separated by commas, or `none` when there are none.
+/// The result is a slice of `buffer`.
+pub fn bindingsText(buffer: *[binding_text_capacity]u8, bindings: []const Binding) []const u8 {
+    if (bindings.len == 0) return "none";
+    var used: usize = 0;
+    for (bindings, 0..) |binding, index| {
+        if (index != 0) {
+            const separator = std.fmt.bufPrint(buffer[used..], ", ", .{}) catch unreachable;
+            used += separator.len;
+        }
+        const name = bindingName(binding, buffer[used..]);
+        used += name.len;
+    }
+    return buffer[0..used];
+}
+
 fn bindingName(binding: Binding, output: []u8) []const u8 {
     return switch (binding) {
         .key => |key| std.fmt.bufPrint(output, "{s}", .{@tagName(key)}) catch unreachable,
@@ -218,6 +237,17 @@ fn bindingName(binding: Binding, output: []u8) []const u8 {
             break :blk std.fmt.bufPrint(output, "pad_{s}{s}", .{ @tagName(axis.axis), suffix }) catch unreachable;
         },
     };
+}
+
+test "a binding list is spelled as its settings line spells it, and reads none when empty" {
+    var buffer: [binding_text_capacity]u8 = undefined;
+    try std.testing.expectEqualStrings("none", bindingsText(&buffer, &.{}));
+    try std.testing.expectEqualStrings("left, a, mouse_right, pad_south", bindingsText(&buffer, &.{
+        .{ .key = .left },
+        .{ .key = .a },
+        .{ .mouse = .right },
+        .{ .gamepad_button = .south },
+    }));
 }
 
 const TestAction = enum { jump, pause };
