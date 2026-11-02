@@ -26,6 +26,9 @@ const panel_w: f32 = 180;
 /// Actions on each page of the Controls list. A page, with its title and buttons, fits the native 180-pixel view.
 const controls_page_size = 4;
 
+/// The screens the panel shows. Each is its own list of widgets, built in the update step.
+const Screen = enum { demo, controls, saves };
+
 /// Colors of the debug geometry the game draws: the player's collision box and its center marker.
 const player_box_color = engine.diagnostics.Color{ .r = 0.3, .g = 1.0, .b = 0.4, .a = 0.9 };
 const player_marker_color = engine.diagnostics.Color{ .r = 1.0, .g = 0.85, .b = 0.2, .a = 1.0 };
@@ -65,9 +68,14 @@ pub const Game = struct {
     /// Demo panel state: how often the button was clicked, and the slider value.
     clicks: u32,
     volume: f32,
-    /// Whether the panel shows the Controls list, and which page of it. Neither is saved.
-    controls_open: bool = false,
+    /// Which screen the panel shows, and which page of the Controls list. Neither is saved.
+    screen: Screen = .demo,
     controls_page: usize = 0,
+    /// The save slot that F5 and F9 use, and which slots hold a save. The slot is not saved, so the game starts on slot 1.
+    save_slot: usize = 0,
+    slot_used: [config.save_slot_files.len]bool = [_]bool{false} ** config.save_slot_files.len,
+    /// True after the Clear button of the Saves page is pressed once. A second press erases the slot.
+    clear_armed: bool = false,
     audio: *engine.audio.Audio,
     ambient_sound: ?engine.audio.Sound,
     ambient_voice: ?engine.audio.Handle,
@@ -191,6 +199,7 @@ pub const Game = struct {
             .allocator = ctx.allocators.game,
         };
         game.loadSave(ctx);
+        game.refreshSlots(ctx);
         game.attachScript(ctx);
         return game;
     }
@@ -247,6 +256,9 @@ pub const Game = struct {
         }
         if (acting and self.bindings.pressed(input, .save_game)) self.saveGame(ctx);
         if (acting and self.bindings.pressed(input, .load_game)) self.loadSave(ctx);
+        if (acting and self.bindings.pressed(input, .cycle_save_slot)) {
+            self.chooseSlot(save_store.nextSlot(self.save_slot, config.save_slot_files.len));
+        }
         if (acting and self.bindings.pressed(input, .toggle_scale)) {
             ctx.scale_mode = switch (ctx.scale_mode) {
                 .fit => .integer,
@@ -453,7 +465,7 @@ pub const Game = struct {
         }
     }
 
-    fn saveGame(self: *const Game, ctx: *const engine.Context) void {
+    fn saveGame(self: *Game, ctx: *const engine.Context) void {
         const state = save_store.State{
             .player_transform = .{
                 .position = self.player.transform.position,
@@ -474,17 +486,20 @@ pub const Game = struct {
         };
         defer ctx.allocators.frame.free(json);
 
+        const file = config.save_slot_files[self.save_slot];
         // writeFile logs the reason when the write fails, so there is nothing more to say here.
-        ctx.writeFile(config.save_file_name, json) catch |err| {
-            log.err("save '{s}' was not written: {s}", .{ config.save_file_name, @errorName(err) });
+        ctx.writeFile(file, json) catch |err| {
+            log.err("save '{s}' was not written: {s}", .{ file, @errorName(err) });
             return;
         };
-        log.info("saved game to {s}", .{config.save_file_name});
+        self.slot_used[self.save_slot] = true;
+        log.info("saved game to {s}", .{file});
     }
 
     fn loadSave(self: *Game, ctx: *engine.Context) void {
-        const text = ctx.readFile(ctx.allocators.frame, config.save_file_name) catch |err| {
-            if (err != error.FileNotFound) log.warn("save '{s}' could not be read: {s}", .{ config.save_file_name, @errorName(err) });
+        const file = config.save_slot_files[self.save_slot];
+        const text = ctx.readFile(ctx.allocators.frame, file) catch |err| {
+            if (err != error.FileNotFound) log.warn("save '{s}' could not be read: {s}", .{ file, @errorName(err) });
             return;
         };
         defer ctx.allocators.frame.free(text);
@@ -502,11 +517,11 @@ pub const Game = struct {
             .zoom_target = ctx.zoom_target,
         };
         const state = save_store.deserialize(ctx.allocators.frame, text, defaults) catch |err| {
-            log.warn("save '{s}' was ignored: {s}", .{ config.save_file_name, @errorName(err) });
+            log.warn("save '{s}' was ignored: {s}", .{ file, @errorName(err) });
             return;
         };
         if (!state.level_matches) {
-            log.warn("save '{s}' belongs to a different level; it was ignored", .{config.save_file_name});
+            log.warn("save '{s}' belongs to a different level; it was ignored", .{file});
             return;
         }
 
@@ -523,7 +538,7 @@ pub const Game = struct {
         self.volume = state.volume;
         ctx.scale_mode = if (state.scale_mode == .integer) .integer else .fit;
         ctx.zoom_target = std.math.clamp(state.zoom_target, config.zoom_min, config.zoom_max);
-        log.info("loaded game from {s}", .{config.save_file_name});
+        log.info("loaded game from {s}", .{file});
     }
 
     /// Runs once per frame. `dc.alpha` blends the player between the last two updates. The camera
@@ -613,10 +628,10 @@ pub const Game = struct {
         const ui = &self.ui;
         const panel = engine.ui.anchorBounds(ctx.layout.view_w, ctx.layout.view_h, panel_w, 130, .top_left, 4, 4);
         ui.begin(ctx.input, ctx.layout, panel.x, panel.y, panel.w);
-        if (self.controls_open) {
-            self.updateControls(ctx);
-        } else {
-            self.updateDemo();
+        switch (self.screen) {
+            .demo => self.updateDemo(),
+            .controls => self.updateControls(ctx),
+            .saves => self.updateSaves(ctx),
         }
         self.audio.setMasterGain(self.volume);
         ui.end();
@@ -626,7 +641,10 @@ pub const Game = struct {
     fn updateDemo(self: *Game) void {
         const ui = &self.ui;
         ui.label("Semkootru");
-        ui.label("F5 save  F9 load");
+        var slot_buf: [48]u8 = undefined;
+        const status: []const u8 = if (self.slot_used[self.save_slot]) "saved" else "empty";
+        ui.label(std.fmt.bufPrint(&slot_buf, "Slot {d}: {s}  F5/F9", .{ self.save_slot + 1, status }) catch
+            std.debug.panic("slot label does not fit its buffer", .{}));
         if (ui.button("Click me##go")) self.clicks += 1;
 
         var clicks_buf: [32]u8 = undefined;
@@ -636,7 +654,8 @@ pub const Game = struct {
         var level_buf: [32]u8 = undefined;
         ui.label(std.fmt.bufPrint(&level_buf, "Level: {d:.2}", .{self.volume}) catch
             std.debug.panic("level label does not fit its buffer", .{}));
-        if (ui.button("Controls")) self.controls_open = true;
+        if (ui.button("Saves")) self.screen = .saves;
+        if (ui.button("Controls")) self.screen = .controls;
     }
 
     /// The Controls list: a keybind row for each action on the current page, then Next and Back. Picking a row
@@ -662,7 +681,63 @@ pub const Game = struct {
             }
         }
         if (ui.button("Next")) self.controls_page = (self.controls_page + 1) % pages;
-        if (ui.button("Back")) self.controls_open = false;
+        if (ui.button("Back")) self.screen = .demo;
+    }
+
+    /// The Saves page: a row for each slot that selects it, then Clear, which erases the selected slot after a
+    /// second press, and Back. A row shows whether its slot holds a save.
+    fn updateSaves(self: *Game, ctx: *const engine.Context) void {
+        const ui = &self.ui;
+        ui.label("Saves");
+        for (config.save_slot_files, 0..) |_, slot| {
+            var row_buf: [48]u8 = undefined;
+            const marker: []const u8 = if (slot == self.save_slot) "> " else "  ";
+            const status: []const u8 = if (self.slot_used[slot]) "saved" else "empty";
+            const text = std.fmt.bufPrint(&row_buf, "{s}Slot {d}: {s}", .{ marker, slot + 1, status }) catch
+                std.debug.panic("save slot row does not fit its buffer", .{});
+            if (ui.button(text)) self.chooseSlot(slot);
+        }
+        if (ui.button("Clear slot##clear")) {
+            if (self.clear_armed) {
+                self.clearSlot(ctx);
+            } else {
+                self.clear_armed = true;
+            }
+        }
+        const note: []const u8 = if (self.clear_armed) "Clear again to erase" else "";
+        ui.label(note);
+        if (ui.button("Back##back")) {
+            self.clear_armed = false;
+            self.screen = .demo;
+        }
+    }
+
+    /// Makes `slot` the one F5 and F9 use. Picking another slot disarms a pending clear.
+    fn chooseSlot(self: *Game, slot: usize) void {
+        self.save_slot = slot;
+        self.clear_armed = false;
+    }
+
+    /// Records which slots hold a save. Startup calls this. Writing and clearing a slot update its entry directly,
+    /// so the panel never reads files while it draws.
+    fn refreshSlots(self: *Game, ctx: *const engine.Context) void {
+        for (config.save_slot_files, 0..) |file, slot| {
+            self.slot_used[slot] = ctx.fileExistsBeside(file);
+        }
+    }
+
+    /// Erases the selected slot's save file. A slot with no file is already clear, so that is not an error.
+    fn clearSlot(self: *Game, ctx: *const engine.Context) void {
+        const file = config.save_slot_files[self.save_slot];
+        ctx.removeFile(file) catch |err| {
+            if (err != error.FileNotFound) {
+                log.err("save slot {d} was not cleared: {s}", .{ self.save_slot + 1, @errorName(err) });
+                return;
+            }
+        };
+        self.slot_used[self.save_slot] = false;
+        self.clear_armed = false;
+        log.info("cleared save slot {d}", .{self.save_slot + 1});
     }
 };
 

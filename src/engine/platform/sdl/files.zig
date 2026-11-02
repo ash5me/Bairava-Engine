@@ -98,6 +98,20 @@ pub fn write(location: Location, path: []const u8, bytes: []const u8) FileError!
     }
 }
 
+/// Deletes a file beside the executable. A file that does not exist gives `error.NotFound`. Only
+/// `.beside_executable` accepts changes, so any other location gives `error.ReadOnlyLocation`.
+pub fn remove(location: Location, path: []const u8) FileError!void {
+    if (location != .beside_executable) return error.ReadOnlyLocation;
+    var buf: [max_full_path]u8 = undefined;
+    const full = try absolutePath(location, path, &buf);
+    var info: c.SDL_PathInfo = undefined;
+    if (!c.SDL_GetPathInfo(full.ptr, &info)) return error.NotFound;
+    if (!c.SDL_RemovePath(full.ptr)) {
+        elog.err("could not delete '{s}': {s}", .{ path, c.SDL_GetError() });
+        return error.WriteFailed;
+    }
+}
+
 /// The last modification time of a file in nanoseconds since the Unix epoch, or null when the path can't be
 /// examined. SDL reports a missing file the same way, so both give null.
 pub fn modifiedNs(location: Location, path: []const u8) ?i64 {

@@ -81,6 +81,11 @@ pub const files = struct {
         return sdl_files.write(location, path, bytes);
     }
 
+    /// Deletes a file beside the executable. See sdl/files.zig `remove`.
+    pub fn remove(location: Location, path: []const u8) FileError!void {
+        return sdl_files.remove(location, path);
+    }
+
     /// The full path for `path` at `location`, built in `buf`.
     pub fn absolutePath(location: Location, path: []const u8, buf: []u8) FileError![:0]const u8 {
         return sdl_files.absolutePath(location, path, buf);

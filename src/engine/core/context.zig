@@ -286,6 +286,22 @@ pub const Context = struct {
         };
     }
 
+    /// True when `relative` names a file beside the executable. A path that can't be examined counts as missing.
+    pub fn fileExistsBeside(_: *const Context, relative: []const u8) bool {
+        if (!isSafeRelativePath(relative)) return false;
+        return platform.files.modifiedNs(.beside_executable, relative) != null;
+    }
+
+    /// Deletes a file beside the executable. A file that is already gone gives `error.FileNotFound`.
+    pub fn removeFile(_: *const Context, relative: []const u8) !void {
+        if (!isSafeRelativePath(relative)) return error.WriteFailed;
+        platform.files.remove(.beside_executable, relative) catch |err| return switch (err) {
+            error.NotFound => error.FileNotFound,
+            error.PathTooLong => error.PathTooLong,
+            else => error.WriteFailed,
+        };
+    }
+
     /// Persists an action map in the settings file. Existing comments and non-binding settings are
     /// kept, while bindings for this action enum are replaced. Writes atomically beside the executable.
     pub fn saveBindings(self: *const Context, comptime Action: type, map: *const action.ActionMap(Action)) !void {

@@ -127,7 +127,7 @@ zig build asset-import -- path/to/sprite_keyed.png my_sprite
 
 ## Save and load
 
-Press **F5** to save or **F9** to load. Saves are written to `save.json` beside the executable and use Parson to serialize a pretty, human-editable JSON document. The `save_version` field and component-scoped keys keep the format resilient: older files can omit newer component fields, while a save with a newer unsupported version is ignored and left untouched unless you explicitly save over it.
+Press **F5** to save or **F9** to load the selected save slot. Each slot is a file beside the executable: slot 1 is `save.json`, the file older versions wrote, and slots 2 and 3 are `save2.json` and `save3.json`. **Tab** selects the next slot. The demo panel's Saves button opens a list that selects a slot on click and clears one after a second press. Saves use Parson to serialize a pretty, human-editable JSON document. The `save_version` field and component-scoped keys keep the format resilient: older files can omit newer component fields, while a save with a newer unsupported version is ignored and left untouched unless you explicitly save over it.
 
 The file maps game state into component paths: `components.player.transform` stores position, rotation, and scale, `components.player.facing` stores direction, `components.player.animation` stores movement and elapsed time, `components.game.progress` stores clicks and volume, `components.world.level` identifies the map, and `components.display` stores scale mode and zoom. Version 1 saves with flat `transform.x` and `transform.y` values remain readable. Invalid component values fall back to defaults; saved player positions outside the map or inside solid tiles are rejected.
 
@@ -216,8 +216,9 @@ A frame longer than two 60 Hz budgets (33 ms) counts as a spike. The overlay sho
 | = or keypad + | Zoom in |
 | - or keypad - | Zoom out |
 | 0 | Reset zoom to 1× |
-| F5 | Save the game to `save.json` |
-| F9 | Load the game from `save.json` |
+| F5 | Save the game to the selected save slot |
+| F9 | Load the game from the selected save slot |
+| Tab | Select the next save slot |
 | Left mouse button | Presses the demo panel's button and drags its slider. |
 
 Keys are bound to named actions in `game/controls.zig`. The defaults are in the table above, and `settings.txt` can rebind them to keys, mouse buttons, gamepad buttons, or gamepad stick and trigger halves. Semkootru's defaults are keyboard only, so a gamepad needs a `bind` line, for example `bind move_left = pad_dpad_left, pad_left_x-`.
@@ -233,7 +234,7 @@ The game reads `settings.txt` from beside the executable at startup. The project
 | `vsync` | `true` or `false`, or `on`/`off` and `yes`/`no`. Off presents frames as soon as they are ready, which can tear. | `true` |
 | `bind <action> = <binding>, ...` | Replaces the bindings for one action, up to 4. Use `none` to leave an action unbound. Keys use their names (`left`, `a`, `f5`). Mouse buttons are `mouse_left`, `mouse_right`, and `mouse_middle`. Gamepad buttons are `pad_` and the name, such as `pad_south` or `pad_dpad_left`. Stick halves are `pad_left_x-` or `pad_right_y+`, and triggers are `pad_left_trigger`. The full grammar is in `src/engine/input/mapping.zig`. | The keys in the table above |
 
-The action names for `bind` are `move_left`, `move_right`, `move_up`, `move_down`, `quit`, `toggle_scale`, `zoom_in`, `zoom_out`, `zoom_reset`, `save_game`, and `load_game`.
+The action names for `bind` are `move_left`, `move_right`, `move_up`, `move_down`, `quit`, `toggle_scale`, `zoom_in`, `zoom_out`, `zoom_reset`, `save_game`, `load_game`, and `cycle_save_slot`.
 
 With `fullscreen = true` the window uses the monitor's own mode, so `resolution` applies when the window is windowed. F11 still toggles fullscreen during play. A bad value or an unknown name is written to the log and the default is kept.
 
@@ -493,7 +494,7 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 - Input tracks the held state of keys and all three mouse buttons, and each press and release reaches one update step.
 - Semantic actions: a game names its actions and binds each to keys, mouse buttons, gamepad buttons, or stick and trigger halves. A key and a gamepad button can trigger the same action. The sample switches scenes with either.
 - Gamepads through SDL: hotplug, a dead zone on sticks, and the first gamepad connected as the primary one. Presses and releases latch like keys.
-- A demo panel in `game/game.zig` (a label, a click counter, and a volume slider) runs in the update step, as a first end-to-end check of the text and widget path. Its Controls button opens a list with a keybind row for each action. Click a row, then press a key, a mouse button other than the left, or a gamepad control to bind it. Escape cancels, and while a row waits, the game's actions do not run.
+- A demo panel in `game/game.zig` (a label, a click counter, and a volume slider) runs in the update step, as a first end-to-end check of the text and widget path. Its Saves button lists the save slots, and its Controls button opens a list with a keybind row for each action. Click a row, then press a key, a mouse button other than the left, or a gamepad control to bind it. Escape cancels, and while a row waits, the game's actions do not run.
 
 **Math and data**
 - cglm for vectors and matrices, wrapped in `core/math.zig`. The sprite projection and diagonal normalization use it. `core/math.zig` also covers 3D transforms, perspective and look-at matrices, and quaternions (slerp, look rotation, billboard). Only the 2D parts are used so far.
@@ -656,7 +657,7 @@ These are the natural extension points. Each one reuses existing code.
 - [x] Cross-platform checkerboard keyer replacing `key_checker.ps1` (`tools/assets/keyer.c`, `zig build asset-keyer`).
 - [x] Sprite import workflow (`zig build asset-import`): validate, copy, and register an image for the atlas. It preserves the source format and does not transcode or compress assets.
 - [ ] Level editor and Tiled map import.
-- [x] Save and load with versioned Parson JSON; F5 saves and F9 loads.
+- [x] Save and load with versioned Parson JSON; F5 saves and F9 loads the selected save slot.
 
 ### Phase 5: build-time content pipeline
 

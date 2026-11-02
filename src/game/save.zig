@@ -30,6 +30,11 @@ pub const State = struct {
     zoom_target: f32 = 1,
 };
 
+/// The save slot after `current`, wrapping from the last slot back to the first. `count` is the number of slots, at least 1.
+pub fn nextSlot(current: usize, count: usize) usize {
+    return (current + 1) % count;
+}
+
 fn isValidState(state: State) bool {
     return isValidTransform(state.player_transform) and isFiniteF32(state.animation_time) and
         isFiniteF32(state.volume) and isFiniteF32(state.zoom_target) and
@@ -304,6 +309,13 @@ fn normalizedRotation(rotation: [4]f32) [4]f32 {
         rotation[2] * inverse_length,
         rotation[3] * inverse_length,
     };
+}
+
+test "save slots cycle through the list and wrap back to the first" {
+    try std.testing.expectEqual(@as(usize, 1), nextSlot(0, 3));
+    try std.testing.expectEqual(@as(usize, 2), nextSlot(1, 3));
+    try std.testing.expectEqual(@as(usize, 0), nextSlot(2, 3));
+    try std.testing.expectEqual(@as(usize, 0), nextSlot(0, 1));
 }
 
 test "save round-trips valid gameplay state and rejects invalid floats" {

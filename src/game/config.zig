@@ -1,6 +1,7 @@
 //! Game settings: title, window and native view sizes, level path, background color, update
 //! rate, and scale mode. Read once at startup. The engine knows nothing else about the game.
 
+const std = @import("std");
 const engine = @import("bairava");
 
 /// Window title. The window keeps it as written; frame stats are in the debug overlay (F3).
@@ -78,8 +79,18 @@ pub const script_path = "assets/scripts/game.bs";
 /// Most steps one script call may take before it is stopped, so a loop that never ends can't freeze the game.
 pub const script_max_steps: usize = 100_000;
 
-/// The gameplay save beside the executable. It is human-editable JSON with a schema version.
-pub const save_file_name = "save.json";
+/// The gameplay saves, one file per slot, beside the executable. Each is human-editable JSON with a schema version.
+/// Slot 1 is `save.json`, the file older versions wrote, so an existing save still loads. F5 saves to the selected
+/// slot, F9 loads it, and Tab or the Saves page selects it. Every name must differ from the others.
+pub const save_slot_files = [_][]const u8{ "save.json", "save2.json", "save3.json" };
+
+comptime {
+    for (save_slot_files, 0..) |name, index| {
+        for (save_slot_files[index + 1 ..]) |other| {
+            if (std.mem.eql(u8, name, other)) @compileError("two save slots share the file '" ++ name ++ "'");
+        }
+    }
+}
 
 /// The font for the demo panel, relative to the executable's folder, and its height in native
 /// pixels. The UI is drawn at native resolution, so 10 keeps it legible at the 320x180 view. The

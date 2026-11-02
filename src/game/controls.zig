@@ -20,6 +20,7 @@ pub const Action = enum {
     zoom_reset,
     save_game,
     load_game,
+    cycle_save_slot,
 };
 
 /// The bindings each action starts with. An action missing from this table is a compile error.
@@ -35,6 +36,7 @@ const defaults = engine.ActionDefaults(Action).init(.{
     .zoom_reset = &.{.{ .key = .zero }},
     .save_game = &.{.{ .key = .f5 }},
     .load_game = &.{.{ .key = .f9 }},
+    .cycle_save_slot = &.{.{ .key = .tab }},
 });
 
 /// The bindings the game asks through. See `engine.ActionMap`.
