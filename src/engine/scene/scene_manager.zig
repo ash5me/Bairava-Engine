@@ -1,22 +1,30 @@
-//! Scene lifecycle: one active scene at a time, with changes applied at a safe point.
+//! Scene lifecycle: a stack of open scenes, with changes applied at a safe point.
 //!
-//! The manager owns every scene it opens. It heap-allocates each scene, so a scene's address stays
-//! fixed while the manager itself moves. Each scene is released exactly once: when the next scene
-//! replaces it, or when the manager is deinitialized.
+//! The top of the stack is the active scene, and it is the only scene that is updated. A scene below it is
+//! suspended: it keeps its state, is not updated, and is drawn under the scenes above it. The stack holds at
+//! most `max_depth` scenes.
 //!
-//! A scene asks for a change through `Navigator.switchTo`, which `update` receives. The request is
-//! recorded, not run. The host loop calls `applyPending` after its update steps and before drawing.
-//! That is the safe point: the old scene is not being updated or drawn, so it can be released. A
-//! later request replaces an earlier one that has not been applied yet.
+//! The manager owns every scene it opens. It heap-allocates each scene, so a scene's address stays fixed while
+//! the manager itself moves. Each scene is released exactly once: when it is popped, when a switch replaces it,
+//! or when the manager is deinitialized. Deinitialization releases the stack from the top down.
 //!
-//! `applyPending` creates the new scene before it releases the old one. If the new scene's `init`
-//! fails, the error is returned, the old scene keeps running, and the failed request is dropped.
-//! Both scenes exist briefly during a switch, so a scene's `init` must not claim a resource that
-//! the scene it replaces still holds.
+//! A scene asks for a change through its navigator, which `update` receives. The request is recorded, not run:
+//! `switchTo(T)` replaces the active scene with a new `T` and leaves the scenes below it, `push(T)` opens a new
+//! `T` above the active scene as its child, and `pop()` closes the active scene so the one below it resumes.
+//! The host loop calls `applyPending` after its update steps and before drawing. That is the safe point: the
+//! scene the change affects is not being updated or drawn, so it can be released. A later request replaces an
+//! earlier one that has not been applied yet.
 //!
-//! A scene owns what its `init` opens and releases it in `deinit`. Assets loaded through the
-//! engine's asset loaders are kept until the run ends, because there is no unload yet (P1.5), so
-//! an asset a scene loads stays in memory after the scene is gone.
+//! `applyPending` creates the new scene before it releases the one it replaces. If the new scene's `init` fails,
+//! the error is returned, the stack keeps its scenes, and the failed request is dropped. Both scenes exist briefly
+//! during a switch or push, so a scene's `init` must not claim a resource that the scene it replaces still holds.
+//!
+//! Two requests are refused with an error from `applyPending`: popping the root scene, and pushing past `max_depth`.
+//! Use `switchTo` to replace the root.
+//!
+//! A scene owns what its `init` opens and releases it in `deinit`. Assets loaded through the engine's asset
+//! loaders are kept until the run ends, because there is no unload yet (P1.5), so an asset a scene loads stays in
+//! memory after the scene is gone.
 
 const std = @import("std");
 const scene = @import("scene.zig");
@@ -60,35 +68,66 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
             }
         };
 
-        /// What the diagnostics overlay shows about the scenes: the active scene's name, the name of a
-        /// scene waiting to open, and how many scenes have opened so far.
+        /// The most scenes the stack holds at once. A push past this is refused.
+        pub const max_depth = 8;
+
+        /// What the diagnostics show about the scenes: the active scene's name, the change waiting for the next safe
+        /// point, how many scenes have opened so far, and how many are open now.
         pub const Info = struct {
             name: []const u8,
             pending: ?[]const u8,
             switches: u32,
+            depth: usize,
         };
 
-        /// Opens one scene type. A pending request holds one of these.
+        /// Opens one scene type. A switch or push request holds one of these.
         const Factory = *const fn (allocator: std.mem.Allocator, ctx: *Ctx) anyerror!Instance;
 
-        /// The handle `update` receives. It records a request for the next safe point.
-        pub const Navigator = struct {
-            pending: ?Factory = null,
-            /// The name of the scene the pending request opens, so the overlay can show it before it opens.
-            pending_name: ?[]const u8 = null,
+        /// A switch or push waiting for the next safe point. `label` is what the diagnostics show for it.
+        const Opening = struct {
+            factory: Factory,
+            label: []const u8,
+        };
 
-            /// Asks for a scene of type `T` to replace the active one at the next safe point.
+        /// A change waiting for the next safe point.
+        const Request = union(enum) {
+            switch_to: Opening,
+            push: Opening,
+            pop,
+        };
+
+        /// The handle `update` receives. It records a request for the next safe point. A later request replaces
+        /// an earlier one that has not been applied yet.
+        pub const Navigator = struct {
+            pending: ?Request = null,
+
+            /// Asks for a scene of type `T` to replace the active one at the next safe point. The scenes below the
+            /// active one stay open.
             pub fn switchTo(self: *Navigator, comptime T: type) void {
                 scene.assertScene(T);
-                self.pending = &Maker(T).make;
-                self.pending_name = @typeName(T);
+                self.pending = .{ .switch_to = .{ .factory = &Maker(T).make, .label = @typeName(T) } };
+            }
+
+            /// Asks for a scene of type `T` to open above the active one at the next safe point. The active scene is
+            /// suspended until the new one is popped. It is not updated, but it is still drawn, under the new scene.
+            pub fn push(self: *Navigator, comptime T: type) void {
+                scene.assertScene(T);
+                self.pending = .{ .push = .{ .factory = &Maker(T).make, .label = "push " ++ @typeName(T) } };
+            }
+
+            /// Asks for the active scene to be closed at the next safe point. The scene below it resumes. The root
+            /// scene cannot be popped: use `switchTo` to replace it.
+            pub fn pop(self: *Navigator) void {
+                self.pending = .pop;
             }
         };
 
         allocator: std.mem.Allocator,
-        active: ?Instance = null,
+        /// The open scenes, root first. The last one is the active scene, and the rest are suspended below it.
+        stack: [max_depth]Instance = undefined,
+        depth: usize = 0,
         navigator: Navigator = .{},
-        /// Name of the active scene, or "none" before the first one opens.
+        /// Name of the active scene, or "none" when no scene is open.
         active_name: []const u8 = "none",
         /// Scenes opened so far, counting the first.
         switches: u32 = 0,
@@ -97,57 +136,125 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
             return .{ .allocator = allocator };
         }
 
-        /// Releases the active scene and drops any pending request. The manager is empty afterward.
+        /// Releases every open scene, top first, and drops any pending request. The manager is empty afterward.
         pub fn deinit(self: *Self) void {
-            if (self.active) |active| active.destroy();
-            self.active = null;
+            while (self.depth > 0) {
+                self.depth -= 1;
+                self.stack[self.depth].destroy();
+            }
             self.active_name = "none";
             self.navigator.pending = null;
-            self.navigator.pending_name = null;
         }
 
-        /// Asks for a scene of type `T` from host code, such as a menu handler. The switch happens
-        /// at the next `applyPending`, the same as a request made from `update`.
+        /// Asks for a scene of type `T` to replace the active one, from host code such as a menu handler. The
+        /// switch happens at the next `applyPending`, the same as a request made from `update`.
         pub fn switchTo(self: *Self, comptime T: type) void {
             self.navigator.switchTo(T);
         }
 
-        /// Runs the active scene's update. The scene may ask for a change through its navigator.
+        /// Asks for a scene of type `T` to open above the active one, from host code. See `Navigator.push`.
+        pub fn push(self: *Self, comptime T: type) void {
+            self.navigator.push(T);
+        }
+
+        /// Asks for the active scene to be closed, from host code. See `Navigator.pop`.
+        pub fn pop(self: *Self) void {
+            self.navigator.pop();
+        }
+
+        /// The active scene, which is the top of the stack, or null when no scene is open.
+        fn top(self: *const Self) ?Instance {
+            if (self.depth == 0) return null;
+            return self.stack[self.depth - 1];
+        }
+
+        /// Runs the active scene's update. The scene may ask for a change through its navigator. Scenes below it
+        /// are suspended, so they are not updated.
         pub fn update(self: *Self, ctx: *Ctx) void {
-            if (self.active) |active| active.update(ctx, &self.navigator);
+            if (self.top()) |active| active.update(ctx, &self.navigator);
         }
 
-        /// Draws the active scene. Drawing cannot request a change, so the scene stays the same for
-        /// the whole draw.
+        /// Draws every open scene from the bottom of the stack up, so a pushed scene draws over the one below it.
+        /// Drawing cannot request a change, so the stack stays the same for the whole draw.
         pub fn draw(self: *Self, dc: *const DrawCtx) void {
-            if (self.active) |active| active.draw(dc);
+            for (self.stack[0..self.depth]) |instance| instance.draw(dc);
         }
 
-        /// The active scene's name, and whether a switch is waiting to open, for the diagnostics overlay.
+        /// The active scene's name, the change waiting for the next safe point, and the counts, for the diagnostics.
         pub fn info(self: *const Self) Info {
+            const pending: ?[]const u8 = if (self.navigator.pending) |request| labelOf(request) else null;
             return .{
                 .name = self.active_name,
-                .pending = self.navigator.pending_name,
+                .pending = pending,
                 .switches = self.switches,
+                .depth = self.depth,
             };
         }
 
         /// Adds the active scene's debug lines. A scene that has no `debugText` method adds none.
         pub fn debugText(self: *const Self, out: *Text) void {
-            if (self.active) |active| active.debugText(out);
+            if (self.top()) |active| active.debugText(out);
         }
 
-        /// Applies the pending request, if there is one. If the new scene's `init` fails, its error
-        /// is returned, the current scene keeps running, and the failed request is dropped.
+        /// Applies the pending request, if there is one. If the new scene's `init` fails, its error is returned, the
+        /// stack keeps its scenes, and the failed request is dropped.
         pub fn applyPending(self: *Self, ctx: *Ctx) anyerror!void {
-            const factory = self.navigator.pending orelse return;
+            const request = self.navigator.pending orelse return;
             self.navigator.pending = null;
-            self.navigator.pending_name = null;
-            const next = try factory(self.allocator, ctx);
-            if (self.active) |old| old.destroy();
-            self.active = next;
-            self.active_name = next.name;
+            switch (request) {
+                .switch_to => |opening| {
+                    const next = try opening.factory(self.allocator, ctx);
+                    self.replaceTop(next);
+                },
+                .push => |opening| {
+                    if (self.depth == max_depth) return error.SceneStackFull;
+                    const next = try opening.factory(self.allocator, ctx);
+                    self.stack[self.depth] = next;
+                    self.depth += 1;
+                    self.noteOpened(next);
+                },
+                .pop => {
+                    if (self.depth <= 1) return error.CannotPopRoot;
+                    self.depth -= 1;
+                    self.stack[self.depth].destroy();
+                    self.noteActive();
+                },
+            }
+        }
+
+        /// Puts `next` in place of the active scene, or as the root when the stack is empty. `next` has already
+        /// opened, so the scene it replaces is released only after the new one is running.
+        fn replaceTop(self: *Self, next: Instance) void {
+            if (self.depth == 0) {
+                self.stack[0] = next;
+                self.depth = 1;
+            } else {
+                self.stack[self.depth - 1].destroy();
+                self.stack[self.depth - 1] = next;
+            }
+            self.noteOpened(next);
+        }
+
+        fn noteOpened(self: *Self, opened: Instance) void {
+            self.active_name = opened.name;
             self.switches += 1;
+        }
+
+        fn noteActive(self: *Self) void {
+            if (self.top()) |active| {
+                self.active_name = active.name;
+            } else {
+                self.active_name = "none";
+            }
+        }
+
+        /// What the diagnostics show for a pending change.
+        fn labelOf(request: Request) []const u8 {
+            return switch (request) {
+                .switch_to => |opening| opening.label,
+                .push => |opening| opening.label,
+                .pop => "pop",
+            };
         }
 
         fn Maker(comptime T: type) type {
@@ -310,6 +417,33 @@ const Broken = struct {
     }
 };
 
+/// Scene `G`. It runs as a child, and its update asks to be popped, so a test can see the pop at the safe point.
+const Gamma = struct {
+    trace: *Trace,
+
+    pub fn init(ctx: *TestCtx) !Gamma {
+        mark(&ctx.trace, 'G', '+');
+        ctx.trace.live += 1;
+        return .{ .trace = &ctx.trace };
+    }
+
+    pub fn update(self: *Gamma, ctx: *TestCtx, nav: *M.Navigator) void {
+        _ = ctx;
+        mark(self.trace, 'G', 'u');
+        nav.pop();
+    }
+
+    pub fn draw(self: *Gamma, dc: *const TestDraw) void {
+        _ = dc;
+        mark(self.trace, 'G', 'd');
+    }
+
+    pub fn deinit(self: *Gamma) void {
+        mark(self.trace, 'G', '-');
+        self.trace.live -= 1;
+    }
+};
+
 test "lifecycle: init, update, and draw in order, with deinit once when replaced and at shutdown" {
     var ctx = TestCtx{};
     var manager = M.init(std.testing.allocator);
@@ -407,4 +541,152 @@ test "an empty manager ignores update, draw, and applyPending" {
     try std.testing.expectEqualStrings("", ctx.trace.text());
 
     manager.deinit();
+}
+
+test "a pushed scene runs above the scene below it: only the top updates, and draws run bottom to top" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+    defer manager.deinit();
+
+    manager.switchTo(Beta);
+    try manager.applyPending(&ctx);
+    manager.push(Gamma);
+    try manager.applyPending(&ctx);
+    try std.testing.expectEqual(@as(usize, 2), manager.info().depth);
+
+    manager.update(&ctx);
+    try std.testing.expectEqualStrings("B+G+Gu", ctx.trace.text());
+    manager.draw(&TestDraw{});
+    try std.testing.expectEqualStrings("B+G+GuBdGd", ctx.trace.text());
+}
+
+test "popping a pushed scene destroys it, and the scene below resumes" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+
+    manager.switchTo(Beta);
+    try manager.applyPending(&ctx);
+    manager.push(Gamma);
+    try manager.applyPending(&ctx);
+    manager.update(&ctx);
+    try manager.applyPending(&ctx);
+    try std.testing.expectEqual(@as(usize, 1), manager.info().depth);
+    try std.testing.expectEqualStrings(@typeName(Beta), manager.info().name);
+
+    manager.update(&ctx);
+    try std.testing.expectEqualStrings("B+G+GuG-Bu", ctx.trace.text());
+    try std.testing.expectEqual(@as(usize, 1), ctx.trace.live);
+
+    manager.deinit();
+    try std.testing.expectEqualStrings("B+G+GuG-BuB-", ctx.trace.text());
+    try std.testing.expectEqual(@as(usize, 0), ctx.trace.live);
+}
+
+test "switchTo replaces the active scene and leaves the scene below it open" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+
+    manager.switchTo(Beta);
+    try manager.applyPending(&ctx);
+    manager.push(Gamma);
+    try manager.applyPending(&ctx);
+    manager.switchTo(Alpha);
+    try manager.applyPending(&ctx);
+    try std.testing.expectEqual(@as(usize, 2), manager.info().depth);
+
+    manager.update(&ctx);
+    try manager.applyPending(&ctx);
+    try std.testing.expectEqual(@as(usize, 2), manager.info().depth);
+    try std.testing.expectEqualStrings("B+G+A+G-AuB+A-", ctx.trace.text());
+    try std.testing.expectEqual(@as(usize, 2), ctx.trace.live);
+
+    manager.deinit();
+    try std.testing.expectEqualStrings("B+G+A+G-AuB+A-B-B-", ctx.trace.text());
+    try std.testing.expectEqual(@as(usize, 0), ctx.trace.live);
+}
+
+test "a push whose init fails leaves the stack as it was" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+
+    manager.switchTo(Beta);
+    try manager.applyPending(&ctx);
+    manager.push(Broken);
+    try std.testing.expectError(error.SceneBoom, manager.applyPending(&ctx));
+    try std.testing.expectEqual(@as(usize, 1), manager.info().depth);
+    try std.testing.expectEqual(@as(usize, 1), ctx.trace.live);
+
+    manager.update(&ctx);
+    try std.testing.expectEqualStrings("B+FBu", ctx.trace.text());
+    manager.deinit();
+    try std.testing.expectEqualStrings("B+FBuB-", ctx.trace.text());
+}
+
+test "the stack holds at most max_depth scenes, and one more push is refused" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+
+    manager.switchTo(Beta);
+    try manager.applyPending(&ctx);
+    var pushed: usize = 1;
+    while (pushed < M.max_depth) : (pushed += 1) {
+        manager.push(Gamma);
+        try manager.applyPending(&ctx);
+    }
+    try std.testing.expectEqual(@as(usize, M.max_depth), manager.info().depth);
+    try std.testing.expectEqual(@as(usize, M.max_depth), ctx.trace.live);
+
+    manager.push(Gamma);
+    try std.testing.expectError(error.SceneStackFull, manager.applyPending(&ctx));
+    try std.testing.expectEqual(@as(usize, M.max_depth), manager.info().depth);
+
+    manager.deinit();
+    try std.testing.expectEqual(@as(usize, 0), ctx.trace.live);
+}
+
+test "the root scene cannot be popped, and the scene stays open" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+    defer manager.deinit();
+
+    manager.switchTo(Beta);
+    try manager.applyPending(&ctx);
+    manager.pop();
+    try std.testing.expectError(error.CannotPopRoot, manager.applyPending(&ctx));
+    try std.testing.expectEqual(@as(usize, 1), manager.info().depth);
+    try std.testing.expectEqual(@as(usize, 1), ctx.trace.live);
+}
+
+test "deinit releases the pushed scenes from the top down, before the scene they sit on" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+
+    manager.switchTo(Beta);
+    try manager.applyPending(&ctx);
+    manager.push(Gamma);
+    try manager.applyPending(&ctx);
+    manager.push(Gamma);
+    try manager.applyPending(&ctx);
+    manager.deinit();
+    try std.testing.expectEqualStrings("B+G+G+G-G-B-", ctx.trace.text());
+    try std.testing.expectEqual(@as(usize, 0), ctx.trace.live);
+}
+
+test "the pending change is named for the diagnostics, for a switch, a push, and a pop" {
+    var ctx = TestCtx{};
+    var manager = M.init(std.testing.allocator);
+    defer manager.deinit();
+
+    manager.switchTo(Beta);
+    try std.testing.expectEqualStrings(@typeName(Beta), manager.info().pending.?);
+    try manager.applyPending(&ctx);
+
+    manager.push(Gamma);
+    try std.testing.expectEqualStrings("push " ++ @typeName(Gamma), manager.info().pending.?);
+    try manager.applyPending(&ctx);
+
+    manager.pop();
+    try std.testing.expectEqualStrings("pop", manager.info().pending.?);
+    try manager.applyPending(&ctx);
+    try std.testing.expect(manager.info().pending == null);
 }

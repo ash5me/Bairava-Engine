@@ -51,7 +51,8 @@ pub const Layers = struct {
 /// The active scene and whether a switch is waiting, from the scene host.
 pub const Scene = struct {
     name: []const u8 = "none",
-    /// The name of the scene a switch will open at the next safe point, or null when none is pending.
+    /// What the change waiting for the next safe point does: a scene's name for a switch, `push <name>`, or
+    /// `pop`. Null when none is pending.
     pending: ?[]const u8 = null,
     /// Scenes opened so far, counting the first.
     switches: u32 = 0,

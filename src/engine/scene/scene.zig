@@ -5,9 +5,9 @@
 //!     pub fn draw(self: *Self, dc: *const DrawCtx) void
 //!     pub fn deinit(self: *Self) void
 //!
-//! `Ctx` and `DrawCtx` are the engine's context types, and `nav` is the handle a scene uses to ask
-//! for a change of scene (see scene_manager.zig). `init` runs once, before the first update, and
-//! `deinit` runs once after a successful `init`, when the scene is replaced or the manager shuts
+//! `Ctx` and `DrawCtx` are the engine's context types, and `nav` is the handle a scene uses to change the stack: `nav.switchTo(T)` replaces
+//! the scene, `nav.push(T)` opens a child above it, and `nav.pop()` closes it (see scene_manager.zig). `init` runs once, before the first update, and
+//! `deinit` runs once after a successful `init`, when the scene is popped, replaced, or the manager shuts
 //! down. A scene must not keep `ctx`, `dc`, or `nav` after the call that received them.
 
 /// Fails the build, naming the scene and the method, when `T` lacks one of the four methods or one

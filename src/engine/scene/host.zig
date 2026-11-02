@@ -2,9 +2,9 @@
 //! game is `engine.run(engine.SceneHost(FirstScene), config)`.
 //!
 //! `init` opens `Root` as the first scene, and fails if its `init` fails. Each update step runs the
-//! active scene's update, then applies the switch it requested, if any. A switch therefore takes
-//! effect after the scene that asked for it has returned, and before the next scene is updated or
-//! drawn. A switch whose `init` fails is logged, and the current scene keeps running.
+//! active scene's update, then applies the change it requested, if any: a switch, a push, or a pop. A change
+//! therefore takes effect after the scene that asked for it has returned, and before the next scene is
+//! updated or drawn. A change whose `init` fails is logged, and the open scenes keep running.
 
 const std = @import("std");
 const logging = @import("../logging/log.zig");
