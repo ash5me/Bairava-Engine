@@ -284,7 +284,8 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │   ├── camera.zig     View position, follow target, smoothing, edge clamping, zoom easing
 │   │   │   ├── view.zig       Fits the view to the window for each zoom and scale mode, and maps mouse positions
 │   │   │   ├── loaded_atlas.zig  The atlas on the GPU: its texture, its index, and each sprite's region
-│   │   │   └── tilemap_draw.zig  Draws one tile layer at a time, with view culling
+│   │   │   ├── tilemap_draw.zig  Draws one tile layer at a time, with view culling
+│   │   │   └── skeleton_draw.zig  Queues a skeleton's attachments as sprites, with each pivot on its bone
 │   │   ├── assets/            Names, caching, and loading
 │   │   │   ├── manager.zig    Facade over the registry, cache, and loaders
 │   │   │   ├── registry.zig   Asset table: names to ids and validated paths
@@ -302,7 +303,8 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │   ├── voices.zig     Voice handles, gain, and the finish and loop rules. No SDL
 │   │   │   └── ima.zig        BRAD IMA ADPCM decoder to interleaved signed 16-bit PCM
 │   │   ├── animation/
-│   │   │   └── animation.zig  Sprite-sheet clips and the animator that plays them
+│   │   │   ├── animation.zig  Sprite-sheet clips and the animator that plays them
+│   │   │   └── skeleton.zig   Bones, sprite attachments, and keyed transforms: parsing, evaluation, and playback
 │   │   ├── ecs/
 │   │   │   └── entity.zig     Entity world: component rows, generational handles, swap-remove despawn
 │   │   ├── physics/
@@ -532,7 +534,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Asset cache | `assets/cache.zig` | Early | 50% | Generic cache keyed by asset name: reference counts, load on first `acquire`, `unloadUnused`, a byte budget with least-recently-used eviction, and priority preloading through `request` and `pump`. Names and paths come from `assets/registry.zig`, and the index is the engine's `StringMap`. Not yet compiled or run. The engine's texture store uses it, but the game still loads its atlas, font, and sound directly. Textures load in the background through the job system (docs/jobs.md). Missing: fonts and sounds in the cache; hot reload; unloading on a schedule. |
 | Sprites | `renderer/sprite.zig`, `renderer/backends/sdl_gpu/sprite.zig` | Functional | 80% | Batched quads with four vertices each and a 32-bit index buffer. Per-sprite tint, alpha, flip, rotation around an origin, and z-order, sorted once per frame. Storage grows with each frame. Normal maps (`Options.normal`) light a sprite with up to 16 point lights from `SpriteBatch.addLight`, drawn through a second pipeline. `Options.lit` lights a sprite with no map of its own as a flat surface, through a shared one-texel map that is ready a frame after the batch is created. Tile layers take the same options through `tilemap_draw.drawLayer`. Each vertex carries a 2x2 normal basis, so a flipped or turned sprite lights as it appears; that adds 16 bytes per vertex. The lit path has not been run on a GPU yet. Missing: instancing. The player and the UI stay unlit until a game passes `lit` for them. |
 | Camera | `renderer/camera.zig` | Functional | 75% | Follow, frame-rate-independent smoothing, clamp, per-sprite pixel rounding, and eased zoom. Missing: dead zone, shake. |
-| Animation | `animation/animation.zig` | Functional | 60% | Clips with a row, frame count, frame time, and loop mode, plus an `Animator` per entity that restarts only when its clip changes. Missing: blending between clips, animation events. |
+| Animation | `animation/animation.zig`, `animation/machine.zig`, `animation/skeleton.zig` | Functional | 60% | Sprite-sheet clips, a state machine that blends between clips and emits frame events, and skeletal animation: bones with sprite attachments and keyed transforms. See `docs/animation.md`. |
 | Level | `game/level.zig` | Early | 50% | Loads the tile map and reports its size. Drawing is in `engine/renderer/tilemap_draw.zig`, one layer at a time in ground, decoration, player, foreground order, with culling. Solid tiles block the player. No tile animation. |
 | Tile map | `engine/scene/tilemap.zig` | Functional | 70% | Text map format with clear parse errors, three layers, empty cells, solid IDs on any layer, a spawn cell, and box movement that stops at solid tiles, one axis at a time. Missing: Tiled import. |
 | Input | `input/input.zig` | Functional | 75% | Held, pressed, and released keys and mouse buttons. One-shot input reaches exactly one update step. `mouse_x` and `mouse_y` are window points; use `Context.mouseWorld` for world coordinates. Clicks don't store a position yet. No text input. Unit tests run through `src/tests.zig`. |

@@ -30,6 +30,8 @@ test {
     _ = @import("engine/diagnostics/console.zig");
     _ = @import("engine/animation/data.zig");
     _ = @import("engine/animation/machine.zig");
+    _ = @import("engine/animation/skeleton.zig");
+    _ = @import("engine/renderer/skeleton_draw.zig");
     _ = @import("engine/particles.zig");
     _ = @import("game/level_data.zig");
     _ = @import("game/prefab.zig");

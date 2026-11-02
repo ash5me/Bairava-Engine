@@ -92,3 +92,62 @@ frame rectangles against the warrior atlas region at startup, and the machine ch
 
 `zig build test` covers parsing, rectangle bounds, looping metadata, variable frame durations, deterministic
 advancement, machine transitions, blending, variants, triggers, events, and restore.
+
+## Skeleton data, version 1
+
+A skeleton is a hierarchy of bones with sprites attached to them, and animations that key each bone's position,
+rotation, and scale. Like clip data, it is text that starts with a version header. `engine.animation.skeleton.Data.parse`
+validates it against the size of its source region before any of it is used, and `deinit` releases the result.
+
+```text
+skeleton 1
+bone root - 0 0 0 1
+bone torso root 0 -12 0 1
+bone arm torso 4 0 0 1
+attach torso 0 0 16 16 0 0 8 8
+attach arm 16 0 8 4 0 0 0 2
+anim swing loop 1
+key arm rotate 0 0
+key arm rotate 0.5 0.5
+key arm rotate 1 0
+key torso translate 0 0 0
+key torso translate 0.5 0 -1
+key torso translate 1 0 0
+```
+
+Fields are separated by spaces or tabs. Blank lines and lines that start with `#` are ignored. Readers reject any other
+version.
+
+`bone NAME PARENT X Y ROTATION SCALE` declares a bone. The first bone is the root, and its parent is `-`. Every other
+bone names an earlier bone as its parent. Position is relative to the parent, rotation is in radians and turns clockwise
+on screen, and scale is a uniform factor greater than zero. A skeleton holds at most 64 bones.
+
+`attach BONE X Y W H OFFSET_X OFFSET_Y PIVOT_X PIVOT_Y` draws one sprite on a bone. X, Y, W, and H give its rectangle in
+texels, relative to the source region, and the rectangle must lie inside that region. The offset places the pivot in the
+bone's space. The pivot is the point inside the sprite that sits on that spot, and the sprite turns around it, so it must
+lie inside the rectangle. Attachments draw in the order they are listed.
+
+`anim NAME loop|once LENGTH` starts an animation whose length is in seconds. Every `bone` and `attach` line comes before
+the first `anim`.
+
+`key BONE rotate|scale TIME VALUE` and `key BONE translate TIME X Y` add keys. A rotate or scale key replaces the bone's
+rotation or scale, and a translate key replaces its position. The keys of one property on one bone must be listed
+together, in increasing time order, and they must lie within the animation's length. A bone and property that appears
+again after another track in the same animation is an error. A scale key must be greater than zero.
+
+Evaluation is in `engine.animation.skeleton.evaluate(&data, animation, time, &pose)`. It writes every bone's world
+transform to a `Pose` without allocating. Keys interpolate linearly. A looping animation wraps its time, and between its
+last key and its first key it interpolates across the wrap. A one-shot holds its first key until that key's time, and
+its last key after the end. A property with no keys keeps its rest value. A child is placed in its parent's rotated and
+scaled space, and it inherits the parent's rotation and scale.
+
+`skeleton.Player` plays one animation. It holds a pointer to the data, the animation, and a time, and it offers `init`,
+`play`, `update(dt)`, `finished`, and `pose`. The player points into the data, so the data must outlive it.
+
+`skeleton.place(bone, attachment)` returns one attachment's rectangle, origin, and rotation in the pose's pixels. The
+renderer's `engine.skeleton_draw.drawPose(batch, texture, data, pose, sheet_x, sheet_y, x, y, tint, alpha)` queues every
+attachment through `SpriteBatch.drawSprite`. The pivot stays on its bone, and the sprite turns with the bone.
+
+Version 1 has these limits. Keys interpolate linearly, and scale is uniform. There is no blending between two skeleton
+animations and no inverse kinematics. Attachments have no tint, flip, or draw order of their own, so they draw in file
+order. The warrior and the sample game do not use skeletons yet.

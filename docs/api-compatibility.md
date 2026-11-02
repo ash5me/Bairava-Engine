@@ -39,7 +39,7 @@ An engine API version is not a save-file or asset-format version. Data formats h
 version fields and compatibility rules, independent of engine releases:
 
 - Game saves: `save_version` in [`src/game/save.zig`](../src/game/save.zig).
-- Animation clips and machines: the `animation` and `machine` headers in
+- Animation clips, machines, and skeletons: the `animation`, `machine`, and `skeleton` headers in
   [`docs/animation.md`](animation.md).
 - Tile maps: the `version` header in [`docs/tilemap.md`](tilemap.md).
 - IMA ADPCM audio: the BRAD version byte decoded by

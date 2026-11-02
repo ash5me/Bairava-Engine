@@ -82,6 +82,9 @@ pub const machine = @import("machine.zig");
 pub const Machine = machine.Machine;
 pub const MachineDefinition = machine.Definition;
 
+/// Skeletal animation: bones, sprite attachments on them, and keyed bone transforms. See docs/animation.md.
+pub const skeleton = @import("skeleton.zig");
+
 /// Plays a validated variable-duration clip using fixed engine update steps.
 pub const Timeline = struct {
     clip: *const DataClip,
