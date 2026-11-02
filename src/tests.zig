@@ -32,6 +32,7 @@ test {
     _ = @import("engine/animation/machine.zig");
     _ = @import("engine/particles.zig");
     _ = @import("game/level_data.zig");
+    _ = @import("game/prefab.zig");
     _ = @import("game/save.zig");
     _ = @import("engine/renderer/debug_geometry.zig");
     _ = @import("engine/memory/hash_map.zig");

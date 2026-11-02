@@ -61,8 +61,10 @@ pub const asset_index_path = "assets/asset-index.txt";
 
 /// The tile map the game loads at startup, relative to the executable's folder.
 pub const level_path = "assets/maps/level1.txt";
-/// Game-specific spawn metadata for the level.
+/// Game-specific level metadata: the spawn cell, and the entities the level places. See docs/prefabs.md.
 pub const level_spawn_path = "assets/maps/level1.spawn";
+/// Game-owned prefab definitions: the entity templates that the level metadata places by name.
+pub const prefab_path = "assets/prefabs.txt";
 /// Versioned, validated sprite animation definitions.
 pub const animation_path = "assets/animations/warrior.anim";
 pub const machine_path = "assets/animations/warrior.machine";

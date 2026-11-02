@@ -4,6 +4,9 @@
 const std = @import("std");
 const engine = @import("bairava");
 const level_data = @import("level_data.zig");
+const prefab = @import("prefab.zig");
+
+const log = engine.log.scoped("level");
 
 /// Side length of one tile, in native pixels.
 pub const tile_px = engine.tilemap.tile_px;
@@ -12,11 +15,13 @@ pub const tile_px = engine.tilemap.tile_px;
 pub const Level = struct {
     map: engine.tilemap.TileMap,
     spawn: level_data.Spawn,
+    /// The entities the level metadata places. The game spawns one for each.
+    placements: []level_data.Placement,
     allocator: std.mem.Allocator,
 
     /// Reads and parses the map file. Missing or malformed game assets return an error to the
     /// game's initializer, which lets the runtime unwind engine-owned state cleanly.
-    pub fn load(ctx: *const engine.Context, path: []const u8, spawn_path: []const u8) engine.AssetError!Level {
+    pub fn load(ctx: *const engine.Context, path: []const u8, spawn_path: []const u8, prefabs: *const prefab.Registry) engine.AssetError!Level {
         const text = ctx.readFile(ctx.allocators.asset, path) catch |err| {
             return switch (err) {
                 error.FileNotFound => error.FileNotFound,
@@ -40,14 +45,19 @@ pub const Level = struct {
             };
         };
         defer allocator.free(spawn_text);
-        const spawn = level_data.parseSpawn(map.cols, map.rows, spawn_text) catch {
+        const data = level_data.parse(allocator, prefabs, map.cols, map.rows, spawn_text) catch |err| {
             map.deinit(allocator);
-            return error.InvalidLevel;
+            log.err("level metadata '{s}' is not valid: {s}", .{ spawn_path, @errorName(err) });
+            return switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                else => error.InvalidLevel,
+            };
         };
-        return .{ .map = map, .spawn = spawn, .allocator = allocator };
+        return .{ .map = map, .spawn = data.spawn, .placements = data.placements, .allocator = allocator };
     }
 
     pub fn deinit(self: *const Level) void {
+        self.allocator.free(self.placements);
         self.map.deinit(self.allocator);
     }
 

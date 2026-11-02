@@ -1,2 +1,5 @@
-# Game-specific level metadata, kept outside the generic engine tilemap.
+# Game-specific level metadata, kept outside the generic engine tilemap. See docs/prefabs.md.
 spawn 20 12
+place marker 3 3
+place marker 36 3
+place marker 3 20

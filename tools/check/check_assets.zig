@@ -19,6 +19,8 @@ extern "c" fn fread(buffer: [*]u8, size: usize, count: usize, file: *File) usize
 const seek_set: c_int = 0;
 const seek_end: c_int = 2;
 const max_manifest_assets = 256;
+/// The manifest name of the game's prefab file. Level metadata must depend on it.
+const prefab_asset_name = "game_prefabs";
 
 const ManifestAsset = struct {
     name: []const u8,
@@ -105,6 +107,19 @@ fn dependencyMapSize(asset: *const ManifestAsset, assets: []const ManifestAsset)
     return null;
 }
 
+/// The source path of the `file` asset that `asset` depends on under the name `wanted`, or null when none does.
+fn dependencySource(asset: *const ManifestAsset, assets: []const ManifestAsset, wanted: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, asset.dependencies, "-")) return null;
+    var dependencies = std.mem.splitScalar(u8, asset.dependencies, ',');
+    while (dependencies.next()) |name| {
+        if (!std.mem.eql(u8, name, wanted)) continue;
+        for (assets) |dependency| {
+            if (std.mem.eql(u8, dependency.name, name) and std.mem.eql(u8, dependency.kind, "file")) return dependency.source;
+        }
+    }
+    return null;
+}
+
 fn dependencyImageName(asset: *const ManifestAsset, assets: []const ManifestAsset) ?[]const u8 {
     if (std.mem.eql(u8, asset.dependencies, "-")) return null;
     var dependencies = std.mem.splitScalar(u8, asset.dependencies, ',');
@@ -148,20 +163,42 @@ fn checkAssetContent(
         if (!std.mem.eql(u8, asset.kind, "file")) continue;
         if (!check.validate.isSafePath(asset.source)) continue;
 
-        if (isExtension(asset.source, "spawn")) {
-            const dimensions = dependencyMapSize(asset, project_assets) orelse {
-                report.add(asset.source, 0, "spawn metadata must depend on a valid map asset");
-                continue;
-            };
+        if (std.mem.eql(u8, asset.name, prefab_asset_name)) {
             const text = readFile(allocator, asset.source) orelse {
                 report.add(asset.source, 0, "file could not be read");
                 continue;
             };
             defer allocator.free(text);
-            _ = check.level_data.parseSpawn(dimensions.cols, dimensions.rows, text) catch |err| {
+            _ = check.prefab.parse(text) catch |err| {
                 report.add(asset.source, 0, @errorName(err));
                 continue;
             };
+        } else if (isExtension(asset.source, "spawn")) {
+            const dimensions = dependencyMapSize(asset, project_assets) orelse {
+                report.add(asset.source, 0, "spawn metadata must depend on a valid map asset");
+                continue;
+            };
+            const prefab_source = dependencySource(asset, project_assets, prefab_asset_name) orelse {
+                report.add(asset.source, 0, "spawn metadata must depend on the " ++ prefab_asset_name ++ " asset");
+                continue;
+            };
+            const prefab_text = readFile(allocator, prefab_source) orelse {
+                report.add(asset.source, 0, "prefab file could not be read");
+                continue;
+            };
+            defer allocator.free(prefab_text);
+            // A broken prefab file is reported on its own line of this loop, so here it only stops the placement check.
+            const registry = check.prefab.parse(prefab_text) catch continue;
+            const text = readFile(allocator, asset.source) orelse {
+                report.add(asset.source, 0, "file could not be read");
+                continue;
+            };
+            defer allocator.free(text);
+            const data = check.level_data.parse(allocator, &registry, dimensions.cols, dimensions.rows, text) catch |err| {
+                report.add(asset.source, 0, @errorName(err));
+                continue;
+            };
+            data.deinit(allocator);
         } else if (isExtension(asset.source, "anim")) {
             const image_name = dependencyImageName(asset, project_assets) orelse {
                 report.add(asset.source, 0, "animation asset must depend on its atlas image asset");

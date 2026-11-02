@@ -1,0 +1,3 @@
+# Game prefabs: entity templates that the level metadata places by name. See docs/prefabs.md.
+prefab marker
+tile 39

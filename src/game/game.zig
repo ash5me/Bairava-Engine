@@ -12,6 +12,7 @@ const Level = @import("level.zig").Level;
 const Player = @import("player.zig").Player;
 const save_store = @import("save.zig");
 const script_host = @import("script_host.zig");
+const prefab = @import("prefab.zig");
 
 const log = engine.log.scoped("game");
 
@@ -21,6 +22,13 @@ const ui_z: i32 = 1000;
 /// Colors of the debug geometry the game draws: the player's collision box and its center marker.
 const player_box_color = engine.diagnostics.Color{ .r = 0.3, .g = 1.0, .b = 0.4, .a = 0.9 };
 const player_marker_color = engine.diagnostics.Color{ .r = 1.0, .g = 0.85, .b = 0.2, .a = 1.0 };
+
+/// One placed entity: the prefab it was made from, and the cell it stands on.
+const Placed = struct {
+    prefab: prefab.Id,
+    col: u32,
+    row: u32,
+};
 
 pub const Game = struct {
     level: Level,
@@ -33,6 +41,10 @@ pub const Game = struct {
     /// The atlas regions of the sprites this game draws.
     tile: engine.atlas.Region,
     warrior: engine.atlas.Region,
+    /// The entity templates from the prefab file. A placement names one of them by its index.
+    prefabs: prefab.Registry,
+    /// One entity for each placement the level metadata makes. Each row names the prefab it was made from.
+    entities: engine.entity.World(Placed, .aos),
     /// Immediate-mode UI for the demo panel. It owns its font and its widget state.
     ui: engine.ui.Ui,
     /// Demo panel state: how often the button was clicked, and the slider value.
@@ -78,12 +90,20 @@ pub const Game = struct {
                 return error.InvalidAnimation;
             }
         }
-        var level = Level.load(ctx, config.level_path, config.level_spawn_path) catch |err| {
-            log.err("required level '{s}' or spawn metadata '{s}' failed to load: {s}", .{ config.level_path, config.level_spawn_path, @errorName(err) });
+        const registry = loadPrefabs(ctx, config.prefab_path) catch |err| {
+            log.err("required prefab file '{s}' failed to load: {s}", .{ config.prefab_path, @errorName(err) });
+            return err;
+        };
+        var level = Level.load(ctx, config.level_path, config.level_spawn_path, &registry) catch |err| {
+            log.err("required level '{s}' or its metadata '{s}' failed to load: {s}", .{ config.level_path, config.level_spawn_path, @errorName(err) });
             return err;
         };
         errdefer level.deinit();
         checkTileset(&level, tile);
+        if (!registry.tilesFit(tile.cellCount(engine.tilemap.tile_size))) {
+            log.err("prefab file '{s}' draws a tile that the tileset '{s}' does not have", .{ config.prefab_path, config.atlas_image_path });
+            return error.InvalidLevel;
+        }
 
         const spawn = level.spawn;
         var machine_def = loadMachine(ctx, config.machine_path, &animations) catch |err| {
@@ -100,6 +120,13 @@ pub const Game = struct {
         var player = Player.standingOn(spawn.col, spawn.row, &animations, machine_def);
         errdefer player.deinit();
         log.info("map {d}x{d} tiles, player starts on tile ({d}, {d})", .{ level.map.cols, level.map.rows, spawn.col, spawn.row });
+
+        var entities = engine.entity.World(Placed, .aos).init(ctx.allocators.game);
+        errdefer entities.deinit();
+        for (level.placements) |placement| {
+            _ = entities.spawn(.{ .prefab = placement.prefab, .col = placement.col, .row = placement.row }) catch return error.OutOfMemory;
+        }
+        log.info("{d} placed entities spawned from the level metadata", .{entities.count()});
 
         const ui_font = ctx.loadFont(config.ui_font_path, config.ui_font_px) catch |err| {
             log.err("required UI font '{s}' failed to load: {s}", .{ config.ui_font_path, @errorName(err) });
@@ -119,6 +146,8 @@ pub const Game = struct {
             .animations = animations,
             .tile = tile,
             .warrior = warrior,
+            .prefabs = registry,
+            .entities = entities,
             .ui = ui,
             .clicks = 0,
             .volume = 0.5,
@@ -159,6 +188,7 @@ pub const Game = struct {
         if (self.ambient_sound) |*sound| sound.deinit();
         self.level.deinit();
         self.player.deinit();
+        self.entities.deinit();
         self.animations.deinit();
         self.atlas.deinit();
         self.ui.deinit();
@@ -355,6 +385,11 @@ pub const Game = struct {
             log.warn("atlas reload rejected: the level uses tiles the new tile sprite lacks; keeping the current atlas", .{});
             return;
         }
+        if (!self.prefabs.tilesFit(tile.cellCount(engine.tilemap.tile_size))) {
+            fresh.deinit();
+            log.warn("atlas reload rejected: a prefab draws a tile the new tileset lacks; keeping the current atlas", .{});
+            return;
+        }
 
         ctx.waitGpuIdle();
         self.atlas.deinit();
@@ -456,11 +491,12 @@ pub const Game = struct {
         dc.cam.world_h = self.level.heightPx();
         dc.cam.followSmooth(center.x, center.y, dc.dt, config.camera_rate);
 
-        // Draw order: ground, decoration, the player, and then foreground, which can cover the player.
+        // Draw order: ground, decoration, placed entities, the player, and then foreground, which can cover the player.
         const tiles = &self.atlas.texture;
         const map = &self.level.map;
         if (dc.layers.ground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .ground, .{});
         if (dc.layers.decoration) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .decoration, .{});
+        self.drawPlaced(dc.batch, tiles, dc.cam);
         self.player.draw(dc.batch, tiles, self.warrior, dc.cam, dc.alpha);
         if (dc.layers.foreground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .foreground, .{});
 
@@ -478,6 +514,32 @@ pub const Game = struct {
 
         // The panel goes last. Its quads were built in the update step, so this only queues them.
         self.ui.queue(dc.batch, ui_z);
+    }
+
+    /// Queues one sprite for each placed entity. The sprite is the tile its prefab names, read from the tileset the same
+    /// way the tile layers read it, and it sits on the cell the entity stands on.
+    fn drawPlaced(self: *const Game, batch: *engine.SpriteBatch, texture: *const engine.Texture, cam: *const engine.Camera) void {
+        const tile_px = engine.tilemap.tile_px;
+        const tile_size = engine.tilemap.tile_size;
+        const across = self.tile.cellsAcross(tile_size);
+        var row: usize = 0;
+        while (row < self.entities.count()) : (row += 1) {
+            const placed = self.entities.get(self.entities.handleAt(row)).?;
+            const id = self.prefabs.get(placed.prefab).tile;
+            const src = engine.Rect{
+                .x = @floatFromInt(self.tile.x + (id % across) * tile_size),
+                .y = @floatFromInt(self.tile.y + (id / across) * tile_size),
+                .w = tile_px,
+                .h = tile_px,
+            };
+            const dst = engine.Rect{
+                .x = cam.screenX(@as(f32, @floatFromInt(placed.col)) * tile_px),
+                .y = cam.screenY(@as(f32, @floatFromInt(placed.row)) * tile_px),
+                .w = tile_px,
+                .h = tile_px,
+            };
+            batch.drawSprite(texture, src, dst, .{});
+        }
     }
 
     /// Builds the demo panel for this frame. It runs in the update step, so each press and release
@@ -501,6 +563,23 @@ pub const Game = struct {
         ui.end();
     }
 };
+
+/// Reads and parses the prefab file. A file that cannot be read or parsed stops startup, the same as a bad map.
+fn loadPrefabs(ctx: *const engine.Context, path: []const u8) engine.AssetError!prefab.Registry {
+    const source = ctx.readFile(ctx.allocators.asset, path) catch |err| {
+        return switch (err) {
+            error.FileNotFound => error.FileNotFound,
+            error.PathTooLong => error.PathTooLong,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.ReadFailed,
+        };
+    };
+    defer ctx.allocators.asset.free(source);
+    return prefab.parse(source) catch |err| {
+        log.err("prefab file '{s}' is not valid: {s}", .{ path, @errorName(err) });
+        return error.InvalidLevel;
+    };
+}
 
 /// Reads the animation machine's text and checks it against the clips in `animations`.
 fn loadMachine(ctx: *const engine.Context, path: []const u8, animations: *const engine.animation.Library) engine.AssetError!engine.animation.MachineDefinition {
