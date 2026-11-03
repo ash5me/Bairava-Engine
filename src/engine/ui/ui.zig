@@ -226,6 +226,16 @@ pub const Ui = struct {
         c.ui_end(self.ctx);
     }
 
+    /// Cancels keybind capture immediately, for example when the menu that owns the row is closed.
+    pub fn cancelListening(self: *Ui) void {
+        c.ui_cancel_listening(self.ctx);
+    }
+
+    /// Removes all widgets queued by the previous frame without drawing anything.
+    pub fn clear(self: *Ui) void {
+        c.ui_clear(self.ctx);
+    }
+
     /// A line of text in the column.
     pub fn label(self: *Ui, str: []const u8) void {
         var buf: CString = undefined;

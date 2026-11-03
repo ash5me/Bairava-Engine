@@ -48,6 +48,8 @@ typedef struct ui_context {
 void ui_init(ui_context *ui, ui_font *font);
 void ui_begin(ui_context *ui, const ui_input *in, float x, float y, float w);
 void ui_end(ui_context *ui);
+void ui_cancel_listening(ui_context *ui);
+void ui_clear(ui_context *ui);
 
 void ui_label(ui_context *ui, const char *text);
 int ui_button(ui_context *ui, const char *label);                                    /* 1 on the frame it is clicked */

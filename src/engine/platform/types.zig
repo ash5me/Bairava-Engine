@@ -2,8 +2,8 @@
 //! the platform backend can both use it without depending on each other.
 
 /// A physical key, named by its position on the keyboard. A layout changes the character a position
-/// produces, not the position, so bindings resolve through these. The engine reports 27 keys: the 24
-/// in `Key` (engine/input/input.zig), plus F3, F4, and F11.
+/// produces, not the position, so bindings resolve through these. The engine reports command keys plus
+/// the keys named by `Key` (engine/input/input.zig).
 pub const Scancode = enum {
     escape,
     left,
@@ -28,6 +28,7 @@ pub const Scancode = enum {
     f,
     r,
     backspace,
+    f8,
     f5,
     f9,
     f2,

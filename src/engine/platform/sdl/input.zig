@@ -43,6 +43,7 @@ fn sdlScancode(code: Scancode) c.SDL_Scancode {
         .f => c.SDL_SCANCODE_F,
         .r => c.SDL_SCANCODE_R,
         .backspace => c.SDL_SCANCODE_BACKSPACE,
+        .f8 => c.SDL_SCANCODE_F8,
         .f5 => c.SDL_SCANCODE_F5,
         .f9 => c.SDL_SCANCODE_F9,
         .f2 => c.SDL_SCANCODE_F2,
@@ -255,6 +256,7 @@ test "scancodes map to the SDL names the controls use, and an unnamed key maps t
     try std.testing.expectEqual(@as(?Scancode, .e), scancodeFromSdl(c.SDL_SCANCODE_E));
     try std.testing.expectEqual(@as(?Scancode, .f), scancodeFromSdl(c.SDL_SCANCODE_F));
     try std.testing.expectEqual(@as(?Scancode, .r), scancodeFromSdl(c.SDL_SCANCODE_R));
+    try std.testing.expectEqual(@as(?Scancode, .f8), scancodeFromSdl(c.SDL_SCANCODE_F8));
     try std.testing.expectEqual(@as(?Scancode, .f5), scancodeFromSdl(c.SDL_SCANCODE_F5));
     try std.testing.expectEqual(@as(?Scancode, .f9), scancodeFromSdl(c.SDL_SCANCODE_F9));
     try std.testing.expectEqual(@as(?Scancode, .f3), scancodeFromSdl(c.SDL_SCANCODE_F3));

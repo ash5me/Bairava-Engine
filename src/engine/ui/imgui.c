@@ -98,6 +98,17 @@ void ui_end(ui_context *ui) {
     if (!ui->listening_drawn) ui->listening = 0;
 }
 
+void ui_cancel_listening(ui_context *ui) {
+    ui->listening = 0;
+    ui->locked_by = 0;
+    ui->listening_drawn = 0;
+}
+
+void ui_clear(ui_context *ui) {
+    ui->list.count = 0;
+    ui->list.dropped = 0;
+}
+
 void ui_label(ui_context *ui, const char *text) {
     size_t n = strlen(text);
     ui_rect r = next_row(ui, row_height(ui));

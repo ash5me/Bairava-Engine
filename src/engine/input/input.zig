@@ -47,6 +47,7 @@ pub const Key = enum {
     e,
     f,
     r,
+    f8,
     f5,
     f9,
 };
@@ -77,6 +78,7 @@ pub fn scancodeOf(key: Key) Scancode {
         .e => .e,
         .f => .f,
         .r => .r,
+        .f8 => .f8,
         .f5 => .f5,
         .f9 => .f9,
     };
@@ -108,6 +110,7 @@ pub fn keyFor(code: Scancode) ?Key {
         .e => .e,
         .f => .f,
         .r => .r,
+        .f8 => .f8,
         .backspace => null,
         .f5 => .f5,
         .f9 => .f9,
@@ -509,8 +512,8 @@ test "F3 and F11 are read as commands, not as keys" {
     try std.testing.expectEqual(@as(?Key, null), keyFor(.f3));
     try std.testing.expectEqual(@as(?Key, null), keyFor(.f11));
     try std.testing.expectEqual(@as(?Key, null), keyFor(.f4));
-    try std.testing.expectEqual(@as(usize, 29), std.enums.values(Scancode).len);
-    try std.testing.expectEqual(@as(usize, 24), key_count);
+    try std.testing.expectEqual(@as(usize, 30), std.enums.values(Scancode).len);
+    try std.testing.expectEqual(@as(usize, 25), key_count);
 }
 
 test "a key-down presses its key, and an auto-repeated key-down does not" {

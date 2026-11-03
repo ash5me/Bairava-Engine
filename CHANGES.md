@@ -30,6 +30,8 @@
 
 ## What changed
 
+- Semkootru's title, demo button, click counter, volume controls, Saves and Controls screens now stay hidden
+  during normal gameplay. Press F8 to toggle the game menu.
 - Added a repository-specific [Dear ImGui migration plan](docs/dearimgui-migration-plan.md) covering build integration,
   native-input mapping, font/renderer adapters, Semkootru parity, testing, rollback, and legacy removal.
 - Debug UI: compact native overlays cap width to 44% and height to 42% of the view, limit text rows to the

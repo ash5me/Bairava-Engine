@@ -77,6 +77,7 @@ It creates `zig-out/release/` with the executable, packaged assets, documentatio
 |---|---|
 | Arrow keys or `W A S D` | Move |
 | Esc | Quit |
+| F8 | Toggle the game menu (`Semkootru`, sliders, Saves, and Controls) |
 | F11 | Toggle fullscreen |
 | F3 | Toggle the debug overlay |
 | `I` | Toggle fit/integer scaling |

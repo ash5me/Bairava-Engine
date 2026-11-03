@@ -71,6 +71,9 @@ pub const Game = struct {
     /// Which screen the panel shows, and which page of the Controls list. Neither is saved.
     screen: Screen = .demo,
     controls_page: usize = 0,
+    /// True only while the in-game menu is open. F8 toggles it, keeping titles, buttons, sliders and
+    /// other menu details out of normal gameplay.
+    ui_visible: bool = false,
     /// The save slot that F5 and F9 use, and which slots hold a save. The slot is not saved, so the game starts on slot 1.
     save_slot: usize = 0,
     slot_used: [config.save_slot_files.len]bool = [_]bool{false} ** config.save_slot_files.len,
@@ -186,6 +189,7 @@ pub const Game = struct {
             .ui = ui,
             .clicks = 0,
             .volume = 0.5,
+            .ui_visible = false,
             .audio = ctx.audio,
             .ambient_sound = ambient_sound,
             .ambient_voice = null,
@@ -248,6 +252,11 @@ pub const Game = struct {
         self.reloadAtlasIfChanged(ctx);
         self.startAmbient();
         const input = ctx.input;
+        if (input.wasPressed(.f8)) {
+            self.ui_visible = !self.ui_visible;
+            if (!self.ui_visible) self.ui.cancelListening();
+            if (!self.ui_visible) self.ui.clear();
+        }
         // While a keybind row waits, the key pressed picks the binding, so no action runs. Escape then only cancels the wait.
         const acting = !self.ui.listening();
         if (acting and self.bindings.pressed(input, .quit)) {
@@ -293,7 +302,7 @@ pub const Game = struct {
         self.player.update(dx, dy, ctx.dt, &self.level.map, &self.animations);
         self.updateEnemies(ctx.dt);
         if (ctx.diagnostics_enabled) self.publishEntitySnapshot(ctx);
-        self.updateUi(ctx);
+        if (self.ui_visible) self.updateUi(ctx);
         self.runScript(ctx);
     }
 
