@@ -42,7 +42,11 @@ pub fn anyOverlap(colliders: []const Collider, box: Box, mask: u32) bool {
 /// The index of the first collider, in slice order, that the mask hits and that overlaps `box`.
 pub fn firstOverlap(colliders: []const Collider, box: Box, mask: u32) ?usize {
     for (colliders, 0..) |c, i| {
-        if (hits(c, mask) and collision.boxesOverlap(c.box, box)) return i;
+        if (!c.enabled or !hits(c, mask)) continue;
+        if (collision.orientedBoxesOverlap(
+            .{ .x = c.box.x, .y = c.box.y, .w = c.box.w, .h = c.box.h, .rotation = c.rotation },
+            .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 },
+        )) return i;
     }
     return null;
 }
@@ -60,7 +64,11 @@ pub fn firstAtPoint(colliders: []const Collider, point: Point, mask: u32) ?usize
 pub fn queryRegion(colliders: []const Collider, region: Box, mask: u32, out: []usize) usize {
     var written: usize = 0;
     for (colliders, 0..) |collider, index| {
-        if (!hits(collider, mask) or !collision.boxesOverlap(region, collider.box)) continue;
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        if (!collision.orientedBoxesOverlap(
+            .{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation },
+            .{ .x = region.x, .y = region.y, .w = region.w, .h = region.h, .rotation = 0 },
+        )) continue;
         if (written == out.len) break;
         out[written] = index;
         written += 1;

@@ -49,7 +49,8 @@ pub const Index = struct {
         var entry_count: usize = 0;
         for (colliders) |collider| {
             if (collision.isEmptyBox(collider.box)) continue;
-            const range = cellRange(collider.box, cell_size) orelse return error.InvalidColliderBounds;
+            const bounds = collision.boundingBox(collider.box, collider.rotation) orelse return error.InvalidColliderBounds;
+            const range = cellRange(bounds, cell_size) orelse return error.InvalidColliderBounds;
             entry_count = try addCellCount(entry_count, range);
         }
 
@@ -64,7 +65,8 @@ pub const Index = struct {
         var cursor: usize = 0;
         for (colliders, 0..) |collider, collider_index| {
             if (collision.isEmptyBox(collider.box)) continue;
-            const range = cellRange(collider.box, cell_size).?;
+            const bounds = collision.boundingBox(collider.box, collider.rotation).?;
+            const range = cellRange(bounds, cell_size).?;
             var y = range.min_y;
             while (y <= range.max_y) : (y += 1) {
                 var x = range.min_x;
@@ -98,7 +100,11 @@ pub const Index = struct {
         var first: ?usize = null;
         for (self.candidates[0..count]) |index| {
             const collider = self.colliders[index];
-            if (hits(collider, mask) and collision.boxesOverlap(collider.box, box))
+            if (!collider.enabled or !hits(collider, mask)) continue;
+            if (collision.orientedBoxesOverlap(
+                .{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation },
+                .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 },
+            ))
                 first = if (first) |found| @min(found, index) else index;
         }
         return first;
@@ -132,7 +138,11 @@ pub const Index = struct {
         var written: usize = 0;
         for (self.candidates[0..count]) |index| {
             const collider = self.colliders[index];
-            if (!hits(collider, mask) or !collision.boxesOverlap(region, collider.box)) continue;
+            if (!collider.enabled or !hits(collider, mask)) continue;
+            if (!collision.orientedBoxesOverlap(
+                .{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation },
+                .{ .x = region.x, .y = region.y, .w = region.w, .h = region.h, .rotation = 0 },
+            )) continue;
             if (written == out.len) break;
             out[written] = index;
             written += 1;

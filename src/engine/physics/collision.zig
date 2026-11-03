@@ -11,12 +11,37 @@ const shapes = @import("shapes.zig");
 const Point = shapes.Point;
 const Box = shapes.Box;
 const Circle = shapes.Circle;
+const OrientedBox = shapes.OrientedBox;
 
 /// A static collider: a box that queries and movement can hit. `layer` is a set of bits, and one
 /// collider can belong to several layers. See queries.zig for how masks select layers.
 pub const Collider = struct {
     box: Box,
     layer: u32,
+    mask: u32 = std.math.maxInt(u32),
+    rotation: f32 = 0,
+    enabled: bool = true,
+};
+
+/// A collision shape attached to an ECS row.
+/// `layer` identifies which collision groups this component belongs to.
+/// `mask` identifies which layers this component may overlap or be queried against.
+pub const Component = struct {
+    box: Box,
+    layer: u32 = 0,
+    mask: u32 = std.math.maxInt(u32),
+    rotation: f32 = 0,
+    enabled: bool = true,
+
+    pub fn collider(self: Component) Collider {
+        return .{
+            .box = self.box,
+            .layer = self.layer,
+            .mask = self.mask,
+            .rotation = self.rotation,
+            .enabled = self.enabled,
+        };
+    }
 };
 
 /// True when the box has no area, or one of its values is not finite.
@@ -40,6 +65,100 @@ pub fn pointInBox(p: Point, box: Box) bool {
 pub fn boxesOverlap(a: Box, b: Box) bool {
     if (isEmptyBox(a) or isEmptyBox(b)) return false;
     return a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h;
+}
+
+/// True when two rectangles overlap, treating either rectangle's rotation in radians as a
+/// clockwise rotation around its center. This uses the separating-axis theorem and is exact
+/// for rectangular boxes; it does not use an oversized axis-aligned approximation.
+pub fn orientedBoxesOverlap(a: OrientedBox, b: OrientedBox) bool {
+    if (!std.math.isFinite(a.rotation) or !std.math.isFinite(b.rotation) or
+        a.w <= 0 or a.h <= 0 or b.w <= 0 or b.h <= 0 or
+        !(std.math.isFinite(a.x) and std.math.isFinite(a.y) and std.math.isFinite(a.w) and std.math.isFinite(a.h) and
+          std.math.isFinite(b.x) and std.math.isFinite(b.y) and std.math.isFinite(b.w) and std.math.isFinite(b.h)))
+        return false;
+
+    const a_axes = boxAxes(a);
+    const b_axes = boxAxes(b);
+    const a_center = Point{ .x = a.x + a.w / 2, .y = a.y + a.h / 2 };
+    const b_center = Point{ .x = b.x + b.w / 2, .y = b.y + b.h / 2 };
+
+    const axes = [4][2]f32{ a_axes[0], a_axes[1], b_axes[0], b_axes[1] };
+    for (axes) |axis| {
+        const length_squared = axis[0] * axis[0] + axis[1] * axis[1];
+        if (length_squared <= 0) continue;
+        const a_radius = absProjection(a, axis) / std.math.sqrt(length_squared);
+        const b_radius = absProjection(b, axis) / std.math.sqrt(length_squared);
+        const center_delta = .{
+            b_center.x - a_center.x,
+            b_center.y - a_center.y,
+        };
+        const center_distance = @abs(dot(center_delta, axis)) / std.math.sqrt(length_squared);
+        if (center_distance >= a_radius + b_radius) return false;
+    }
+    return true;
+}
+
+/// Overlap test for two collider components. Disabled colliders and empty boxes overlap nothing;
+/// membership and mask bits must both match on the pair.
+pub fn colliderOverlaps(a: Collider, b: Collider) bool {
+    if (!a.enabled or !b.enabled) return false;
+    const layers_match =
+        (a.layer & b.mask != 0) or (b.layer & a.mask != 0);
+    if (!layers_match) return false;
+    const a_box = OrientedBox{ .x = a.box.x, .y = a.box.y, .w = a.box.w, .h = a.box.h, .rotation = a.rotation };
+    const b_box = OrientedBox{ .x = b.box.x, .y = b.box.y, .w = b.box.w, .h = b.box.h, .rotation = b.rotation };
+    return orientedBoxesOverlap(a_box, b_box);
+}
+
+/// The axis-aligned bounds that contain a box at its current rotation. Suitable for spatial-grid
+/// insertion and broad-phase culling.
+pub fn boundingBox(box: Box, rotation: f32) ?Box {
+    if (isEmptyBox(box) or !std.math.isFinite(rotation)) return null;
+    const center = Point{ .x = box.x + box.w / 2, .y = box.y + box.h / 2 };
+    const cosine = @cos(rotation);
+    const sine = @sin(rotation);
+    var min_x: f32 = std.math.inf(f32);
+    var max_x: f32 = -std.math.inf(f32);
+    var min_y: f32 = std.math.inf(f32);
+    var max_y: f32 = -std.math.inf(f32);
+    const sx = [_]f32{ -box.w / 2, box.w / 2 };
+    const sy = [_]f32{ -box.h / 2, box.h / 2 };
+    for (sx) |x| {
+        for (sy) |y| {
+            // Clockwise screen-space rotation maps local +y down, matching the renderer.
+            const world_x = center.x + x * cosine - y * sine;
+            const world_y = center.y + x * sine + y * cosine;
+            min_x = @min(min_x, world_x);
+            max_x = @max(max_x, world_x);
+            min_y = @min(min_y, world_y);
+            max_y = @max(max_y, world_y);
+        }
+    }
+    if (!(std.math.isFinite(min_x) and std.math.isFinite(max_x) and std.math.isFinite(min_y) and std.math.isFinite(max_y))) return null;
+    return .{ .x = min_x, .y = min_y, .w = max_x - min_x, .h = max_y - min_y };
+}
+
+fn boxAxes(box: OrientedBox) [2][2]f32 {
+    const cosine = @cos(box.rotation);
+    const sine = @sin(box.rotation);
+    return .{
+        .{ cosine, sine },
+        .{ -sine, cosine },
+    };
+}
+
+fn absProjection(box: OrientedBox, axis: [2]f32) f32 {
+    const center = Point{ .x = box.x + box.w / 2, .y = box.y + box.h / 2 };
+    const center_value = dot(.{ center.x, center.y }, axis);
+    _ = center_value;
+    const half_w = box.w / 2;
+    const half_h = box.h / 2;
+    return @abs(axis[0] * half_w * @cos(box.rotation) + axis[1] * half_w * @sin(box.rotation)) +
+        @abs(axis[0] * -half_h * @sin(box.rotation) + axis[1] * half_h * @cos(box.rotation));
+}
+
+fn dot(a: [2]f32, b: [2]f32) f32 {
+    return a[0] * b[0] + a[1] * b[1];
 }
 
 /// True when two circles overlap. Circles that only touch do not.
@@ -121,4 +240,19 @@ test "a circle overlaps a box when the box point nearest its center is inside th
     // Near the top-left corner the nearest point is (0, 0), and its distance from (-3, -4) is exactly 5.
     try expect(!circleOverlapsBox(.{ .x = -3, .y = -4, .r = 5 }, box));
     try expect(circleOverlapsBox(.{ .x = -3, .y = -4, .r = 5.01 }, box));
+}
+
+test "oriented boxes use separating axes and exclude edge-only contact" {
+    const horizontal = OrientedBox{ .x = 0, .y = 0, .w = 20, .h = 10, .rotation = 0 };
+    try expect(orientedBoxesOverlap(horizontal, .{ .x = 10, .y = -3, .w = 20, .h = 10, .rotation = 0.78539816 }));
+    try expect(!orientedBoxesOverlap(horizontal, .{ .x = 20, .y = 0, .w = 10, .h = 10, .rotation = 0 }));
+    try expect(!orientedBoxesOverlap(horizontal, .{ .x = 0, .y = 0, .w = 0, .h = 10, .rotation = 0 }));
+}
+
+test "rotated bounds contain the complete oriented rectangle" {
+    const bounds = boundingBox(.{ .x = 0, .y = 0, .w = 20, .h = 10 }, 1.5707963).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 5), bounds.x, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, -5), bounds.y, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 10), bounds.w, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, 20), bounds.h, 0.01);
 }

@@ -79,6 +79,39 @@ pub const ShadowSegment = struct {
     end: [2]f32,
 };
 
+/// ECS-friendly point-light data. Convert enabled components to Light values before adding them.
+pub const PointLightComponent = struct {
+    x: f32,
+    y: f32,
+    height: f32 = 24,
+    radius: f32,
+    color: [3]f32 = .{ 1, 1, 1 },
+    intensity: f32 = 1,
+    enabled: bool = true,
+
+    pub fn light(self: PointLightComponent) Light {
+        return .{
+            .x = self.x,
+            .y = self.y,
+            .height = self.height,
+            .radius = self.radius,
+            .color = self.color,
+            .intensity = self.intensity,
+        };
+    }
+};
+
+/// ECS-friendly shadow occlusion data.
+pub const ShadowSegmentComponent = struct {
+    start: [2]f32,
+    end: [2]f32,
+    enabled: bool = true,
+
+    pub fn segment(self: ShadowSegmentComponent) ShadowSegment {
+        return .{ .start = self.start, .end = self.end };
+    }
+};
+
 /// Storage starts at these sizes and doubles when a frame needs more. A frame has no sprite or
 /// texture-switch limit.
 const initial_sprites = 1024;
@@ -189,6 +222,14 @@ pub const SpriteBatch = struct {
         self.lighting.info[0] = @floatFromInt(self.light_count);
     }
 
+    /// Adds every enabled point-light component. Components accumulate into the same fixed-size
+    /// frame data as addLight; the limit is enforced by addLight.
+    pub fn addPointLightComponents(self: *SpriteBatch, components: []const PointLightComponent) void {
+        for (components) |component| {
+            if (component.enabled) self.addLight(component.light());
+        }
+    }
+
     /// Adds a line segment that blocks point lights when the segment lies between the light and a
     /// lit fragment. Ambient light is not blocked. A frame holds `render_types.max_shadow_segments`
     /// segments; exceeding that limit panics.
@@ -205,6 +246,13 @@ pub const SpriteBatch = struct {
         };
         self.shadow_segment_count += 1;
         self.lighting.info[1] = @floatFromInt(self.shadow_segment_count);
+    }
+
+    /// Adds every enabled shadow-segment component to this frame.
+    pub fn addShadowSegmentComponents(self: *SpriteBatch, components: []const ShadowSegmentComponent) void {
+        for (components) |component| {
+            if (component.enabled) self.addShadowSegment(component.segment());
+        }
     }
 
     /// Queues one sprite. `src` is the texel rectangle to sample, and `dst` is the on-screen rectangle

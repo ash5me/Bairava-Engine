@@ -68,6 +68,10 @@ pub const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
 pub const Light = @import("../renderer/sprite.zig").Light;
 /// A 2D line segment that blocks point lights added to a sprite batch.
 pub const ShadowSegment = @import("../renderer/sprite.zig").ShadowSegment;
+/// ECS-friendly point-light component data accumulated by SpriteBatch.
+pub const PointLightComponent = @import("../renderer/sprite.zig").PointLightComponent;
+/// ECS-friendly shadow-segment component data accumulated by SpriteBatch.
+pub const ShadowSegmentComponent = @import("../renderer/sprite.zig").ShadowSegmentComponent;
 pub const Texture = @import("../renderer/texture.zig").Texture;
 /// A texture atlas on the GPU, with where each sprite sits in it. See `Context.loadAtlas`.
 pub const LoadedAtlas = @import("../renderer/loaded_atlas.zig").LoadedAtlas;
@@ -96,6 +100,8 @@ pub const hot_reload = @import("../assets/hot_reload.zig");
 pub const atlas = @import("../assets/loaders/atlas.zig");
 /// Custom struct vectors in an array-of-structs or structure-of-arrays layout.
 pub const vector = @import("../memory/vector.zig");
+/// Shapes, collision components, linear queries, and the static uniform-grid broad phase.
+pub const physics = @import("../physics/physics.zig");
 /// The entity world: component rows with generational handles, stored in a vector.
 pub const entity = @import("../ecs/entity.zig");
 /// Tile maps: the map file format, layers, solid tiles, and box movement against them.

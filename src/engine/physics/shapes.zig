@@ -31,3 +31,13 @@ pub const Circle = struct {
     y: f32,
     r: f32,
 };
+
+/// An axis-aligned rectangle that can rotate around its center.
+/// Rotation is in radians; positive values rotate clockwise in screen space.
+pub const OrientedBox = struct {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    rotation: f32 = 0,
+};
