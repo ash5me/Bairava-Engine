@@ -198,6 +198,7 @@ Start with the subsystem guides that match your work:
 - [Diagnostics](docs/diagnostics.md)
 - [Profiling](docs/profiling.md)
 - [Localization](docs/localization.md)
+- [Dear ImGui migration plan](docs/dearimgui-migration-plan.md)
 - [Release migration status](docs/p3-migration-status.md)
 
 ## Architecture notes

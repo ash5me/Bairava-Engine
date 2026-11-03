@@ -30,6 +30,8 @@
 
 ## What changed
 
+- Added a repository-specific [Dear ImGui migration plan](docs/dearimgui-migration-plan.md) covering build integration,
+  native-input mapping, font/renderer adapters, Semkootru parity, testing, rollback, and legacy removal.
 - Debug UI: compact native overlays cap width to 44% and height to 42% of the view, limit text rows to the
   available height, and reduce graph/strip heights on small views. Semkootru uses a 7-pixel native UI font,
   a 140-pixel maximum panel width, and compact screen heights.
