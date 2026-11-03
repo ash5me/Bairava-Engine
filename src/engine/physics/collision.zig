@@ -84,6 +84,26 @@ pub fn pointInBox(p: Point, box: Box) bool {
     return p.x >= box.x and p.x < box.x + box.w and p.y >= box.y and p.y < box.y + box.h;
 }
 
+/// True when a point lies inside an oriented rectangle. Edge rules match pointInBox: left and
+/// top are inclusive, right and bottom are exclusive in the box's local coordinate space.
+pub fn pointInOrientedBox(p: Point, box: OrientedBox) bool {
+    if (!std.math.isFinite(box.rotation) or !(std.math.isFinite(p.x) and std.math.isFinite(p.y)) or
+        box.w <= 0 or box.h <= 0 or
+        !(std.math.isFinite(box.x) and std.math.isFinite(box.y) and
+            std.math.isFinite(box.w) and std.math.isFinite(box.h))) return false;
+
+    const center = Point{ .x = box.x + box.w / 2, .y = box.y + box.h / 2 };
+    const cosine = @cos(box.rotation);
+    const sine = @sin(box.rotation);
+    const dx = p.x - center.x;
+    const dy = p.y - center.y;
+    // Unrotate clockwise screen-space coordinates around the center.
+    const local_x = dx * cosine + dy * sine;
+    const local_y = -dx * sine + dy * cosine;
+    return local_x >= -box.w / 2 and local_x < box.w / 2 and
+        local_y >= -box.h / 2 and local_y < box.h / 2;
+}
+
 /// True when two boxes share some area. Boxes that only touch along an edge or a corner do not.
 pub fn boxesOverlap(a: Box, b: Box) bool {
     if (isEmptyBox(a) or isEmptyBox(b)) return false;
@@ -97,7 +117,7 @@ pub fn orientedBoxesOverlap(a: OrientedBox, b: OrientedBox) bool {
     if (!std.math.isFinite(a.rotation) or !std.math.isFinite(b.rotation) or
         a.w <= 0 or a.h <= 0 or b.w <= 0 or b.h <= 0 or
         !(std.math.isFinite(a.x) and std.math.isFinite(a.y) and std.math.isFinite(a.w) and std.math.isFinite(a.h) and
-          std.math.isFinite(b.x) and std.math.isFinite(b.y) and std.math.isFinite(b.w) and std.math.isFinite(b.h)))
+            std.math.isFinite(b.x) and std.math.isFinite(b.y) and std.math.isFinite(b.w) and std.math.isFinite(b.h)))
         return false;
 
     const a_axes = boxAxes(a);

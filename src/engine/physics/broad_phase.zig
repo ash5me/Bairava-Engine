@@ -7,6 +7,7 @@ const collision = @import("collision.zig");
 
 const Point = shapes.Point;
 const Box = shapes.Box;
+const OrientedBox = shapes.OrientedBox;
 pub const Collider = collision.Collider;
 const all_layers: u32 = std.math.maxInt(u32);
 
@@ -124,7 +125,18 @@ pub const Index = struct {
         var first: ?usize = null;
         for (self.candidates[0..self.candidate_count]) |index| {
             const collider = self.colliders[index];
-            if (hits(collider, mask) and collision.pointInBox(point, collider.box))
+            if (!collider.enabled or !hits(collider, mask)) continue;
+            const contains = if (collider.rotation == 0)
+                collision.pointInBox(point, collider.box)
+            else
+                collision.pointInOrientedBox(point, .{
+                    .x = collider.box.x,
+                    .y = collider.box.y,
+                    .w = collider.box.w,
+                    .h = collider.box.h,
+                    .rotation = collider.rotation,
+                });
+            if (contains)
                 first = if (first) |found| @min(found, index) else index;
         }
         return first;
@@ -219,7 +231,16 @@ fn hits(collider: Collider, mask: u32) bool {
 
 fn linearPoint(colliders: []const Collider, point: Point, mask: u32) ?usize {
     for (colliders, 0..) |collider, index| {
-        if (hits(collider, mask) and collision.pointInBox(point, collider.box)) return index;
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        if (collider.rotation == 0) {
+            if (collision.pointInBox(point, collider.box)) return index;
+        } else if (collision.pointInOrientedBox(point, .{
+            .x = collider.box.x,
+            .y = collider.box.y,
+            .w = collider.box.w,
+            .h = collider.box.h,
+            .rotation = collider.rotation,
+        })) return index;
     }
     return null;
 }
@@ -235,7 +256,48 @@ fn slideX(colliders: []const Collider, candidates: []const usize, box: Box, dx: 
     var result = target;
     for (candidates) |index| {
         const collider = colliders[index];
-        if (!hits(collider, mask) or collision.isEmptyBox(collider.box)) continue;
+        if (!collider.enabled or !hits(collider, mask) or collision.isEmptyBox(collider.box)) continue;
+        if (collider.rotation != 0) {
+            const c_box = OrientedBox{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation };
+            const start_box = OrientedBox{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+            if (collision.orientedBoxesOverlap(c_box, start_box)) continue;
+            var i: usize = 0;
+            var previous: f32 = box.x;
+            var first_contact: ?f32 = null;
+            while (i <= 128) : (i += 1) {
+                const sample = box.x + (target - box.x) * (@as(f32, @floatFromInt(i)) / 128);
+                const sample_box = OrientedBox{ .x = sample, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+                if (collision.orientedBoxesOverlap(c_box, sample_box)) {
+                    first_contact = sample;
+                    break;
+                }
+                previous = sample;
+            }
+            if (first_contact) |contact| {
+                if (dx > 0) {
+                    var low = previous;
+                    var high = contact;
+                    var j: usize = 0;
+                    while (j < 32) : (j += 1) {
+                        const middle = low + (high - low) / 2;
+                        const middle_box = OrientedBox{ .x = middle, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+                        if (collision.orientedBoxesOverlap(c_box, middle_box)) high = middle else low = middle;
+                    }
+                    result = @min(result, low);
+                } else {
+                    var low = contact;
+                    var high = previous;
+                    var j: usize = 0;
+                    while (j < 32) : (j += 1) {
+                        const middle = low + (high - low) / 2;
+                        const middle_box = OrientedBox{ .x = middle, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+                        if (collision.orientedBoxesOverlap(c_box, middle_box)) low = middle else high = middle;
+                    }
+                    result = @max(result, high);
+                }
+            }
+            continue;
+        }
         if (!rangesOverlap(collider.box.y, collider.box.h, box.y, box.h)) continue;
         if (dx > 0) {
             if (collider.box.x >= box.x + box.w and collider.box.x < target + box.w)
@@ -254,7 +316,48 @@ fn slideY(colliders: []const Collider, candidates: []const usize, box: Box, dy: 
     var result = target;
     for (candidates) |index| {
         const collider = colliders[index];
-        if (!hits(collider, mask) or collision.isEmptyBox(collider.box)) continue;
+        if (!collider.enabled or !hits(collider, mask) or collision.isEmptyBox(collider.box)) continue;
+        if (collider.rotation != 0) {
+            const c_box = OrientedBox{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation };
+            const start_box = OrientedBox{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+            if (collision.orientedBoxesOverlap(c_box, start_box)) continue;
+            var i: usize = 0;
+            var previous: f32 = box.y;
+            var first_contact: ?f32 = null;
+            while (i <= 128) : (i += 1) {
+                const sample = box.y + (target - box.y) * (@as(f32, @floatFromInt(i)) / 128);
+                const sample_box = OrientedBox{ .x = box.x, .y = sample, .w = box.w, .h = box.h, .rotation = 0 };
+                if (collision.orientedBoxesOverlap(c_box, sample_box)) {
+                    first_contact = sample;
+                    break;
+                }
+                previous = sample;
+            }
+            if (first_contact) |contact| {
+                if (dy > 0) {
+                    var low = previous;
+                    var high = contact;
+                    var j: usize = 0;
+                    while (j < 32) : (j += 1) {
+                        const middle = low + (high - low) / 2;
+                        const middle_box = OrientedBox{ .x = box.x, .y = middle, .w = box.w, .h = box.h, .rotation = 0 };
+                        if (collision.orientedBoxesOverlap(c_box, middle_box)) high = middle else low = middle;
+                    }
+                    result = @min(result, low);
+                } else {
+                    var low = contact;
+                    var high = previous;
+                    var j: usize = 0;
+                    while (j < 32) : (j += 1) {
+                        const middle = low + (high - low) / 2;
+                        const middle_box = OrientedBox{ .x = box.x, .y = middle, .w = box.w, .h = box.h, .rotation = 0 };
+                        if (collision.orientedBoxesOverlap(c_box, middle_box)) low = middle else high = middle;
+                    }
+                    result = @max(result, high);
+                }
+            }
+            continue;
+        }
         if (!rangesOverlap(collider.box.x, collider.box.w, box.x, box.w)) continue;
         if (dy > 0) {
             if (collider.box.y >= box.y + box.h and collider.box.y < target + box.h)

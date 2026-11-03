@@ -1,5 +1,13 @@
 # Changes: job system and scripting
 
+## Requirements implementation update
+
+- Completed manifest asset validation, dependency graphs, generated runtime indexes, BC1/BC3/ASTC/RGBA8 texture variants, and build-time font sidecars.
+- Added configurable bitmap/SDF font ranges, kerning metadata, dynamic glyph cache growth, and FreeType CFF support.
+- Added ECS collision components with AABB/rotated boxes, layers and masks, SAT overlap, oriented point containment, linear queries, and a uniform-grid broad phase.
+- Added integer IDs alongside string names for skeleton and state-machine animation events.
+- Added normal-map sprite rendering and ECS point-light/shadow-component accumulation.
+
 ## What was added
 
 - Job system, C core: `src/engine/jobs/jobs.h`, `jobs.c`. Worker threads, a bounded queue, counters, and waits that run

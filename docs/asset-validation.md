@@ -1,7 +1,7 @@
 # Asset validation and hot reload
 
-Status: P2.2. Validation runs in the build tool and at atlas load time. Hot reload runs only in
-development builds.
+Status: implemented. Validation runs in the build tool and at atlas load time. Development builds
+watch individual files and generated asset dependency graphs for hot reload.
 
 ## Checking the project
 

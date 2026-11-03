@@ -69,6 +69,8 @@ transition * -> hit when hurt
   playback passes a frame, so a clip that starts on a frame does not emit that frame's event until it wraps
   or moves past it. An update that passes a whole loop of a short clip may emit fewer events than the frames
   it passed.
+- A state frame event or transition event may use a string name or a decimal integer ID. Integer IDs are
+  stored in `FrameEvent.id` or the transition's `event_id`; `pollEvent()` exposes both `name` and `id`.
 - The start state is the first state, unless a `start` line names another.
 - `machine.stateName()`, `clipName()`, `clipTime()`, and `frameIndex()` report the current position.
 - `machine.pose()` returns the frame to draw. While a blend runs it also returns the frame of the clip
@@ -131,8 +133,10 @@ lie inside the rectangle. Attachments draw in the order they are listed.
 `anim NAME loop|once LENGTH` starts an animation whose length is in seconds. Every `bone` and `attach` line comes before
 the first `anim`.
 
-`event TIME NAME` adds a marker to the current animation. Event times must be in increasing order and lie from zero
-through the animation length. Names use lowercase letters, digits, and underscores.
+`event TIME NAME_OR_ID` adds a marker to the current animation. Event times must be in increasing order and lie from zero
+through the animation length. String names use lowercase letters, digits, and underscores; a decimal integer is accepted
+as an event ID. `Player.pollEvent()` returns `Event { name, id }`: string events keep `id == null`, while integer-only
+events keep an empty name.
 
 `key BONE rotate|scale TIME VALUE` and `key BONE translate TIME X Y` add keys. A rotate or scale key replaces the bone's
 rotation or scale, and a translate key replaces its position. The keys of one property on one bone must be listed

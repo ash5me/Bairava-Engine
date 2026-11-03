@@ -12,9 +12,9 @@ Semkootru is the included vertical-slice game and also a reference for building 
 - Vulkan/SPIR-V by default, with optional Direct3D 12 DXIL and Metal MSL shaders
 - Fixed native resolution rendering with fit and integer scale modes
 - Sprite batching, tile maps, cameras, zoom, post-processing, lighting, and skeletal drawing
-- Asset manifests, atlases, texture variants, streaming, hot reload, and dependency tracking
+- Manifest-driven asset builds, atlases, BC1/BC3/ASTC/RGBA8 texture variants, streaming, hot reload, dependency tracking, and generated asset indexes
 - Text and bitmap/SDF font tooling, immediate-mode UI widgets, and layout
-- ECS-style entities, animation, physics, navigation, AI, replay, particles, and localization
+- ECS-style entities, string/integer animation events, AABB/rotated collision components, uniform-grid queries, navigation, AI, replay, particles, and localization
 - Audio playback, streaming, spatial mixing, and background job workers
 - A small game scripting runtime and typed host bindings
 - Save slots, settings, logging, crash reports, Tracy profiling, and a debug overlay
@@ -131,9 +131,15 @@ zig build check-assets
 
 Import names must be unique and use lowercase letters, digits, `_`, or `-`. The importer copies source artwork into `assets/imported/` and registers it in `assets/sprites.txt`.
 
-For texture formats, the runtime prefers a format supported by the active GPU device. It falls back through BC3, ASTC, BC1, or prebuilt RGBA8/source data as capabilities allow.
+For texture formats, the runtime prefers a format supported by the active GPU device. It falls back through ASTC, BC3, BC1, prebuilt RGBA8, or source-image decoding as capabilities allow. The asset build emits RGBA8 plus BC1/BC3 variants and ASTC variants when `astcenc` is available.
 
-Fonts generate `.bfnt` sidecars by default. Font rows may append `sdf` for a distance-field atlas. Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
+Fonts generate `.bfnt` v2/v3 sidecars by default, with configurable codepoint ranges and kerning metadata. Font rows may append `sdf` for a distance-field atlas. Missing glyphs can rasterize dynamically from FreeType or stb_truetype and grow the GPU atlas. Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
+
+## Requirements status
+
+The implementation manifest in [requirements.md](requirements.md) is complete. This includes manifest-driven asset builds and generated indexes; BC1/BC3/ASTC variants with RGBA8 fallback; build-time bitmap/SDF fonts with kerning, dynamic glyph caching, and FreeType CFF support; ECS collision components with rotated boxes, layers, and masks; uniform-grid collision queries and movement; string or integer animation events; and normal-map sprites with ECS-accumulated point lights and shadow segments.
+
+Rotated boxes use separating-axis overlap and exact oriented-box point containment. Rotated grid insertion uses conservative AABB bounds, while movement performs exact narrow-phase overlap checks. Broad-phase movement and linear queries share X-first/Y-second resolution; the complete movement response remains axis-based and does not rotate the mover.
 
 ## Project structure
 
@@ -179,6 +185,7 @@ Start with the subsystem guides that match your work:
 - [AI](docs/ai.md)
 - [Audio streaming](docs/audio-streaming.md)
 - [Lighting](docs/lighting.md)
+- [Physics and collision queries](docs/physics.md)
 - [Navigation](docs/navigation.md)
 - [Particles](docs/particles.md)
 - [Jobs](docs/jobs.md)

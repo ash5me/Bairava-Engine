@@ -20,6 +20,7 @@ const collision = @import("collision.zig");
 
 const Point = shapes.Point;
 const Box = shapes.Box;
+const OrientedBox = shapes.OrientedBox;
 pub const Collider = collision.Collider;
 
 /// A mask with every bit set, so it hits any collider with a nonzero layer.
@@ -54,7 +55,16 @@ pub fn firstOverlap(colliders: []const Collider, box: Box, mask: u32) ?usize {
 /// The index of the first collider, in slice order, containing `point` and selected by `mask`.
 pub fn firstAtPoint(colliders: []const Collider, point: Point, mask: u32) ?usize {
     for (colliders, 0..) |collider, index| {
-        if (hits(collider, mask) and collision.pointInBox(point, collider.box)) return index;
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        if (collider.rotation == 0) {
+            if (collision.pointInBox(point, collider.box)) return index;
+        } else if (collision.pointInOrientedBox(point, .{
+            .x = collider.box.x,
+            .y = collider.box.y,
+            .w = collider.box.w,
+            .h = collider.box.h,
+            .rotation = collider.rotation,
+        })) return index;
     }
     return null;
 }
@@ -90,7 +100,47 @@ fn slideX(colliders: []const Collider, box: Box, dx: f32, mask: u32) f32 {
     if (collision.isEmptyBox(box)) return target;
     var result = target;
     for (colliders) |c| {
-        if (!hits(c, mask) or collision.isEmptyBox(c.box)) continue;
+        if (!c.enabled or !hits(c, mask) or collision.isEmptyBox(c.box)) continue;
+        if (c.rotation != 0) {
+            const c_box = OrientedBox{ .x = c.box.x, .y = c.box.y, .w = c.box.w, .h = c.box.h, .rotation = c.rotation };
+            const start_box = OrientedBox{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+            if (collision.orientedBoxesOverlap(c_box, start_box)) continue;
+            var i: usize = 0;
+            var previous: f32 = box.x;
+            var first_contact: ?f32 = null;
+            while (i <= 128) : (i += 1) {
+                const sample = box.x + (target - box.x) * (@as(f32, @floatFromInt(i)) / 128);
+                const sample_box = OrientedBox{ .x = sample, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+                if (collision.orientedBoxesOverlap(c_box, sample_box)) {
+                    first_contact = sample;
+                    break;
+                }
+                previous = sample;
+            }
+            if (first_contact) |contact| {
+                var j: usize = 0;
+                if (dx > 0) {
+                    var low = previous;
+                    var high = contact;
+                    while (j < 32) : (j += 1) {
+                        const middle = low + (high - low) / 2;
+                        const middle_box = OrientedBox{ .x = middle, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+                        if (collision.orientedBoxesOverlap(c_box, middle_box)) high = middle else low = middle;
+                    }
+                    result = @min(result, low);
+                } else {
+                    var low = contact;
+                    var high = previous;
+                    while (j < 32) : (j += 1) {
+                        const middle = low + (high - low) / 2;
+                        const middle_box = OrientedBox{ .x = middle, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+                        if (collision.orientedBoxesOverlap(c_box, middle_box)) low = middle else high = middle;
+                    }
+                    result = @max(result, high);
+                }
+            }
+            continue;
+        }
         if (!rangesOverlap(c.box.y, c.box.h, box.y, box.h)) continue;
         if (dx > 0) {
             // Ahead of the box, and starting before the box's new right edge. Touching counts as ahead.
@@ -114,7 +164,48 @@ fn slideY(colliders: []const Collider, box: Box, dy: f32, mask: u32) f32 {
     if (collision.isEmptyBox(box)) return target;
     var result = target;
     for (colliders) |c| {
-        if (!hits(c, mask) or collision.isEmptyBox(c.box)) continue;
+        if (!c.enabled or !hits(c, mask) or collision.isEmptyBox(c.box)) continue;
+        if (c.rotation != 0) {
+            const c_box = OrientedBox{ .x = c.box.x, .y = c.box.y, .w = c.box.w, .h = c.box.h, .rotation = c.rotation };
+            const start_box = OrientedBox{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
+            if (collision.orientedBoxesOverlap(c_box, start_box)) continue;
+            var i: usize = 0;
+            var previous: f32 = box.y;
+            var first_contact: ?f32 = null;
+            while (i <= 128) : (i += 1) {
+                const sample = box.y + (target - box.y) * (@as(f32, @floatFromInt(i)) / 128);
+                const sample_box = OrientedBox{ .x = box.x, .y = sample, .w = box.w, .h = box.h, .rotation = 0 };
+                if (collision.orientedBoxesOverlap(c_box, sample_box)) {
+                    first_contact = sample;
+                    break;
+                }
+                previous = sample;
+            }
+            if (first_contact) |contact| {
+                if (dy > 0) {
+                    var low = previous;
+                    var high = contact;
+                    var j: usize = 0;
+                    while (j < 32) : (j += 1) {
+                        const middle = low + (high - low) / 2;
+                        const middle_box = OrientedBox{ .x = box.x, .y = middle, .w = box.w, .h = box.h, .rotation = 0 };
+                        if (collision.orientedBoxesOverlap(c_box, middle_box)) high = middle else low = middle;
+                    }
+                    result = @min(result, low);
+                } else {
+                    var low = contact;
+                    var high = previous;
+                    var j: usize = 0;
+                    while (j < 32) : (j += 1) {
+                        const middle = low + (high - low) / 2;
+                        const middle_box = OrientedBox{ .x = box.x, .y = middle, .w = box.w, .h = box.h, .rotation = 0 };
+                        if (collision.orientedBoxesOverlap(c_box, middle_box)) low = middle else high = middle;
+                    }
+                    result = @max(result, high);
+                }
+            }
+            continue;
+        }
         if (!rangesOverlap(c.box.x, c.box.w, box.x, box.w)) continue;
         if (dy > 0) {
             if (c.box.y >= box.y + box.h and c.box.y < target + box.h) {
@@ -240,4 +331,20 @@ test "identical inputs give identical results" {
     const second = moveBox(&walls, b, 13.25, -4.5, all_layers);
     try expectEqual(first.x, second.x);
     try expectEqual(first.y, second.y);
+}
+
+test "rotated point containment is exact and movement uses rotated overlap" {
+    const walls = [_]Collider{
+        .{ .box = .{ .x = 20, .y = 20, .w = 20, .h = 20 }, .rotation = std.math.pi / 4.0, .layer = 1 },
+    };
+    try expectEqual(@as(?usize, 0), firstAtPoint(&walls, .{ .x = 30, .y = 30 }, all_layers));
+    try expectEqual(@as(?usize, null), firstAtPoint(&walls, .{ .x = 20, .y = 20 }, all_layers));
+
+    const mover = Box{ .x = 0, .y = 20, .w = 10, .h = 10 };
+    const moved = moveBox(&walls, mover, 100, 0, all_layers);
+    try std.testing.expect(moved.x < 50);
+    try std.testing.expect(!collision.orientedBoxesOverlap(
+        .{ .x = walls[0].box.x, .y = walls[0].box.y, .w = walls[0].box.w, .h = walls[0].box.h, .rotation = walls[0].rotation },
+        .{ .x = moved.x, .y = moved.y, .w = mover.w, .h = mover.h, .rotation = 0 },
+    ));
 }
