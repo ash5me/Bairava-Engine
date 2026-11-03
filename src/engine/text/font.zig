@@ -43,6 +43,44 @@ pub const Font = struct {
     }
 };
 
+/// CPU-side font result. Creating its GPU texture must happen on the main thread; baking and file
+/// parsing may run on a worker because this type does not touch GPU objects.
+pub const Staged = struct {
+    baked: c.ui_font,
+    pub fn upload(self: Staged, allocator: std.mem.Allocator, device: *platform.gpu.Device) Font {
+        return fromBaked(allocator, device, self.baked);
+    }
+    pub fn deinit(self: *Staged) void {
+        c.ui_font_destroy(&self.baked);
+        self.* = undefined;
+    }
+};
+
+/// Bakes or parses font data on the calling CPU thread. No GPU resource is created.
+pub fn stage(ttf: []const u8, prebaked: []const u8, pixel_height: f32) !Staged {
+    if (prebaked.len > 0) {
+        var baked: c.ui_font = undefined;
+        if (c.ui_font_load_prebaked(prebaked.ptr, prebaked.len, pixel_height, &baked) == 0) {
+            if (ttf.len > 0) {
+                if (c.ui_font_enable_dynamic(&baked, ttf.ptr, ttf.len) != 0) {
+                    c.ui_font_destroy(&baked);
+                    return error.DynamicFontFailed;
+                }
+            }
+            return .{ .baked = baked };
+        }
+    }
+    var baked: c.ui_font = undefined;
+    if (c.ui_font_bake(ttf.ptr, ttf.len, pixel_height, first_codepoint, codepoint_count, &baked) != 0) return error.BakeFailed;
+    if (ttf.len > 0) {
+        if (c.ui_font_enable_dynamic(&baked, ttf.ptr, ttf.len) != 0) {
+            c.ui_font_destroy(&baked);
+            return error.DynamicFontFailed;
+        }
+    }
+    return .{ .baked = baked };
+}
+
 /// Loads a build-preprocessed font when present, otherwise baking the supplied TTF bytes.
 pub fn load(allocator: std.mem.Allocator, device: *platform.gpu.Device, ttf: []const u8, prebaked: []const u8, pixel_height: f32) !Font {
     if (prebaked.len > 0) {

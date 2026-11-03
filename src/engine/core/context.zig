@@ -30,6 +30,7 @@ const capability = @import("../capabilities.zig");
 const game_events = @import("game_events.zig");
 const action = @import("../input/action.zig");
 const bindings = @import("../input/mapping.zig");
+const jobs = @import("../jobs/jobs.zig");
 
 const ScaleMode = view.ScaleMode;
 const elog = logging.scoped("engine");
@@ -81,6 +82,67 @@ pub const max_registered_textures: u32 = 256;
 pub const Capabilities = capability.Capabilities;
 pub const PresentationCapabilities = capability.PresentationCapabilities;
 
+const FontLoadJob = struct {
+    allocator: std.mem.Allocator,
+    relative: [max_full_path]u8 = undefined,
+    relative_len: usize = 0,
+    pixel_height: f32 = 0,
+    staged: ?font.Staged = null,
+    failure: ?AssetError = null,
+};
+
+fn runFontLoad(job: *FontLoadJob) void {
+    const relative = job.relative[0..job.relative_len];
+    var prebaked_buf: [max_full_path]u8 = undefined;
+    const prebaked_path = std.fmt.bufPrint(&prebaked_buf, "{s}.bfnt", .{relative}) catch {
+        job.failure = error.PathTooLong;
+        return;
+    };
+    const prebaked = platform.files.readQuiet(job.allocator, .packaged, prebaked_path) catch null;
+    defer if (prebaked) |bytes| job.allocator.free(bytes);
+    const ttf = platform.files.readQuiet(job.allocator, .packaged, relative) catch null;
+    defer if (ttf) |bytes| job.allocator.free(bytes);
+    if (prebaked == null and ttf == null) {
+        job.failure = error.FileNotFound;
+        return;
+    }
+    job.staged = font.stage(ttf orelse &.{}, prebaked orelse &.{}, job.pixel_height) catch {
+        job.failure = error.FontLoadFailed;
+        return;
+    };
+}
+
+const SoundLoadJob = struct {
+    allocator: std.mem.Allocator,
+    audio: *audio.Audio,
+    relative: [max_full_path]u8 = undefined,
+    relative_len: usize = 0,
+    sound: ?audio.Sound = null,
+    failure: ?audio.Error = null,
+};
+
+fn runSoundLoad(job: *SoundLoadJob) void {
+    job.sound = job.audio.stageSound(job.allocator, job.relative[0..job.relative_len]) catch |err| {
+        job.failure = err;
+        return;
+    };
+}
+
+const StreamedSoundJob = struct {
+    audio: *audio.Audio,
+    relative: [max_full_path]u8 = undefined,
+    relative_len: usize = 0,
+    sound: ?audio.StreamedSound = null,
+    failure: ?audio.Error = null,
+};
+
+fn runStreamedSoundLoad(job: *StreamedSoundJob) void {
+    job.sound = job.audio.openStreamed(job.relative[0..job.relative_len]) catch |err| {
+        job.failure = err;
+        return;
+    };
+}
+
 /// State the game reads and writes during `update`, plus the GPU access it needs in `init`.
 pub const Context = struct {
     gpu_state: *GpuAccess,
@@ -119,6 +181,8 @@ pub const Context = struct {
     /// The allocator for memory that worker threads touch, such as decoded textures. It must be safe to use from
     /// several threads. The engine passes the page allocator, which is.
     worker_allocator: std.mem.Allocator = std.heap.page_allocator,
+    /// Worker pool used by asset loads. Main-thread GPU/device work remains after the worker decode returns.
+    jobs: ?*jobs.Pool = null,
     /// The diagnostics collector. Game code may add its own counters to it in development builds. See
     /// docs/diagnostics.md.
     diagnostics: *collector.Collector,
@@ -254,6 +318,20 @@ pub const Context = struct {
     /// instead of panicking, because a missing sound shouldn't stop the game. The caller frees the sound
     /// with `Sound.deinit`.
     pub fn loadSound(self: *const Context, relative: []const u8) audio.Error!audio.Sound {
+        if (self.jobs) |pool| {
+            var job = SoundLoadJob{
+                .allocator = self.allocators.asset,
+                .audio = self.audio,
+            };
+            if (relative.len > job.relative.len) return error.LoadFailed;
+            @memcpy(job.relative[0..relative.len], relative);
+            job.relative_len = relative.len;
+            var counter = std.mem.zeroes(jobs.Counter);
+            pool.submit(&counter, SoundLoadJob, &job, runSoundLoad);
+            pool.wait(&counter);
+            if (job.failure) |err| return err;
+            return job.sound orelse error.LoadFailed;
+        }
         return self.audio.loadSound(self.allocators.asset, relative);
     }
 
@@ -261,6 +339,17 @@ pub const Context = struct {
     /// ambience, and `loadSound` for short effects. Play the result with `ctx.audio.playStreamed`. Nothing needs freeing:
     /// each voice opens and closes its own reader.
     pub fn openStreamed(self: *const Context, relative: []const u8) audio.Error!audio.StreamedSound {
+        if (self.jobs) |pool| {
+            var job = StreamedSoundJob{ .audio = self.audio };
+            if (relative.len > job.relative.len) return error.LoadFailed;
+            @memcpy(job.relative[0..relative.len], relative);
+            job.relative_len = relative.len;
+            var counter = std.mem.zeroes(jobs.Counter);
+            pool.submit(&counter, StreamedSoundJob, &job, runStreamedSoundLoad);
+            pool.wait(&counter);
+            if (job.failure) |err| return err;
+            return job.sound orelse error.LoadFailed;
+        }
         return self.audio.openStreamed(relative);
     }
 
@@ -346,27 +435,32 @@ pub const Context = struct {
 
     /// Loads a UI font. Missing or malformed font assets return an error instead of crashing startup.
     pub fn loadFont(self: *const Context, relative: []const u8, pixel_height: f32) AssetError!ui.Font {
-        var prebaked_buf: [max_full_path]u8 = undefined;
-        const prebaked_path = std.fmt.bufPrint(&prebaked_buf, "{s}.bfnt", .{relative}) catch {
-            return error.PathTooLong;
-        };
-        const prebaked = self.readFile(self.allocators.asset, prebaked_path) catch null;
-        defer if (prebaked) |bytes| self.allocators.asset.free(bytes);
-        const ttf_file = self.readFile(self.allocators.asset, relative) catch |err| blk: {
-            // A missing font is reported below, as FileNotFound. Any other read failure is logged here, so it is not lost.
-            if (err != error.FileNotFound) logging.recovered("engine", "reading the font", relative, err, "the font is not loaded");
-            break :blk null;
-        };
-        defer if (ttf_file) |bytes| self.allocators.asset.free(bytes);
-        if (prebaked == null and ttf_file == null) {
-            return error.FileNotFound;
+        var staged: font.Staged = undefined;
+        if (self.jobs) |pool| {
+            var job = FontLoadJob{
+                .allocator = self.worker_allocator,
+                .pixel_height = pixel_height,
+            };
+            if (relative.len > job.relative.len) return error.PathTooLong;
+            @memcpy(job.relative[0..relative.len], relative);
+            job.relative_len = relative.len;
+            var counter = std.mem.zeroes(jobs.Counter);
+            pool.submit(&counter, FontLoadJob, &job, runFontLoad);
+            pool.wait(&counter);
+            if (job.failure) |err| return err;
+            staged = job.staged orelse return error.FontLoadFailed;
+        } else {
+            var prebaked_buf: [max_full_path]u8 = undefined;
+            const prebaked_path = std.fmt.bufPrint(&prebaked_buf, "{s}.bfnt", .{relative}) catch return error.PathTooLong;
+            const prebaked = self.readFile(self.allocators.asset, prebaked_path) catch null;
+            defer if (prebaked) |bytes| self.allocators.asset.free(bytes);
+            const ttf_file = self.readFile(self.allocators.asset, relative) catch null;
+            defer if (ttf_file) |bytes| self.allocators.asset.free(bytes);
+            staged = font.stage(ttf_file orelse &.{}, prebaked orelse &.{}, pixel_height) catch {
+                return error.FontLoadFailed;
+            };
         }
-        const ttf: []const u8 = ttf_file orelse &.{};
-        const pre: []const u8 = prebaked orelse &.{};
-        return font.load(self.allocators.asset, contextGpuDevice(self), ttf, pre, pixel_height) catch |err| {
-            elog.warn("font '{s}' could not be loaded: {s}", .{ relative, @errorName(err) });
-            return error.FontLoadFailed;
-        };
+        return staged.upload(self.allocators.asset, contextGpuDevice(self));
     }
 
     /// Loads a texture atlas and validates the index against the uploaded image.

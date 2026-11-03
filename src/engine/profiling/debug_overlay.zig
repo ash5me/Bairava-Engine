@@ -88,20 +88,30 @@ pub const Overlay = struct {
         }
 
         const line_h: f32 = @floatFromInt(canvas.font.baked.line_height);
-        const panel_w = widest + 2 * pad;
-        const panel_h = pad + graph_h + pad + strip_h + pad + @as(f32, @floatFromInt(count)) * line_h + pad;
+        const compact = view_h < 240;
+        const compact_graph_h: f32 = if (compact) 24 else graph_h;
+        const compact_strip_h: f32 = if (compact) 8 else strip_h;
+        const max_panel_w = @max(1, @min(view_w - 2 * margin, view_w * 0.44));
+        const panel_w = @min(widest + 2 * pad, max_panel_w);
+        const max_panel_h = @max(1, @min(view_h - 2 * margin, view_h * 0.42));
+        const fixed_h = pad + compact_graph_h + pad + compact_strip_h + pad + pad;
+        const max_text_lines: usize = if (line_h > 0)
+            @max(1, @as(usize, @intFromFloat(@floor(@max(0, max_panel_h - fixed_h) / line_h))))
+        else 1;
+        const visible_count = @min(count, max_text_lines);
+        const panel_h = @min(max_panel_h, fixed_h + @as(f32, @floatFromInt(visible_count)) * line_h);
         const x0 = view_w - panel_w - margin;
         const y0 = margin;
         const graph_x = x0 + pad;
-        const graph_bottom = y0 + pad + graph_h;
-        const strip_bottom = graph_bottom + pad + strip_h;
+        const graph_bottom = y0 + pad + compact_graph_h;
+        const strip_bottom = graph_bottom + pad + compact_strip_h;
 
         canvas.rect(x0, y0, panel_w, panel_h, panel_color);
-        drawGraph(canvas, collector, graph_x, graph_bottom);
-        drawStrip(canvas, collector.plots.of(.allocations), graph_x, strip_bottom);
+        drawGraph(canvas, collector, graph_x, graph_bottom, compact_graph_h);
+        drawStrip(canvas, collector.plots.of(.allocations), graph_x, strip_bottom, compact_strip_h);
 
         var text_y = strip_bottom + pad;
-        for (lines[0..count]) |line| {
+        for (lines[0..visible_count]) |line| {
             canvas.text(x0 + pad, text_y, line, text_color);
             text_y += line_h;
         }
@@ -230,27 +240,27 @@ fn buildLines(store: *[max_lines][line_capacity]u8, lines: *[max_lines][]const u
 }
 
 /// The frame graph: one column per kept frame, newest at the right, with the 60 Hz budget across it.
-fn drawGraph(canvas: *ui.Canvas, collector: *const Collector, graph_x: f32, graph_bottom: f32) void {
+fn drawGraph(canvas: *ui.Canvas, collector: *const Collector, graph_x: f32, graph_bottom: f32, height: f32) void {
     const history = collector.stats.of(.frame);
     var i: usize = 0;
     while (i < history.len) : (i += 1) {
         const seconds = history.at(i);
-        const h = frame_history.fraction(seconds, full_scale_s) * graph_h;
+        const h = frame_history.fraction(seconds, full_scale_s) * height;
         if (h <= 0) continue;
         const column: f32 = @floatFromInt(frame_history.capacity - history.len + i);
         canvas.rect(graph_x + column, graph_bottom - h, 1, h, barColor(seconds));
     }
-    const budget_y = graph_bottom - frame_history.fraction(budget_s, full_scale_s) * graph_h;
+    const budget_y = graph_bottom - frame_history.fraction(budget_s, full_scale_s) * height;
     canvas.rect(graph_x, budget_y, graph_w, 1, budget_color);
 }
 
 /// A strip under the frame graph: one column per kept frame, scaled to the largest value kept, with a floor of
 /// one so a plot of small numbers still shows its shape. The columns stand on `bottom`.
-fn drawStrip(canvas: *ui.Canvas, series: *const frame_history.FrameHistory, x: f32, bottom: f32) void {
+fn drawStrip(canvas: *ui.Canvas, series: *const frame_history.FrameHistory, x: f32, bottom: f32, height: f32) void {
     const top_value = @max(1.0, series.max());
     var i: usize = 0;
     while (i < series.len) : (i += 1) {
-        const h = frame_history.fraction(series.at(i), top_value) * strip_h;
+        const h = frame_history.fraction(series.at(i), top_value) * height;
         if (h <= 0) continue;
         const column: f32 = @floatFromInt(frame_history.capacity - series.len + i);
         canvas.rect(x + column, bottom - h, 1, h, plot_color);

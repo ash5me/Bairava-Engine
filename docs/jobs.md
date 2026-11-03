@@ -74,5 +74,7 @@ then closes the texture store and the GPU.
 
 ## Not yet done
 
-- Fonts and sounds still load on the main thread. Only textures use the streamer.
+- Fonts use worker-side file reads and C baking/prebaked parsing, then a main-thread GPU atlas upload.
+- Short sounds use worker-side file reads plus WAV/IMA decoding and device-format conversion. Streamed sounds may
+  only open headers and readers on the worker; playback and chunk conversion remain engine audio work.
 - The Win32 thread path has not been run on Windows yet.

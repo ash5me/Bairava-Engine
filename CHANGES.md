@@ -30,6 +30,9 @@
 
 ## What changed
 
+- Debug UI: compact native overlays cap width to 44% and height to 42% of the view, limit text rows to the
+  available height, and reduce graph/strip heights on small views. Semkootru uses a 7-pixel native UI font,
+  a 140-pixel maximum panel width, and compact screen heights.
 - `Config.worker_threads` (default 2, max 32). `Config.allocator` must be thread-safe when workers are above zero.
 - `texture_loads_per_frame` now caps uploads per frame, not loads.
 - `Context.loadTexture` uses the same staging step as background loads. New `Context.stageFormats` and
@@ -50,9 +53,9 @@
   build could not run. Expect a few compile errors to fix on the first `zig build test`.
 - Not checked: the Win32 thread path, and the C harnesses under the Zig build.
 
-## Known gaps
+## Asset loading status
 
-- Fonts and sounds still load on the main thread.
+- Font parsing/baking and sound WAV/IMA decoding run on worker threads; font atlas texture creation remains on the main thread.
 - Scripts reload only on startup; hot reload from the game is not wired.
 - The script language has no strings beyond literals, no tables, and no escapes.
 - `pthread` is not linked explicitly. Systems with glibc older than 2.34 may need `-lpthread` for the C harnesses.

@@ -22,9 +22,9 @@ const log = engine.log.scoped("game");
 const ui_z: i32 = 1000;
 
 /// Width of the panel in view pixels. Wide enough for a keybind row: the action's name at the left, its keys at the right.
-const panel_w: f32 = 180;
-/// Actions on each page of the Controls list. A page, with its title and buttons, fits the native 180-pixel view.
-const controls_page_size = 4;
+const panel_w: f32 = 140;
+/// Actions on each page of the Controls list. The compact page keeps the native panel within a small view.
+const controls_page_size = 3;
 
 /// The screens the panel shows. Each is its own list of widgets, built in the update step.
 const Screen = enum { demo, controls, saves };
@@ -626,7 +626,16 @@ pub const Game = struct {
     /// exactly once. The panel shows the demo, or the Controls list when it is open.
     fn updateUi(self: *Game, ctx: *engine.Context) void {
         const ui = &self.ui;
-        const panel = engine.ui.anchorBounds(ctx.layout.view_w, ctx.layout.view_h, panel_w, 130, .top_left, 4, 4);
+        // Anchor and pointer mapping use the same current layout as presentation, including
+        // window resizes, high-DPI density, integer-mode letterboxing, and zoom.
+        const panel_width = @min(panel_w, @max(112.0, ctx.layout.view_w * 0.44));
+        const desired_panel_height: f32 = switch (self.screen) {
+            .demo => 96,
+            .controls => 84,
+            .saves => 84,
+        };
+        const panel_height = @min(desired_panel_height, @max(1, ctx.layout.view_h - 8));
+        const panel = engine.ui.anchorBounds(ctx.layout.view_w, ctx.layout.view_h, panel_width, panel_height, .top_left, 4, 4);
         ui.begin(ctx.input, ctx.layout, panel.x, panel.y, panel.w);
         switch (self.screen) {
             .demo => self.updateDemo(),

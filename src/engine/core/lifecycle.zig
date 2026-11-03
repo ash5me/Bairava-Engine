@@ -183,6 +183,7 @@ pub const Session = struct {
             .settings_file = config.settings_file,
             .textures = self.textures,
             .worker_allocator = config.allocator,
+            .jobs = &self.jobs_pool,
             .diagnostics = &self.collector,
             .reloads = &self.reloads,
         };

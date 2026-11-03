@@ -30,7 +30,7 @@ pub fn main() !void {
         .zoom_max = config.zoom_max,
         .zoom_rate = config.zoom_rate,
         .debug_font_path = config.ui_font_path,
-        .debug_font_px = config.ui_font_px,
+        .debug_font_px = 7,
         .log_file = config.log_file_name,
         .crash_file = config.crash_file_name,
         .settings_file = config.settings_file_name,

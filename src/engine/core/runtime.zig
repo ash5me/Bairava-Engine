@@ -304,6 +304,22 @@ pub fn run(comptime Game: type, config: Config) !void {
         session.cam.view_w = view_wf;
         session.cam.view_h = view_hf;
 
+        // Publish the frame's exact window-to-view layout before fixed-step updates. The game
+        // builds its UI and maps pointer input during updates; refreshing this only during
+        // presentation leaves those paths one frame behind window resizes and zoom changes.
+        {
+            const layout = view.layoutForFit(win_wf, win_hf, fit);
+            ctx.layout = .{
+                .pixel_density = platform.window.pixelDensity(session.window),
+                .dst_x = layout.dst_x,
+                .dst_y = layout.dst_y,
+                .dst_w = layout.dst_w,
+                .dst_h = layout.dst_h,
+                .view_w = layout.view_w,
+                .view_h = layout.view_h,
+            };
+        }
+
         // Acquire the frame after the layout is known. A minimized window can report a nonzero size
         // yet get no swapchain, so this path idles too.
         const frame = session.gpu.beginFrame() orelse {

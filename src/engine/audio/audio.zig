@@ -206,23 +206,46 @@ pub const Audio = struct {
     /// is used. The caller frees the result with `Sound.deinit`.
     pub fn loadSound(self: *const Audio, allocator: std.mem.Allocator, relative: []const u8) Error!Sound {
         if (self.device == null) return error.NoDevice;
-        if (try self.loadImaSidecar(allocator, relative)) |sound| return sound;
+        return self.stageSound(allocator, relative);
+    }
 
-        const wav = platform.files.read(allocator, .packaged, relative) catch |err| {
-            log.warn("could not read '{s}': {s}", .{ relative, @errorName(err) });
+    /// Reads and converts one short sound without logging. This is safe to call from a worker
+    /// thread; the returned allocation owns its samples and is uploaded to no device.
+    pub fn stageSound(self: *const Audio, allocator: std.mem.Allocator, relative: []const u8) Error!Sound {
+        if (self.device == null) return error.NoDevice;
+        if (try self.loadImaSidecarQuiet(allocator, relative)) |sound| return sound;
+
+        const wav = platform.files.readQuiet(allocator, .packaged, relative) catch {
             return error.LoadFailed;
         };
         defer allocator.free(wav);
-        const decoded = platform.audio.decodeWav(allocator, wav) catch |err| {
-            log.warn("could not decode '{s}': {s}", .{ relative, @errorName(err) });
+        const decoded = platform.audio.decodeWav(allocator, wav) catch {
             return error.LoadFailed;
         };
         defer allocator.free(decoded.samples);
         const converted = platform.audio.convert(allocator, decoded.format, decoded.samples, self.format) catch {
-            log.warn("could not convert '{s}' to the device format", .{relative});
             return error.ConvertFailed;
         };
         return .{ .allocator = allocator, .samples = converted };
+    }
+
+    fn loadImaSidecarQuiet(self: *const Audio, allocator: std.mem.Allocator, relative: []const u8) Error!?Sound {
+        var name_buf: [platform.max_full_path]u8 = undefined;
+        const name = std.fmt.bufPrint(&name_buf, "{s}.ima", .{relative}) catch return null;
+        const bytes = platform.files.readQuiet(allocator, .packaged, name) catch return null;
+        defer allocator.free(bytes);
+
+        var decoded = ima.decode(allocator, bytes) catch return null;
+        defer decoded.deinit();
+        const source = platform.PcmFormat{
+            .sample_rate = decoded.sample_rate,
+            .channels = decoded.channels,
+            .kind = .int16,
+        };
+        const converted = platform.audio.convert(allocator, source, std.mem.sliceAsBytes(decoded.samples), self.format) catch {
+            return error.ConvertFailed;
+        };
+        return Sound{ .allocator = allocator, .samples = converted };
     }
 
     fn loadImaSidecar(self: *const Audio, allocator: std.mem.Allocator, relative: []const u8) Error!?Sound {

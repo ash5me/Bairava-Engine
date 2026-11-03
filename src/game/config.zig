@@ -93,10 +93,10 @@ comptime {
 }
 
 /// The font for the demo panel, relative to the executable's folder, and its height in native
-/// pixels. The UI is drawn at native resolution, so 10 keeps it legible at the 320x180 view. The
+/// pixels. The UI is drawn at native resolution, so 7 keeps it compact at the 320x180 view. The
 /// build's preprocessed `<path>.bfnt` beside it is used when it matches this size.
 pub const ui_font_path = "assets/font.ttf";
-pub const ui_font_px: f32 = 10;
+pub const ui_font_px: f32 = 7;
 
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.
 pub const log_file_name: ?[:0]const u8 = "Semkootru.log";
