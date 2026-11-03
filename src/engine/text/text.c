@@ -21,6 +21,7 @@
 #define ATLAS_MAX 4096
 #define WHITE_ROWS 2
 #define WHITE_COLS 2
+#define FONT_OVERSAMPLE 3
 
 static int round_px(float v);
 static int compare_kerning(const void *a, const void *b);
@@ -31,14 +32,14 @@ typedef struct ft_bitmap_copy {
     float advance;
 } ft_bitmap_copy;
 
-static int ft_open_face(const unsigned char *data, size_t len, float pixel_height, FT_Library *library, FT_Face *face) {
+static int ft_open_face(const unsigned char *data, size_t len, float pixel_height, int oversample, FT_Library *library, FT_Face *face) {
     if (!data || len == 0 || len > (size_t)LONG_MAX || FT_Init_FreeType(library) != 0) return 0;
     if (FT_New_Memory_Face(*library, data, (FT_Long)len, 0, face) != 0) {
         FT_Done_FreeType(*library);
         *library = NULL;
         return 0;
     }
-    if (FT_Set_Char_Size(*face, 0, (FT_F26Dot6)(pixel_height * 64.0f + 0.5f), 72, 72) != 0) {
+    if (FT_Set_Char_Size(*face, 0, (FT_F26Dot6)(pixel_height * (float)oversample * 64.0f + 0.5f), 72, 72) != 0) {
         FT_Done_Face(*face);
         FT_Done_FreeType(*library);
         *face = NULL;
@@ -78,12 +79,38 @@ static int ft_render_codepoint(FT_Face face, int cp, int sdf, ft_bitmap_copy *ou
     if (sdf) flags |= FT_LOAD_NO_HINTING;
     if (FT_Load_Char(face, (FT_ULong)cp, flags) != 0) return 0;
     if (FT_Render_Glyph(face->glyph, sdf ? FT_RENDER_MODE_SDF : FT_RENDER_MODE_NORMAL) != 0) return 0;
-    out->width = (int)face->glyph->bitmap.width;
-    out->height = (int)face->glyph->bitmap.rows;
-    out->left = face->glyph->bitmap_left;
-    out->top = face->glyph->bitmap_top;
-    out->advance = (float)face->glyph->advance.x / 64.0f;
-    return ft_copy_bitmap(&face->glyph->bitmap, &out->pixels);
+    out->width = sdf ? (int)face->glyph->bitmap.width : ((int)face->glyph->bitmap.width + FONT_OVERSAMPLE - 1) / FONT_OVERSAMPLE;
+    out->height = sdf ? (int)face->glyph->bitmap.rows : ((int)face->glyph->bitmap.rows + FONT_OVERSAMPLE - 1) / FONT_OVERSAMPLE;
+    out->left = sdf ? face->glyph->bitmap_left : (face->glyph->bitmap_left + FONT_OVERSAMPLE / 2) / FONT_OVERSAMPLE;
+    out->top = sdf ? face->glyph->bitmap_top : (face->glyph->bitmap_top + FONT_OVERSAMPLE / 2) / FONT_OVERSAMPLE;
+    out->advance = (float)face->glyph->advance.x / 64.0f / (sdf ? 1.0f : (float)FONT_OVERSAMPLE);
+    if (sdf) return ft_copy_bitmap(&face->glyph->bitmap, &out->pixels);
+    {
+        unsigned char *raw;
+        if (!ft_copy_bitmap(&face->glyph->bitmap, &raw)) return 0;
+        if (out->width <= 0 || out->height <= 0 || !raw) { free(raw); return 1; }
+        out->pixels = malloc((size_t)out->width * (size_t)out->height);
+        if (!out->pixels) { free(raw); return 0; }
+        for (int y = 0; y < out->height; y++) {
+            for (int x = 0; x < out->width; x++) {
+                unsigned sum = 0;
+                unsigned samples = 0;
+                for (int oy = 0; oy < FONT_OVERSAMPLE; oy++) {
+                    int sy = y * FONT_OVERSAMPLE + oy;
+                    if (sy >= (int)face->glyph->bitmap.rows) continue;
+                    for (int ox = 0; ox < FONT_OVERSAMPLE; ox++) {
+                        int sx = x * FONT_OVERSAMPLE + ox;
+                        if (sx >= (int)face->glyph->bitmap.width) continue;
+                        sum += raw[(size_t)sy * face->glyph->bitmap.width + sx];
+                        samples++;
+                    }
+                }
+                out->pixels[(size_t)y * out->width + x] = samples ? (unsigned char)(sum / samples) : 0;
+            }
+        }
+        free(raw);
+        return 1;
+    }
 }
 
 static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pixel_height, int first, int count,
@@ -99,13 +126,13 @@ static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pi
     memset(font, 0, sizeof *font);
     if (!data || len == 0 || count <= 0 || first < 0 || first + (int64_t)count > 0x110000 || !(pixel_height > 0) ||
         (sdf && !(distance_range >= 1.0f && distance_range <= 32.0f)) ||
-        !ft_open_face(data, len, pixel_height, &library, &face)) return -1;
+        !ft_open_face(data, len, pixel_height, sdf ? 1 : FONT_OVERSAMPLE, &library, &face)) return -1;
     if (sdf) {
         FT_Int spread = (FT_Int)(distance_range + 0.5f);
         (void)FT_Property_Set(library, "sdf", "spread", &spread);
     }
-    asc = round_px((float)face->size->metrics.ascender / 64.0f);
-    line_height = round_px((float)face->size->metrics.height / 64.0f);
+    asc = round_px((float)face->size->metrics.ascender / 64.0f / (sdf ? 1.0f : (float)FONT_OVERSAMPLE));
+    line_height = round_px((float)face->size->metrics.height / 64.0f / (sdf ? 1.0f : (float)FONT_OVERSAMPLE));
     bitmaps = (ft_bitmap_copy *)calloc((size_t)count, sizeof *bitmaps);
     font->glyphs = (ui_glyph *)calloc((size_t)count, sizeof *font->glyphs);
     if (!bitmaps || !font->glyphs) goto done;
@@ -155,7 +182,8 @@ static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pi
                 FT_UInt right = FT_Get_Char_Index(face, (FT_ULong)(first + j));
                 FT_Vector delta;
                 if (!right || FT_Get_Kerning(face, left, right, FT_KERNING_DEFAULT, &delta) != 0 || delta.x == 0) continue;
-                kernings[kerning_count++] = (ui_kerning){ (unsigned int)(first + i), (unsigned int)(first + j), (float)delta.x / 64.0f };
+                kernings[kerning_count++] = (ui_kerning){ (unsigned int)(first + i), (unsigned int)(first + j),
+                    (float)delta.x / 64.0f / (sdf ? 1.0f : (float)FONT_OVERSAMPLE) };
             }
         }
         if (kerning_count) qsort(kernings, (size_t)kerning_count, sizeof *kernings, compare_kerning);
@@ -249,7 +277,7 @@ static int add_dynamic_glyph(ui_font *font, int cp) {
         FT_Library library = NULL;
         FT_Face face = NULL;
         ft_bitmap_copy copy;
-        if (!ft_open_face(font->source_font, font->source_font_len, font->pixel_height, &library, &face)) return 0;
+        if (!ft_open_face(font->source_font, font->source_font_len, font->pixel_height, font->sdf ? 1 : FONT_OVERSAMPLE, &library, &face)) return 0;
         if (font->sdf) {
             FT_Int spread = (FT_Int)((font->sdf_range > 0 ? font->sdf_range : 8.0f) + 0.5f);
             (void)FT_Property_Set(library, "sdf", "spread", &spread);
@@ -346,7 +374,7 @@ int ui_font_enable_dynamic(ui_font *font, const unsigned char *font_data, size_t
     if ((len >= 4 && memcmp(font_data, "OTTO", 4) == 0) || !stbtt_InitFont(&info, font_data, 0)) {
         FT_Library library = NULL;
         FT_Face face = NULL;
-        if (!ft_open_face(font_data, len, font->pixel_height, &library, &face)) return -1;
+        if (!ft_open_face(font_data, len, font->pixel_height, font->sdf ? 1 : FONT_OVERSAMPLE, &library, &face)) return -1;
         FT_Done_Face(face); FT_Done_FreeType(library);
         use_freetype = 1;
     }
@@ -458,11 +486,11 @@ static float kerning_for(const ui_font *font, unsigned int left, unsigned int ri
         FT_Face face = NULL;
         FT_Vector delta;
         float amount = 0;
-        if (ft_open_face(font->source_font, font->source_font_len, font->pixel_height, &library, &face)) {
+        if (ft_open_face(font->source_font, font->source_font_len, font->pixel_height, font->sdf ? 1 : FONT_OVERSAMPLE, &library, &face)) {
             FT_UInt left_glyph = FT_Get_Char_Index(face, (FT_ULong)left);
             FT_UInt right_glyph = FT_Get_Char_Index(face, (FT_ULong)right);
             if (left_glyph && right_glyph && FT_Get_Kerning(face, left_glyph, right_glyph, FT_KERNING_DEFAULT, &delta) == 0)
-                amount = (float)delta.x / 64.0f;
+                amount = (float)delta.x / 64.0f / (font->sdf ? 1.0f : (float)FONT_OVERSAMPLE);
             FT_Done_Face(face); FT_Done_FreeType(library);
         }
         return amount;
@@ -739,7 +767,8 @@ void ui_font_draw_text_scaled(ui_font *font, ui_quad_list *out, float x, float y
         int h = g->y1 - g->y0;
         /* Blank glyphs such as the space have no pixels, but they still move the pen. */
         if (w > 0 && h > 0) {
-            ui_rect dst = { (float)round_px(pen + g->xoff * scale), (float)(baseline + round_px(g->yoff * scale)), w * scale, h * scale };
+            ui_rect dst = { (float)round_px(pen + g->xoff * scale), (float)(baseline + round_px(g->yoff * scale)),
+                            (float)round_px(w * scale), (float)round_px(h * scale) };
             ui_rect src = { (float)g->x0, (float)g->y0, (float)w, (float)h };
             ui_quad_push(out, dst, src, color);
             out->items[out->count - 1].sdf = font->sdf;

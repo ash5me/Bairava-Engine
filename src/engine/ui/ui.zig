@@ -309,10 +309,14 @@ fn queueQuads(batch: *sprite.SpriteBatch, font: *Font, list: *const c.ui_quad_li
     font.refreshTexture();
     const count: usize = @intCast(list.count);
     for (list.items[0..count]) |q| {
+        const snap = @floor(q.dst.x + 0.5);
+        const snap_y = @floor(q.dst.y + 0.5);
+        const snap_w = @max(1.0, @floor(q.dst.w + 0.5));
+        const snap_h = @max(1.0, @floor(q.dst.h + 0.5));
         batch.drawSprite(
             &font.texture,
             .{ .x = q.src.x, .y = q.src.y, .w = q.src.w, .h = q.src.h },
-            .{ .x = q.dst.x, .y = q.dst.y, .w = q.dst.w, .h = q.dst.h },
+            .{ .x = snap, .y = snap_y, .w = snap_w, .h = snap_h },
             .{ .tint = .{ q.color.r, q.color.g, q.color.b }, .alpha = q.color.a, .z = z, .sdf = q.sdf != 0 },
         );
     }

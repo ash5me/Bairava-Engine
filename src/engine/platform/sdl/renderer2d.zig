@@ -58,10 +58,10 @@ pub fn draw(
     _ = c.SDL_SetTextureBlendMode(texture, c.SDL_BLENDMODE_BLEND);
 
     const src = c.SDL_FRect{ .x = src_x, .y = src_y, .w = src_w, .h = src_h };
-    const screen_w = dst_w * scale_x;
-    const screen_h = dst_h * scale_y;
-    const screen_x = presentation_x + dst_x * scale_x;
-    const screen_y = presentation_y + dst_y * scale_y;
+    const screen_x = @floor(presentation_x + dst_x * scale_x + 0.5);
+    const screen_y = @floor(presentation_y + dst_y * scale_y + 0.5);
+    const screen_w = @floor(dst_w * scale_x + 0.5);
+    const screen_h = @floor(dst_h * scale_y + 0.5);
     const dst = c.SDL_FRect{ .x = screen_x, .y = screen_y, .w = screen_w, .h = screen_h };
     const center = c.SDL_FPoint{
         .x = screen_w * std.math.clamp(origin_x / @max(dst_w, 1), 0, 1),
