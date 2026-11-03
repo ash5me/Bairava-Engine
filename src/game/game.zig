@@ -270,8 +270,8 @@ pub const Game = struct {
         }
         if (acting and self.bindings.pressed(input, .toggle_scale)) {
             ctx.scale_mode = switch (ctx.scale_mode) {
-                .fit => .integer,
                 .integer => .fit,
+                .fit => .integer,
             };
         }
         if (acting and self.bindings.pressed(input, .zoom_in)) ctx.zoomBy(config.zoom_step);
@@ -644,7 +644,9 @@ pub const Game = struct {
             .saves => 84,
         };
         const panel_height = @min(desired_panel_height, @max(1, ctx.layout.view_h - 8));
-        const panel = engine.ui.anchorBounds(ctx.layout.view_w, ctx.layout.view_h, panel_width, panel_height, .top_left, 4, 4);
+        const snapped_panel_width = if (ctx.layout.pixel_perfect) @round(panel_width) else panel_width;
+        const snapped_panel_height = if (ctx.layout.pixel_perfect) @round(panel_height) else panel_height;
+        const panel = engine.ui.anchorBounds(ctx.layout.view_w, ctx.layout.view_h, snapped_panel_width, snapped_panel_height, .top_left, 4, 4);
         ui.begin(ctx.input, ctx.layout, panel.x, panel.y, panel.w);
         switch (self.screen) {
             .demo => self.updateDemo(),

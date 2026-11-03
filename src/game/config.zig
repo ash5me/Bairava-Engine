@@ -23,8 +23,9 @@ pub const native_h: u32 = 180;
 pub const clear_rgb = [3]f32{ 0.2, 0.3, 0.5 };
 /// Game logic steps per second. Movement is in pixels per second, so this changes smoothness, not speed.
 pub const update_hz: u32 = 60;
-/// Starting scale mode. Press I in game to toggle between fit and integer.
-pub const scale_mode: engine.ScaleMode = .fit;
+/// Starting scale mode. Integer uses evenly sized native pixels and letterboxing; press I to switch to fit,
+/// where the native view stretches to fill the window and may introduce uneven pixel boundaries.
+pub const scale_mode: engine.ScaleMode = .integer;
 /// How fast the camera catches up with the player, as a rate per second. Higher is snappier. Zero
 /// turns smoothing off, so the camera snaps to the player.
 pub const camera_rate: f32 = 10.0;
@@ -93,10 +94,10 @@ comptime {
 }
 
 /// The font for the demo panel, relative to the executable's folder, and its height in native
-/// pixels. The UI is drawn at native resolution, so 7 keeps it compact at the 320x180 view. The
+/// pixels. The UI is drawn at native resolution, so 8 keeps it compact at the 320x180 view. The
 /// build's preprocessed `<path>.bfnt` beside it is used when it matches this size.
 pub const ui_font_path = "assets/font.ttf";
-pub const ui_font_px: f32 = 7;
+pub const ui_font_px: f32 = 8;
 
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.
 pub const log_file_name: ?[:0]const u8 = "Semkootru.log";

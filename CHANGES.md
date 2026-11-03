@@ -30,6 +30,13 @@
 
 ## What changed
 
+- Reverted extra UI text-position rounding that could distort glyph placement and increased Semkootru's menu
+  font from 7 to 8 native pixels while preserving panel and widget snapping.
+- Presentation and UI boundaries now use integer native-pixel snapping in integer scale mode. Camera sprite
+  positions remain rounded from the unrounded camera, UI panels/pointer coordinates/widget rectangles/text are
+  snapped, and the presentation rectangle is snapped before it is drawn onto the window.
+- Semkootru now starts in integer scaling mode, keeping native pixels equal-sized and avoiding sub-pixel
+  viewport stretching. Press I to switch to fit mode.
 - Semkootru's title, demo button, click counter, volume controls, Saves and Controls screens now stay hidden
   during normal gameplay. Press F8 to toggle the game menu.
 - Added a repository-specific [Dear ImGui migration plan](docs/dearimgui-migration-plan.md) covering build integration,

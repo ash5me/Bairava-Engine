@@ -80,7 +80,7 @@ It creates `zig-out/release/` with the executable, packaged assets, documentatio
 | F8 | Toggle the game menu (`Semkootru`, sliders, Saves, and Controls) |
 | F11 | Toggle fullscreen |
 | F3 | Toggle the debug overlay |
-| `I` | Toggle fit/integer scaling |
+| `I` | Toggle integer/fit scaling (integer is the default) |
 | `+`, `=`, or keypad `+` | Zoom in |
 | `-` or keypad `-` | Zoom out |
 | `0` | Reset zoom |

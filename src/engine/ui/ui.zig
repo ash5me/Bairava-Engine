@@ -209,16 +209,23 @@ pub const Ui = struct {
             .x = if (std.math.isFinite(in_state.mouse_x)) in_state.mouse_x else 0,
             .y = if (std.math.isFinite(in_state.mouse_y)) in_state.mouse_y else 0,
         });
+        const snapped_pointer = if (safe_layout.pixel_perfect) view.Point{
+            .x = @round(pointer.x),
+            .y = @round(pointer.y),
+        } else pointer;
+        const snapped_x = if (safe_layout.pixel_perfect) @round(if (std.math.isFinite(x)) x else 0) else if (std.math.isFinite(x)) x else 0;
+        const snapped_y = if (safe_layout.pixel_perfect) @round(if (std.math.isFinite(y)) y else 0) else if (std.math.isFinite(y)) y else 0;
+        const snapped_width = if (safe_layout.pixel_perfect) @round(if (std.math.isFinite(width) and width > 0) width else 1) else if (std.math.isFinite(width) and width > 0) width else 1;
         const frame = c.ui_input{
-            .mouse_x = pointer.x,
-            .mouse_y = pointer.y,
+            .mouse_x = snapped_pointer.x,
+            .mouse_y = snapped_pointer.y,
             .mouse_down = @intFromBool(in_state.mouseDown(.left)),
             .mouse_pressed = @intFromBool(in_state.mousePressed(.left)),
             .mouse_released = @intFromBool(in_state.mouseReleased(.left)),
             .control = @intCast(action.pressedCode(in_state)),
             .cancel = @intFromBool(in_state.wasPressed(.escape)),
         };
-        c.ui_begin(self.ctx, &frame, if (std.math.isFinite(x)) x else 0, if (std.math.isFinite(y)) y else 0, if (std.math.isFinite(width) and width > 0) width else 1);
+        c.ui_begin(self.ctx, &frame, snapped_x, snapped_y, snapped_width);
     }
 
     /// Ends the frame's widgets. Call `queue` after this to draw them.

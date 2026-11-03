@@ -310,6 +310,7 @@ pub fn run(comptime Game: type, config: Config) !void {
         {
             const layout = view.layoutForFit(win_wf, win_hf, fit);
             ctx.layout = .{
+                .pixel_perfect = layout.pixel_perfect,
                 .pixel_density = platform.window.pixelDensity(session.window),
                 .dst_x = layout.dst_x,
                 .dst_y = layout.dst_y,
@@ -436,9 +437,20 @@ pub fn run(comptime Game: type, config: Config) !void {
             const zone = profile.zoneNamed(@src(), "present");
             defer zone.End();
             const layout = view.layoutForFit(win_wf, win_hf, fit);
-            const dst_rect = Rect{ .x = layout.dst_x, .y = layout.dst_y, .w = layout.dst_w, .h = layout.dst_h };
+            const dst_rect = if (layout.pixel_perfect) Rect{
+                .x = @round(layout.dst_x),
+                .y = @round(layout.dst_y),
+                .w = @round(layout.dst_w),
+                .h = @round(layout.dst_h),
+            } else Rect{
+                .x = layout.dst_x,
+                .y = layout.dst_y,
+                .w = layout.dst_w,
+                .h = layout.dst_h,
+            };
             // Record where the view landed, so the next update maps mouse positions with the same rectangle.
             ctx.layout = .{
+                .pixel_perfect = layout.pixel_perfect,
                 .pixel_density = platform.window.pixelDensity(session.window),
                 .dst_x = layout.dst_x,
                 .dst_y = layout.dst_y,

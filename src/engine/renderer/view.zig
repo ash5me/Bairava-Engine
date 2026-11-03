@@ -18,6 +18,8 @@ pub const Point = struct {
 /// Where the native view is drawn in the window. The engine fills this in each frame from the
 /// same numbers it uses to draw, so a mouse position maps back to what is on screen.
 pub const Layout = struct {
+    /// True when the native view is drawn at a whole-number scale.
+    pixel_perfect: bool = false,
     /// Window pixels per window point. Mouse events are in points, and the swapchain is in pixels.
     pixel_density: f32 = 1.0,
     /// The window-pixel rectangle the view is stretched into. Fit mode covers the whole window.
@@ -101,6 +103,7 @@ pub fn layoutForFit(win_w: f32, win_h: f32, fit: Fit) Layout {
     const content_w = safe_view_w * fit.scale;
     const content_h = safe_view_h * fit.scale;
     return .{
+        .pixel_perfect = true,
         .pixel_density = 1.0,
         .dst_x = @floor((safe_win_w - content_w) / 2.0),
         .dst_y = @floor((safe_win_h - content_h) / 2.0),
@@ -210,6 +213,7 @@ test "layoutForFit fills the whole window in fit mode and letterboxes in integer
 
     const integer_fit = chooseFit(1000, 540, 320, 180, .integer, 1.0);
     const integer_layout = layoutForFit(1000, 540, integer_fit);
+    try std.testing.expect(integer_layout.pixel_perfect);
     try std.testing.expectEqual(@as(f32, 0.0), integer_layout.dst_x);
     try std.testing.expectEqual(@as(f32, 0.0), integer_layout.dst_y);
     try std.testing.expectEqual(@as(f32, 999.0), integer_layout.dst_w);

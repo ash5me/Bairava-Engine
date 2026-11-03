@@ -463,6 +463,7 @@ pub const Context = struct {
         return staged.upload(self.allocators.asset, contextGpuDevice(self));
     }
 
+
     /// Loads a texture atlas and validates the index against the uploaded image.
     pub fn loadAtlas(self: *const Context, image_path: []const u8, index_path: []const u8) AssetError!LoadedAtlas {
         const text = self.readFile(self.allocators.asset, index_path) catch |err| {

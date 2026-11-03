@@ -745,6 +745,7 @@ void ui_font_draw_text_scaled(ui_font *font, ui_quad_list *out, float x, float y
             out->items[out->count - 1].sdf = font->sdf;
         }
         pen += g->xadvance * scale;
+        if (scale == 1.0f) pen = (float)round_px(pen);
         previous = resolved;
     }
 }
