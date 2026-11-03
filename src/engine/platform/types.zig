@@ -35,6 +35,7 @@ pub const Scancode = enum {
     f3,
     f11,
     f4,
+    f10,
 };
 
 pub const MouseButton = enum { left, right, middle };

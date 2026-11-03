@@ -5,6 +5,7 @@ const profile = @import("../profiling/profile.zig");
 const render_types = @import("render_types.zig");
 const texture = @import("texture.zig");
 const backend = @import("backends/sdl_gpu/backend.zig");
+const platform = @import("../platform/platform.zig");
 
 const Texture = texture.Texture;
 const vertices_per_quad = render_types.vertices_per_quad;
@@ -125,6 +126,14 @@ const Quad = struct {
     corners: [vertices_per_quad]Vertex,
     z: i32,
     seq: u32,
+    src: Rect = undefined,
+    dst: Rect = undefined,
+    tint: [3]f32 = .{ 1, 1, 1 },
+    alpha: f32 = 1,
+    flip_x: bool = false,
+    flip_y: bool = false,
+    origin: [2]f32 = .{ 0, 0 },
+    rotation: f32 = 0,
 };
 
 /// Consecutive quads that sample the same texture, drawn in one call. `first_vertex` and
@@ -306,6 +315,14 @@ pub const SpriteBatch = struct {
             .corners = cornersFor(&self.projection, texture_ref, src, dst, opts),
             .z = opts.z,
             .seq = self.sprite_count,
+            .src = src,
+            .dst = dst,
+            .tint = opts.tint,
+            .alpha = opts.alpha,
+            .flip_x = opts.flip_x,
+            .flip_y = opts.flip_y,
+            .origin = opts.origin,
+            .rotation = opts.rotation,
         };
         self.sprite_count += 1;
     }
@@ -441,6 +458,31 @@ pub fn upload(batch: *SpriteBatch, cmd: *backend.CommandBuffer) void {
 
 pub fn draw(batch: *SpriteBatch, pass: ?*backend.RenderPass) void {
     batch.draw(pass);
+}
+
+/// Draws the queued quads through SDL3's 2D renderer. This path intentionally uses the
+/// same CPU z-sort as the GPU path, so game code and UI drawing remain backend-independent.
+pub fn draw2d(batch: *SpriteBatch, dst_x: f32, dst_y: f32, scale_x: f32, scale_y: f32) void {
+    batch.prepare();
+    for (batch.quads[0..batch.sprite_count]) |quad| {
+        if (!quad.texture.isReady()) continue;
+        const sdl_texture = texture.sdl2dState(quad.texture) orelse continue;
+        platform.renderer2d.draw(
+            sdl_texture,
+            quad.src,
+            quad.dst,
+            dst_x,
+            dst_y,
+            scale_x,
+            scale_y,
+            quad.tint,
+            quad.alpha,
+            quad.flip_x,
+            quad.flip_y,
+            quad.origin,
+            quad.rotation,
+        );
+    }
 }
 
 /// The backend state of a batch. The cast reverses how `init` stored it.

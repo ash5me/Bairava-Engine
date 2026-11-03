@@ -19,6 +19,7 @@ pub const Allocators = engine.Allocators;
 pub const run = engine.run;
 pub const version = engine.version;
 pub const ScaleMode = engine.ScaleMode;
+pub const Renderer = engine.Renderer;
 pub const Effect = engine.Effect;
 pub const PostParams = engine.PostParams;
 pub const default_post_params = engine.default_post_params;

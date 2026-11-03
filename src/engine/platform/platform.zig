@@ -8,6 +8,7 @@ const sdl_audio = @import("sdl/audio.zig");
 const sdl_clock = @import("sdl/clock.zig");
 const sdl_files = @import("sdl/files.zig");
 const sdl_gpu = @import("sdl/gpu.zig");
+const sdl_renderer2d = @import("sdl/renderer2d.zig");
 const sdl_init = @import("sdl/init.zig");
 const sdl_input = @import("sdl/input.zig");
 const window_backend = @import("sdl/window.zig");
@@ -27,6 +28,7 @@ pub const PcmFormat = types.PcmFormat;
 pub const PcmBuffer = types.PcmBuffer;
 pub const OpenedAudio = types.OpenedAudio;
 pub const AudioError = types.AudioError;
+pub const Renderer2dTexture = opaque {};
 
 /// Starts the platform: the video subsystem, which the window and GPU need, and the audio subsystem.
 /// A video failure panics. An audio failure is logged, and the game runs silent. Call it once,
@@ -258,5 +260,55 @@ pub const gpu = struct {
 
     pub fn waitIdle(device: *Device) void {
         sdl_gpu.waitIdle(device);
+    }
+};
+
+/// SDL3's software/GPU accelerated 2D renderer backend.
+pub const renderer2d = struct {
+    pub const Renderer = sdl_renderer2d.Renderer;
+    pub const CreateError = sdl_renderer2d.CreateError;
+
+    pub fn create(win: *Window) CreateError!Renderer {
+        return sdl_renderer2d.Renderer.init(win);
+    }
+
+    pub fn activate(renderer: *Renderer) void {
+        sdl_renderer2d.activate(renderer);
+    }
+
+    pub fn deactivate() void {
+        sdl_renderer2d.deactivate();
+    }
+
+    pub fn createTexture(width: u32, height: u32, pixels: []const u8) ?*Renderer2dTexture {
+        return @ptrCast(@alignCast(sdl_renderer2d.createTexture(width, height, pixels)));
+    }
+
+    pub fn destroyTexture(texture: ?*Renderer2dTexture) void {
+        sdl_renderer2d.destroyTexture(if (texture) |value| @ptrCast(@alignCast(value)) else null);
+    }
+
+    pub fn draw(
+        texture: *Renderer2dTexture,
+        src: anytype,
+        dst: anytype,
+        presentation_x: f32,
+        presentation_y: f32,
+        scale_x: f32,
+        scale_y: f32,
+        tint: [3]f32,
+        alpha: f32,
+        flip_x: bool,
+        flip_y: bool,
+        origin: [2]f32,
+        rotation: f32,
+    ) void {
+        sdl_renderer2d.draw(
+            @ptrCast(@alignCast(texture)),
+            src.x, src.y, src.w, src.h,
+            dst.x, dst.y, dst.w, dst.h,
+            presentation_x, presentation_y, scale_x, scale_y,
+            tint, alpha, flip_x, flip_y, origin[0], origin[1], rotation,
+        );
     }
 };

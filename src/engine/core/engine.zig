@@ -14,6 +14,7 @@
 //! runs once per frame and gets `alpha` to blend between the last two updates.
 
 pub const Config = @import("application.zig").Config;
+pub const Renderer = @import("application.zig").Renderer;
 pub const Context = @import("context.zig").Context;
 pub const AssetError = @import("context.zig").AssetError;
 pub const Capabilities = @import("../capabilities.zig").Capabilities;

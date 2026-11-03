@@ -28,6 +28,7 @@ const validate = @import("../assets/validate.zig");
 const gate = @import("../diagnostics/gate.zig");
 const capability = @import("../capabilities.zig");
 const game_events = @import("game_events.zig");
+const application = @import("application.zig");
 const action = @import("../input/action.zig");
 const bindings = @import("../input/mapping.zig");
 const jobs = @import("../jobs/jobs.zig");
@@ -160,6 +161,9 @@ pub const Context = struct {
     running: bool = true,
     /// How the native view is fitted to the window. The game may change this at any time.
     scale_mode: ScaleMode = .fit,
+    /// The renderer implementation active for this frame. Hot-switching updates this field
+    /// and recreates presentation resources before the next frame is submitted.
+    renderer: application.Renderer = .sdl_gpu,
     /// The zoom the game is aiming for, where 1 is the normal view. The camera eases toward it each
     /// frame. Change it with `zoomBy` or `resetZoom`, which keep it within the bounds.
     zoom_target: f32 = 1.0,
@@ -203,6 +207,24 @@ pub const Context = struct {
         return view.windowToWorld(self.layout, self.camera, .{ .x = self.input.mouse_x, .y = self.input.mouse_y });
     }
 
+    /// Returns the active renderer implementation.
+    pub fn rendererBackend(self: *const Context) application.Renderer {
+        return self.renderer;
+    }
+
+    /// Selects an SDL renderer implementation for the next frame.
+    pub fn setRendererBackend(self: *Context, renderer: application.Renderer) void {
+        self.renderer = renderer;
+    }
+
+    /// Switches between SDL_GPU and SDL3's 2D renderer.
+    pub fn toggleRendererBackend(self: *Context) void {
+        self.renderer = switch (self.renderer) {
+            .sdl_gpu => .sdl2d,
+            .sdl2d => .sdl_gpu,
+        };
+    }
+
     /// Reports features available to this running game build on the active GPU and audio device.
     pub fn capabilities(self: *const Context) Capabilities {
         return capability.query(contextGpuDevice(self), self.audio.device != null, self.immediate_present_supported);
@@ -242,13 +264,10 @@ pub const Context = struct {
 
     /// The compressed formats the device can sample, which staging uses to choose a variant. Read on the calling
     /// thread, because it asks the device.
-    pub fn stageFormats(self: *const Context) staging.Supported {
-        const device = contextGpuDevice(self);
-        return .{
-            .astc_4x4 = texture_renderer.supportsCompression(device, .astc_4x4),
-            .bc3 = texture_renderer.supportsCompression(device, .bc3),
-            .bc1 = texture_renderer.supportsCompression(device, .bc1),
-        };
+    pub fn stageFormats(_: *const Context) staging.Supported {
+        // RGBA8 is dual-backed by both renderers. Keep compression disabled until the SDL2D
+        // path can decode/compress into an SDL texture, so hot-switching never loses pixels.
+        return .{ .astc_4x4 = false, .bc3 = false, .bc1 = false };
     }
 
     /// Uploads staged pixels to the GPU. It must run on the calling thread, since it talks to the device. The GPU copies

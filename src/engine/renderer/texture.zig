@@ -2,6 +2,7 @@ const std = @import("std");
 
 const backend = @import("backends/sdl_gpu/backend.zig");
 const image = @import("../assets/loaders/image.zig");
+const platform = @import("../platform/platform.zig");
 
 /// The backend state, hidden behind an opaque type so the public Texture names no backend type.
 const TextureHandle = opaque {};
@@ -9,6 +10,7 @@ const TextureHandle = opaque {};
 /// A 2D texture and its GPU state. Nearest filtering keeps pixel art sharp when it's scaled up.
 pub const Texture = struct {
     gpu_state: *TextureHandle,
+    sdl2d_state: ?*platform.Renderer2dTexture = null,
     width: u32,
     height: u32,
     has_upload_fence: bool,
@@ -16,6 +18,9 @@ pub const Texture = struct {
     /// Releases the GPU resources. The owning engine runtime must outlive the texture.
     pub fn deinit(self: *Texture) void {
         backend.texture.destroy(backendState(self));
+        if (self.sdl2d_state) |state| {
+            platform.renderer2d.destroyTexture(@ptrCast(state));
+        }
         self.* = undefined;
     }
 
@@ -29,12 +34,12 @@ pub const Texture = struct {
 
 /// Uploads tightly packed RGBA8 pixels (4 bytes per pixel, row 0 at the top).
 pub fn createRgba8(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, pixels: []const u8) Texture {
-    return wrap(backend.texture.uploadRgba8(allocator, device, width, height, pixels, false), width, height);
+    return wrapWithSdl(backend.texture.uploadRgba8(allocator, device, width, height, pixels, false), width, height, pixels);
 }
 
 /// Uploads RGBA8 pixels with linear filtering, used for signed-distance-field font atlases.
 pub fn createRgba8Linear(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, pixels: []const u8) Texture {
-    return wrap(backend.texture.uploadRgba8(allocator, device, width, height, pixels, true), width, height);
+    return wrapWithSdl(backend.texture.uploadRgba8(allocator, device, width, height, pixels, true), width, height, pixels);
 }
 
 pub fn supportsCompression(device: *backend.Device, compression: image.Compression) bool {
@@ -78,4 +83,15 @@ fn wrap(state: *backend.texture.State, width: u32, height: u32) Texture {
         .height = height,
         .has_upload_fence = backend.texture.hasUploadFence(state),
     };
+}
+
+fn wrapWithSdl(state: *backend.texture.State, width: u32, height: u32, pixels: []const u8) Texture {
+    var result = wrap(state, width, height);
+    result.sdl2d_state = if (platform.renderer2d.createTexture(width, height, pixels)) |sdl_texture|
+        @ptrCast(sdl_texture) else null;
+    return result;
+}
+
+pub fn sdl2dState(texture_ref: *const Texture) ?*platform.Renderer2dTexture {
+    return if (texture_ref.sdl2d_state) |state| @ptrCast(state) else null;
 }

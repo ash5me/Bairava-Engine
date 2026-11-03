@@ -21,6 +21,8 @@ pub const Result = struct {
     toggle_overlay: bool = false,
     /// F4 was pressed, so the debug geometry toggles.
     toggle_geometry: bool = false,
+    /// F10 was pressed, so the renderer backend toggles.
+    toggle_renderer: bool = false,
 };
 
 /// Handles every queued platform event. Keyboard and mouse state is updated as each event arrives.
@@ -63,6 +65,10 @@ pub fn pump(
                         },
                         .f4 => {
                             result.toggle_geometry = true;
+                        },
+                        .f10 => {
+                            result.toggle_renderer = true;
+                            consumed = true;
                         },
                         else => {},
                     }

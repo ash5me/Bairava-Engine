@@ -9,6 +9,10 @@ const view = @import("../renderer/view.zig");
 const render_types = @import("../renderer/render_types.zig");
 const ScaleMode = view.ScaleMode;
 
+/// Rendering implementation used by the engine. SDL_GPU is the feature-complete default;
+/// SDL2D can be selected at startup or switched at runtime with the configured hotkey.
+pub const Renderer = enum { sdl_gpu, sdl2d };
+
 /// Settings the game passes to `run`.
 pub const Config = struct {
     /// Parent allocator for all memory owned during this run. The runtime creates narrower
@@ -29,6 +33,9 @@ pub const Config = struct {
     update_hz: u32 = 60,
     /// Scale mode at startup. The game can change it later through `Context`.
     scale_mode: ScaleMode = .fit,
+    /// Active renderer at startup. The engine recreates presentation state when switching
+    /// between backends; game draw code remains backend-independent.
+    renderer: Renderer = .sdl_gpu,
     /// Smallest and largest zoom the game may ask for. 1 is the normal view, so the bounds must
     /// include it. Below 1 the view shows more of the world, and above 1 it shows less, larger.
     zoom_min: f32 = 0.5,

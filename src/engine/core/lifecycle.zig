@@ -47,6 +47,7 @@ pub const Session = struct {
     platform_started: bool = false,
     window_created: bool = false,
     gpu_created: bool = false,
+    renderer2d_created: bool = false,
     immediate_present_supported: bool = false,
     target_created: bool = false,
     world_batch_created: bool = false,
@@ -57,6 +58,7 @@ pub const Session = struct {
     stopped: bool = true,
     window: *platform.Window = undefined,
     gpu: platform.gpu.Gpu = undefined,
+    renderer2d: platform.renderer2d.Renderer = undefined,
     /// The swapchain format. Targets and pipelines use it so they can be drawn into the window.
     format: platform.gpu.TextureFormat = undefined,
     /// The world target, sized to the view. The runtime rebuilds it when the view changes.
@@ -130,6 +132,9 @@ pub const Session = struct {
         self.stage = .gpu;
         self.gpu = try platform.gpu.Gpu.init(self.window, build_options.gpu_debug);
         self.gpu_created = true;
+        self.renderer2d = try platform.renderer2d.create(self.window);
+        self.renderer2d_created = true;
+        platform.renderer2d.activate(&self.renderer2d);
         self.immediate_present_supported = self.gpu.supportsImmediatePresent();
         const gpu_capabilities = capability.queryGpu(self.gpu.device, self.immediate_present_supported);
         if (capability.missingRequiredGpuFeature(gpu_capabilities)) |missing| {
@@ -173,6 +178,7 @@ pub const Session = struct {
             .input = &self.input,
             .event_reader = self.game_events.reader(),
             .scale_mode = config.scale_mode,
+            .renderer = config.renderer,
             .zoom_min = config.zoom_min,
             .zoom_max = config.zoom_max,
             .layout = .{ .dst_w = native_wf, .dst_h = native_hf, .view_w = native_wf, .view_h = native_hf },
@@ -248,6 +254,13 @@ pub const Session = struct {
             });
             self.textures.deinit();
             self.textures_ready = false;
+        }
+        if (self.renderer2d_created) {
+            platform.renderer2d.deactivate();
+        }
+        if (self.renderer2d_created) {
+            self.renderer2d.deinit();
+            self.renderer2d_created = false;
         }
         if (self.gpu_created) {
             // The device must go before the window, because it is still claimed for that window.

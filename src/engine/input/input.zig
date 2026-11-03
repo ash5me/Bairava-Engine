@@ -118,6 +118,7 @@ pub fn keyFor(code: Scancode) ?Key {
         .f3 => null,
         .f4 => null,
         .f11 => null,
+        .f10 => null,
     };
 }
 

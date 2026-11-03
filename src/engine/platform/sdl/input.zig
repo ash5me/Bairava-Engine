@@ -50,6 +50,7 @@ fn sdlScancode(code: Scancode) c.SDL_Scancode {
         .f3 => c.SDL_SCANCODE_F3,
         .f11 => c.SDL_SCANCODE_F11,
         .f4 => c.SDL_SCANCODE_F4,
+        .f10 => c.SDL_SCANCODE_F10,
     };
 }
 

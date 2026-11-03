@@ -26,6 +26,9 @@ pub const update_hz: u32 = 60;
 /// Starting scale mode. Integer uses evenly sized native pixels and letterboxing; press I to switch to fit,
 /// where the native view stretches to fill the window and may introduce uneven pixel boundaries.
 pub const scale_mode: engine.ScaleMode = .integer;
+/// Renderer backend setting. SDL_GPU is the currently active presentation backend.
+/// `.sdl2d` is reserved until the complete 2D resource and sprite path is implemented.
+pub const renderer: engine.Renderer = .sdl_gpu;
 /// How fast the camera catches up with the player, as a rate per second. Higher is snappier. Zero
 /// turns smoothing off, so the camera snaps to the player.
 pub const camera_rate: f32 = 10.0;

@@ -203,6 +203,7 @@ pub fn run(comptime Game: type, config: Config) !void {
             if (pumped.quit) ctx.running = false;
             if (pumped.toggle_overlay) overlay.toggle();
             if (gate.enabled and pumped.toggle_geometry) collector.toggleGeometry();
+            if (pumped.toggle_renderer) ctx.toggleRendererBackend();
             session.input.sampleHeld(platform.events.isHeld);
         }
         if (gate.enabled) collector.stats.record(.events, secondsBetween(events_start, clockIf()));
@@ -415,6 +416,26 @@ pub fn run(comptime Game: type, config: Config) !void {
             const overlay_zone = profile.zoneNamed(@src(), "debug overlay");
             defer overlay_zone.End();
             overlay.draw(&session.world_batch, view_wf, view_hf, collector, &dev_console);
+        }
+        if (ctx.renderer == .sdl2d) {
+            session.renderer2d.clear(
+                @intFromFloat(black.r * 255),
+                @intFromFloat(black.g * 255),
+                @intFromFloat(black.b * 255),
+                255,
+            );
+            sprite.draw2d(
+                &session.world_batch,
+                ctx.layout.dst_x,
+                ctx.layout.dst_y,
+                ctx.layout.dst_w / ctx.layout.view_w,
+                ctx.layout.dst_h / ctx.layout.view_h,
+            );
+            session.renderer2d.present();
+            platform.gpu.Gpu.endFrame(frame);
+            last_draw_calls = session.world_batch.draw_calls;
+            total_frames += 1;
+            continue;
         }
         sprite.upload(&session.world_batch, frame.cmd);
         const world_pass = renderer.beginPass(frame.cmd, texture.backendTexture(&session.target), clear);

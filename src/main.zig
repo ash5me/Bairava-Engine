@@ -26,6 +26,7 @@ pub fn main() !void {
         .clear_rgb = config.clear_rgb,
         .update_hz = config.update_hz,
         .scale_mode = config.scale_mode,
+        .renderer = config.renderer,
         .zoom_min = config.zoom_min,
         .zoom_max = config.zoom_max,
         .zoom_rate = config.zoom_rate,
