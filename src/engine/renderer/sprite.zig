@@ -230,6 +230,21 @@ pub const SpriteBatch = struct {
         }
     }
 
+    /// Adds point-light components directly from live ECS rows. The row may use AoS or SoA storage
+    /// and must contain a field named `point_light`, or exactly one PointLightComponent field.
+    pub fn addPointLightWorld(self: *SpriteBatch, world: anytype) void {
+        var index: usize = 0;
+        while (index < world.count()) : (index += 1) {
+            const row = world.rows.get(index);
+            inline for (std.meta.fields(@TypeOf(row))) |field| {
+                if (field.type == PointLightComponent) {
+                    const component = @field(row, field.name);
+                    if (component.enabled) self.addLight(component.light());
+                }
+            }
+        }
+    }
+
     /// Adds a line segment that blocks point lights when the segment lies between the light and a
     /// lit fragment. Ambient light is not blocked. A frame holds `render_types.max_shadow_segments`
     /// segments; exceeding that limit panics.
@@ -252,6 +267,20 @@ pub const SpriteBatch = struct {
     pub fn addShadowSegmentComponents(self: *SpriteBatch, components: []const ShadowSegmentComponent) void {
         for (components) |component| {
             if (component.enabled) self.addShadowSegment(component.segment());
+        }
+    }
+
+    /// Adds shadow-segment components directly from live ECS rows. The row may use AoS or SoA.
+    pub fn addShadowSegmentWorld(self: *SpriteBatch, world: anytype) void {
+        var index: usize = 0;
+        while (index < world.count()) : (index += 1) {
+            const row = world.rows.get(index);
+            inline for (std.meta.fields(@TypeOf(row))) |field| {
+                if (field.type == ShadowSegmentComponent) {
+                    const component = @field(row, field.name);
+                    if (component.enabled) self.addShadowSegment(component.segment());
+                }
+            }
         }
     }
 

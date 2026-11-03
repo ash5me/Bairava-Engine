@@ -44,6 +44,29 @@ pub const Component = struct {
     }
 };
 
+/// Copies enabled collision components from an ECS world into a caller-owned collider slice.
+/// Rows may use AoS or SoA storage. The world is traversed by dense row index, so stale handles
+/// and row moves cannot expose removed components. The row must contain a field named `collision`
+/// whose type is Component, or exactly one field of type Component.
+pub fn collidersFromWorld(world: anytype, out: []Collider) usize {
+    var written: usize = 0;
+    var index: usize = 0;
+    while (index < world.count() and written < out.len) : (index += 1) {
+        const row = world.rows.get(index);
+        const Row = @TypeOf(row);
+        inline for (std.meta.fields(Row)) |field| {
+            if (written >= out.len) break;
+            if (field.type != Component and !std.mem.eql(u8, field.name, "collision")) continue;
+            if (field.type == Component) {
+                const component = @field(row, field.name);
+                if (component.enabled) out[written] = component.collider();
+                written += if (component.enabled) @as(usize, 1) else 0;
+            }
+        }
+    }
+    return written;
+}
+
 /// True when the box has no area, or one of its values is not finite.
 pub fn isEmptyBox(box: Box) bool {
     return !finite4(box.x, box.y, box.w, box.h) or box.w <= 0 or box.h <= 0;
@@ -103,7 +126,7 @@ pub fn orientedBoxesOverlap(a: OrientedBox, b: OrientedBox) bool {
 pub fn colliderOverlaps(a: Collider, b: Collider) bool {
     if (!a.enabled or !b.enabled) return false;
     const layers_match =
-        (a.layer & b.mask != 0) or (b.layer & a.mask != 0);
+        (a.layer & b.mask != 0) and (b.layer & a.mask != 0);
     if (!layers_match) return false;
     const a_box = OrientedBox{ .x = a.box.x, .y = a.box.y, .w = a.box.w, .h = a.box.h, .rotation = a.rotation };
     const b_box = OrientedBox{ .x = b.box.x, .y = b.box.y, .w = b.box.w, .h = b.box.h, .rotation = b.rotation };

@@ -96,6 +96,7 @@ pub const Variant = struct {
 pub const FrameEvent = struct {
     frame: u32,
     name: []const u8,
+    id: ?u32 = null,
 };
 
 pub const State = struct {
@@ -114,11 +115,13 @@ pub const Transition = struct {
     /// Seconds the old clip is crossfaded out over. Zero switches at once.
     blend: f32 = 0,
     event: ?[]const u8 = null,
+    event_id: ?u32 = null,
 };
 
 /// An event the machine emitted, read with `Machine.pollEvent`.
 pub const Event = struct {
     name: []const u8,
+    id: ?u32 = null,
 };
 
 /// The frames to draw this frame. While a blend runs, `previous` is drawn fully and then `frame` at `weight`.
@@ -253,7 +256,12 @@ pub const Definition = struct {
         const frame = std.fmt.parseInt(u32, words[2], 10) catch return error.BadEvent;
         const state = &self.states[index];
         if (state.event_count == max_frame_events) return error.TooMany;
-        state.events[state.event_count] = .{ .frame = frame, .name = words[3] };
+        const id = std.fmt.parseInt(u32, words[3], 10) catch null;
+        state.events[state.event_count] = .{
+            .frame = frame,
+            .name = if (id == null) words[3] else "",
+            .id = id,
+        };
         state.event_count += 1;
     }
 
@@ -278,8 +286,13 @@ pub const Definition = struct {
                 transition.blend = seconds;
                 i += 2;
             } else if (std.mem.eql(u8, words[i], "event")) {
-                if (i + 1 >= words.len or transition.event != null) return error.BadTransition;
-                transition.event = words[i + 1];
+                if (i + 1 >= words.len or transition.event != null or transition.event_id != null) return error.BadTransition;
+                const id = std.fmt.parseInt(u32, words[i + 1], 10) catch null;
+                if (id) |value| {
+                    transition.event_id = value;
+                } else {
+                    transition.event = words[i + 1];
+                }
                 i += 2;
             } else {
                 return error.BadTransition;
@@ -507,6 +520,7 @@ pub const Machine = struct {
                 self.blend_len = transition.blend;
             }
             if (transition.event) |name| self.push(name);
+            if (transition.event_id) |id| self.pushId(id);
         }
     }
 
@@ -541,7 +555,9 @@ pub const Machine = struct {
         for (state.events[0..state.event_count]) |event| {
             const frame: usize = event.frame;
             const passed = if (wrapped) (frame > before or frame <= after) else (frame > before and frame <= after);
-            if (passed) self.push(event.name);
+            if (passed) {
+                if (event.id) |id| self.pushId(id) else self.push(event.name);
+            }
         }
     }
 
@@ -551,6 +567,15 @@ pub const Machine = struct {
             return;
         }
         self.queue[self.queued] = .{ .name = name };
+        self.queued += 1;
+    }
+
+    fn pushId(self: *Machine, id: u32) void {
+        if (self.queued == event_queue_len) {
+            self.dropped += 1;
+            return;
+        }
+        self.queue[self.queued] = .{ .name = "", .id = id };
         self.queued += 1;
     }
 };
@@ -606,6 +631,33 @@ test "a transition fires when its condition holds, and blends out of the clip it
     // The blend lasts 0.2 seconds, so a further 0.2 seconds finishes it.
     machine.update(0.2, &library);
     try std.testing.expect(machine.pose().previous == null);
+}
+
+test "machine frame and transition events accept integer IDs" {
+    var library = try data.Library.parse(std.testing.allocator, test_clips, 4, 4);
+    defer library.deinit();
+    const definition =
+        \\machine 1
+        \\param moving
+        \\state idle
+        \\clip idle
+        \\event idle 1 101
+        \\state walk
+        \\clip walk
+        \\start idle
+        \\transition idle -> walk when moving == 1 event 202
+    ;
+    var machine = Machine.init(try Definition.parse(std.testing.allocator, definition, &library), &library);
+    defer machine.deinit();
+
+    machine.update(0.1, &library);
+    const frame_event = machine.pollEvent() orelse return error.TestExpectedEvent;
+    try std.testing.expectEqual(@as(?u32, 101), frame_event.id);
+
+    machine.set(machine.paramId("moving").?, 1);
+    machine.update(0, &library);
+    const transition_event = machine.pollEvent() orelse return error.TestExpectedEvent;
+    try std.testing.expectEqual(@as(?u32, 202), transition_event.id);
 }
 
 test "a state picks its clip variant from the parameters, and a switch restarts the clip" {

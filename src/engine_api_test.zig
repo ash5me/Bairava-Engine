@@ -36,6 +36,28 @@ test "the public engine version is the initial semantic API version" {
     try std.testing.expectEqual(@as(u16, 0), bairava.version.patch);
 }
 
+test "ECS collision components collect into collider slices under both layouts" {
+    const Row = struct { collision: bairava.physics.collision.Component };
+    inline for (.{bairava.entity.Layout.aos, bairava.entity.Layout.soa}) |layout| {
+        var world = bairava.entity.World(Row, layout).init(std.testing.allocator);
+        defer world.deinit();
+        _ = try world.spawn(.{ .collision = .{
+            .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+            .layer = 1,
+            .mask = 2,
+        } });
+        _ = try world.spawn(.{ .collision = .{
+            .box = .{ .x = 20, .y = 20, .w = 5, .h = 5 },
+            .layer = 2,
+            .enabled = false,
+        } });
+        var colliders: [4]bairava.physics.collision.Collider = undefined;
+        const count = bairava.physics.collision.collidersFromWorld(&world, &colliders);
+        try std.testing.expectEqual(@as(usize, 1), count);
+        try std.testing.expectEqual(@as(u32, 1), colliders[0].layer);
+    }
+}
+
 test "transforms compose through an entity hierarchy" {
     var hierarchy = bairava.transform.Hierarchy.init(std.testing.allocator);
     defer hierarchy.deinit();

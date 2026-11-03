@@ -97,11 +97,13 @@ pub const Animation = struct {
 pub const EventMarker = struct {
     time: f32,
     name: []const u8,
+    id: ?u32 = null,
 };
 
 /// An event emitted by `Player`, read with `pollEvent`.
 pub const Event = struct {
     name: []const u8,
+    id: ?u32 = null,
 };
 
 /// A point in a one-dimensional blend space. The animation is sampled at normalized clip time.
@@ -465,10 +467,16 @@ pub const Data = struct {
         if (fields.len != 3 or self.animation_count == 0) return error.BadEvent;
         const animation = &self.animation_storage[self.animation_count - 1];
         const time = try parseFinite(fields[1], error.BadEvent);
-        if (time < 0 or time > animation.length or !validName(fields[2])) return error.BadEvent;
+        if (time < 0 or time > animation.length) return error.BadEvent;
+        const id = std.fmt.parseInt(u32, fields[2], 10) catch null;
+        if (id == null and !validName(fields[2])) return error.BadEvent;
         if (self.event_count == self.event_storage.len) return error.BadEvent;
         if (animation.events.len > 0 and time < animation.events[animation.events.len - 1].time) return error.BadEvent;
-        self.event_storage[self.event_count] = .{ .time = time, .name = fields[2] };
+        self.event_storage[self.event_count] = .{
+            .time = time,
+            .name = if (id == null) fields[2] else "",
+            .id = id,
+        };
         self.event_count += 1;
         animation.events = self.event_storage[animation.event_start..self.event_count];
     }
@@ -582,6 +590,7 @@ pub const event_queue_len = 16;
 const EventOccurrence = struct {
     offset: f32,
     name: []const u8,
+    id: ?u32 = null,
 };
 
 /// Plays one animation of a skeleton. The player points into the data, so the data must outlive it.
@@ -670,6 +679,7 @@ pub const Player = struct {
                 insertOccurrence(&occurrences, &occurrence_count, .{
                     .offset = marker.time - previous_time,
                     .name = marker.name,
+                    .id = marker.id,
                 });
                 continue;
             }
@@ -691,6 +701,7 @@ pub const Player = struct {
                 insertOccurrence(&occurrences, &occurrence_count, .{
                     .offset = first + @as(f32, @floatFromInt(hit_index)) * length,
                     .name = marker.name,
+                    .id = marker.id,
                 });
             }
         }
@@ -698,7 +709,7 @@ pub const Player = struct {
         const available = event_queue_len - self.queued;
         const delivered = @min(occurrence_count, available);
         for (occurrences[0..delivered]) |occurrence| {
-            self.queue[self.queued] = .{ .name = occurrence.name };
+            self.queue[self.queued] = .{ .name = occurrence.name, .id = occurrence.id };
             self.queued += 1;
         }
         const dropped_now = total - delivered;
@@ -1024,6 +1035,17 @@ test "a skeletal player emits crossed events in order and extracts looping root 
     try std.testing.expectEqualStrings("right_foot", first.name);
     try std.testing.expectEqualStrings("left_foot", second.name);
     try std.testing.expect(player.pollEvent() == null);
+}
+
+test "skeletal animation markers accept integer event IDs" {
+    const source = "skeleton 1\nbone root - 0 0 0 1\nanim once once 1\nevent 0.25 42\n";
+    var data = try Data.parse(std.testing.allocator, source, 16, 16);
+    defer data.deinit();
+    var player = Player.init(&data, data.findAnimation("once").?);
+    player.update(0.5);
+    const event = player.pollEvent() orelse return error.TestExpectedEvent;
+    try std.testing.expectEqualStrings("", event.name);
+    try std.testing.expectEqual(@as(?u32, 42), event.id);
 }
 
 test "a skeletal player's bounded event queue counts every excess loop event" {
