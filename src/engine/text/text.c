@@ -58,16 +58,24 @@ static int utf8_next(const char *text, size_t len, size_t *pos) {
     return cp;
 }
 
-/* The codepoint drawn for `cp`: itself when it was baked, otherwise '?'. */
+/* The codepoint drawn for `cp`: itself when it was baked, otherwise the font's fallback, which is -1 when
+ * the font has none. */
 static int drawn_codepoint(const ui_font *font, int cp) {
-    return (cp >= font->first && cp < font->first + font->count) ? cp : '?';
+    if (cp >= font->first && cp < font->first + font->count) return cp;
+    return font->fallback;
 }
 
-/* The glyph for a codepoint that drawn_codepoint has resolved. NULL means even '?' was not baked, so
- * there is nothing to draw. */
+/* The glyph for a codepoint that drawn_codepoint has resolved. NULL means nothing is drawn: the font has no
+ * fallback, or the codepoint is not one it can draw. */
 static const ui_glyph *glyph_for(const ui_font *font, int drawn) {
-    int i = drawn - font->first;
+    int i;
+    if (drawn < 0) return NULL;
+    i = drawn - font->first;
     return (i >= 0 && i < font->count) ? &font->glyphs[i] : NULL;
+}
+
+int ui_font_default_fallback(int first, int count) {
+    return ('?' >= first && '?' < first + count) ? '?' : -1;
 }
 
 /* Kerning for a pair of drawn codepoints, from the baked table. Pairs not in the table have none. */
@@ -106,9 +114,9 @@ static float read_f32le(const unsigned char *p) {
 }
 
 int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_pixel_height, ui_font *font) {
-    int first, count, atlas_w, atlas_h, version, kerning_count = 0;
+    int first, count, atlas_w, atlas_h, version, fallback, kerning_count = 0;
     float pixel_height;
-    size_t pixels, glyph_offset, pixel_offset, expected_len;
+    size_t header_len, pixels, glyph_offset, pixel_offset, expected_len;
     unsigned char *rgba = NULL;
     ui_glyph *glyphs = NULL;
     ui_kerning *kernings = NULL;
@@ -117,11 +125,11 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
     if (data == NULL) return -1;
     if (len < 48 || memcmp(data, "BFNT", 4) != 0) return -1;
     /* Version 3 carried a signed-distance flag. Those atlases are not rasterized or sampled any more,
-     * so they are rejected, and the builder must bake a bitmap atlas instead. */
+     * so they are rejected, and the builder must bake a bitmap atlas instead. Version 4 adds the fallback
+     * codepoint to the header; v1 and v2 predate it and use the default. */
     version = read_u16le(data + 4);
-    if ((version < 1 || version > 2) ||
-        read_u16le(data + 6) != (version == 1 ? 48 : 52) ||
-        len < (version == 1 ? 48u : 52u)) return -1;
+    header_len = version == 1 ? 48u : version == 2 ? 52u : version == 4 ? 56u : 0u;
+    if (header_len == 0 || (size_t)read_u16le(data + 6) != header_len || len < header_len) return -1;
     pixel_height = read_f32le(data + 8);
     first = (int)(int32_t)read_u32le(data + 12);
     count = (int)(int32_t)read_u32le(data + 16);
@@ -132,7 +140,12 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
         atlas_w <= 0 || atlas_h <= 0 || atlas_w > ATLAS_MAX || atlas_h > ATLAS_MAX) return -1;
     pixels = (size_t)atlas_w * (size_t)atlas_h;
     if (read_u32le(data + 36) != pixels) return -1;
-    glyph_offset = version == 1 ? 48 : 52;
+    fallback = ui_font_default_fallback(first, count);
+    if (version == 4) {
+        fallback = (int)(int32_t)read_u32le(data + 52);
+        if (fallback != -1 && (fallback < first || fallback >= first + count)) return -1;
+    }
+    glyph_offset = header_len;
     if (version >= 2) {
         uint32_t raw_count = read_u32le(data + 48);
         if (raw_count > 1u << 20) return -1;
@@ -179,6 +192,7 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
     }
     font->first = first;
     font->count = count;
+    font->fallback = fallback;
     font->pixel_height = pixel_height;
     font->ascent = (int)(int32_t)read_u32le(data + 20);
     font->line_height = (int)(int32_t)read_u32le(data + 24);
@@ -207,6 +221,12 @@ void ui_font_destroy(ui_font *font) {
     free(font->glyphs);
     free(font->kernings);
     memset(font, 0, sizeof *font);
+}
+
+void ui_font_release_atlas(ui_font *font) {
+    if (font == NULL) return;
+    free(font->rgba);
+    font->rgba = NULL;
 }
 
 float ui_font_text_width(ui_font *font, const char *text, size_t len) {

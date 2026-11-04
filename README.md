@@ -135,7 +135,7 @@ Import names must be unique and use lowercase letters, digits, `_`, or `-`. The 
 
 For texture formats, the runtime prefers a format supported by the active GPU device. It falls back through ASTC, BC3, BC1, prebuilt RGBA8, or source-image decoding as capabilities allow. The asset build emits RGBA8 plus BC1/BC3 variants and ASTC variants when `astcenc` is available.
 
-Font rows bake a bitmap atlas offline into a `.bfnt` v2 file, with configurable codepoint ranges and kerning metadata. Each size is its own row and file, and the game loads a font only at the size it was baked at. Characters outside the baked range draw as `?`; nothing is rasterized at runtime. See [text and prebaked fonts](docs/text.md). Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
+Font rows bake a bitmap atlas offline into a `.bfnt` v4 file, with configurable codepoint ranges, kerning metadata, and a recorded fallback glyph. Each size is its own row and file, and the game loads a font only at the size it was baked at. Characters outside the baked range draw the font's fallback, normally `?`; nothing is rasterized at runtime. See [text and prebaked fonts](docs/text.md). Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
 
 ## Requirements status
 

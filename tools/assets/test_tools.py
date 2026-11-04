@@ -246,16 +246,17 @@ def test_builder(builder, work):
     assert struct.unpack_from("<I", ima, 16)[0] == 8
     assert len(ima) == 24 + 8
 
-    # Each font size is its own BFNT v2 file. The source TTF is read at build time and never copied.
+    # Each font size is its own BFNT v4 file. The source TTF is read at build time and never copied.
     for file_name, pixel_height in (("font_10px.bfnt", 10.0), ("font_8px.bfnt", 8.0)):
         font = (output / file_name).read_bytes()
         assert font[:4] == b"BFNT"
-        assert struct.unpack_from("<HH", font, 4) == (2, 52), f"{file_name} is not a BFNT v2 bitmap atlas"
+        assert struct.unpack_from("<HH", font, 4) == (4, 56), f"{file_name} is not a BFNT v4 bitmap atlas"
+        assert struct.unpack_from("<i", font, 52)[0] == ord("?"), f"{file_name} should fall back to '?'"
         assert struct.unpack_from("<f", font, 8)[0] == pixel_height
         assert struct.unpack_from("<II", font, 12) == (32, 224)
         atlas_width, atlas_height = struct.unpack_from("<II", font, 28)
         assert atlas_width > 0 and atlas_height > 0
-        assert len(font) > 52 + 224 * 20
+        assert len(font) > 56 + 224 * 20
     assert not (output / "font.ttf").exists(), "a font's source must not be copied into the runtime assets"
 
     assert "wind1 audio wind.wav" in index

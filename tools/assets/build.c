@@ -332,7 +332,7 @@ static int valid_kind(const entry *item) {
     return 1;
 }
 
-/* Bakes a font at its manifest size and writes the BFNT v2 file to `output_path`. That file is the
+/* Bakes a font at its manifest size and writes the BFNT v4 file to `output_path`. That file is the
  * runtime asset: the source TTF is read here and is not copied into the output directory. */
 static int build_prebaked_font(const entry *item, const char *output_path) {
     FILE *source = fopen(item->source, "rb");
@@ -359,11 +359,11 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     FILE *output = fopen(output_path, "wb");
     if (output == NULL) { ui_font_destroy(&font); return 0; }
 
-    /* A 52-byte BFNT v2 header, then the glyph table, the kerning pairs, and one alpha byte per atlas pixel. */
-    unsigned char header[52] = {0};
+    /* A 56-byte BFNT v4 header, then the glyph table, the kerning pairs, and one alpha byte per atlas pixel. */
+    unsigned char header[56] = {0};
     memcpy(header, "BFNT", 4);
-    write_u16le(header + 4, 2);
-    write_u16le(header + 6, 52);
+    write_u16le(header + 4, 4);
+    write_u16le(header + 6, 56);
     unsigned int pixel_height_bits = 0;
     memcpy(&pixel_height_bits, &font.pixel_height, sizeof pixel_height_bits);
     write_u32le(header + 8, pixel_height_bits);
@@ -379,6 +379,7 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     write_u16le(header + 44, (unsigned short)font.white.w);
     write_u16le(header + 46, (unsigned short)font.white.h);
     write_u32le(header + 48, (unsigned int)font.kerning_count);
+    write_u32le(header + 52, (unsigned int)font.fallback); /* -1 means none, stored as 0xFFFFFFFF */
 
     int ok = fwrite(header, 1, sizeof header, output) == sizeof header;
     for (int i = 0; ok && i < font.count; i++) {

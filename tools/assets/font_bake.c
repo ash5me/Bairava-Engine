@@ -288,8 +288,11 @@ int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int f
     memset(font, 0, sizeof *font);
     if (ttf == NULL) return -1;
     if (len < 12 || count <= 0 || pixel_height <= 0) return -1;
-    if ((len >= 4 && memcmp(ttf, "OTTO", 4) == 0) || !stbtt_InitFont(&info, ttf, 0))
-        return ui_font_bake_freetype(ttf, len, pixel_height, first, count, font);
+    if ((len >= 4 && memcmp(ttf, "OTTO", 4) == 0) || !stbtt_InitFont(&info, ttf, 0)) {
+        if (ui_font_bake_freetype(ttf, len, pixel_height, first, count, font) != 0) return -1;
+        font->fallback = ui_font_default_fallback(first, count);
+        return 0;
+    }
     stbtt_GetFontVMetrics(&info, &asc, &desc, &gap);
     scale = stbtt_ScaleForPixelHeight(&info, pixel_height);
     baked = malloc(sizeof *baked * (size_t)count);
@@ -349,6 +352,7 @@ int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int f
     font->white = (ui_rect){ 0, 0, WHITE_COLS, WHITE_ROWS };
     font->kernings = kernings;
     font->kerning_count = kerning_count;
+    font->fallback = ui_font_default_fallback(first, count);
     free(alpha);
     free(baked);
     return 0;

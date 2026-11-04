@@ -162,6 +162,7 @@ static void check_prebaked_roundtrip(void) {
         CHECK(loaded.pixel_height == font.pixel_height && loaded.line_height == font.line_height);
         CHECK(loaded.atlas_w == font.atlas_w && loaded.atlas_h == font.atlas_h);
         CHECK(memcmp(loaded.rgba, font.rgba, pixels * 4) == 0);
+        CHECK(loaded.fallback == '?'); /* v1 has no field, so the default applies */
         CHECK(near(loaded.glyphs['a' - loaded.first].xadvance, glyph('a')->xadvance));
         ui_font_destroy(&loaded);
     }
@@ -196,6 +197,138 @@ static void check_prebaked_roundtrip(void) {
     free(data);
 }
 
+/* Serializes `f` as a BFNT v4 file that records `fallback`. The caller frees the result. */
+static unsigned char *write_v4(const ui_font *f, int fallback, size_t *len_out) {
+    size_t pixels = (size_t)f->atlas_w * (size_t)f->atlas_h;
+    size_t len = 56 + (size_t)f->count * 20 + (size_t)f->kerning_count * 12 + pixels;
+    unsigned char *data = calloc(len, 1);
+    size_t pos = 56, p;
+    unsigned int bits;
+    int i;
+    if (data == NULL) return NULL;
+    memcpy(data, "BFNT", 4);
+    put_u16le(data + 4, 4);
+    put_u16le(data + 6, 56);
+    memcpy(&bits, &f->pixel_height, sizeof bits); put_u32le(data + 8, bits);
+    put_u32le(data + 12, (unsigned int)f->first);
+    put_u32le(data + 16, (unsigned int)f->count);
+    put_u32le(data + 20, (unsigned int)f->ascent);
+    put_u32le(data + 24, (unsigned int)f->line_height);
+    put_u32le(data + 28, (unsigned int)f->atlas_w);
+    put_u32le(data + 32, (unsigned int)f->atlas_h);
+    put_u32le(data + 36, (unsigned int)pixels);
+    put_u16le(data + 40, (unsigned short)f->white.x);
+    put_u16le(data + 42, (unsigned short)f->white.y);
+    put_u16le(data + 44, (unsigned short)f->white.w);
+    put_u16le(data + 46, (unsigned short)f->white.h);
+    put_u32le(data + 48, (unsigned int)f->kerning_count);
+    put_u32le(data + 52, (unsigned int)fallback);
+    for (i = 0; i < f->count; i++, pos += 20) {
+        const ui_glyph *g = &f->glyphs[i];
+        unsigned char *dst = data + pos;
+        put_u16le(dst, g->x0); put_u16le(dst + 2, g->y0);
+        put_u16le(dst + 4, g->x1); put_u16le(dst + 6, g->y1);
+        memcpy(&bits, &g->xoff, sizeof bits); put_u32le(dst + 8, bits);
+        memcpy(&bits, &g->yoff, sizeof bits); put_u32le(dst + 12, bits);
+        memcpy(&bits, &g->xadvance, sizeof bits); put_u32le(dst + 16, bits);
+    }
+    for (i = 0; i < f->kerning_count; i++, pos += 12) {
+        unsigned char *dst = data + pos;
+        put_u32le(dst, f->kernings[i].left);
+        put_u32le(dst + 4, f->kernings[i].right);
+        memcpy(&bits, &f->kernings[i].advance, sizeof bits); put_u32le(dst + 8, bits);
+    }
+    for (p = 0; p < pixels; p++) data[pos + p] = f->rgba[p * 4 + 3];
+    *len_out = len;
+    return data;
+}
+
+/* The fallback is part of the file. '?' is recorded for a font that has it, a font without '?' may record
+ * none, and a fallback outside the baked range is malformed. */
+static void check_fallback(const char *path) {
+    static ui_font letters; /* a font with no '?' in its range */
+    ui_color red = { 1, 0, 0, 1 };
+    unsigned char *data;
+    size_t len = 0;
+    ui_font loaded;
+
+    data = write_v4(&font, '?', &len);
+    CHECK(data != NULL);
+    if (data != NULL) {
+        CHECK(ui_font_load_prebaked(data, len, font.pixel_height, &loaded) == 0);
+        if (loaded.rgba != NULL) {
+            CHECK(loaded.fallback == '?');
+            ui_font_destroy(&loaded);
+        }
+        put_u32le(data + 52, 0); /* outside the baked range */
+        expect_prebaked_rejected(data, len, font.pixel_height);
+        put_u32le(data + 52, (unsigned int)-1); /* none is always allowed */
+        CHECK(ui_font_load_prebaked(data, len, font.pixel_height, &loaded) == 0);
+        if (loaded.rgba != NULL) {
+            CHECK(loaded.fallback == -1);
+            list.count = 0;
+            ui_font_draw_text(&loaded, &list, 0, 0, "\xE4\xB8\x80", 3, red); /* U+4E00, not baked */
+            CHECK(list.count == 0);
+            ui_font_destroy(&loaded);
+        }
+        free(data);
+    }
+
+    if (!ui_test_load_font(path, 16.0f, 'a', 26, &letters)) {
+        ui_test_failures++;
+        return;
+    }
+    CHECK(letters.fallback == -1);
+    CHECK(ui_font_text_width(&letters, "?", 1) == 0);
+    list.count = 0;
+    ui_font_draw_text(&letters, &list, 0, 0, "a?b", 3, red);
+    CHECK(list.count == 2); /* '?' draws nothing, but the pen still moves past it */
+
+    data = write_v4(&letters, '?', &len); /* '?' is not baked in this font, so it cannot be the fallback */
+    CHECK(data != NULL);
+    if (data != NULL) {
+        expect_prebaked_rejected(data, len, letters.pixel_height);
+        free(data);
+    }
+
+    data = write_v4(&letters, 'b', &len);
+    CHECK(data != NULL);
+    if (data != NULL) {
+        CHECK(ui_font_load_prebaked(data, len, letters.pixel_height, &loaded) == 0);
+        if (loaded.rgba != NULL) {
+            const ui_glyph *b = &letters.glyphs['b' - letters.first];
+            CHECK(loaded.fallback == 'b');
+            list.count = 0;
+            ui_font_draw_text(&loaded, &list, 0, 0, "?", 1, red);
+            CHECK(list.count == 1);
+            if (list.count == 1) CHECK(list.items[0].src.x == b->x0 && list.items[0].src.y == b->y0);
+            ui_font_destroy(&loaded);
+        }
+        free(data);
+    }
+    ui_font_destroy(&letters);
+}
+
+/* After the atlas is uploaded its CPU copy is released. Measuring and drawing must still work, and
+ * releasing again is harmless. This runs last, because the atlas is gone afterward. */
+static void check_release(void) {
+    float width = ui_font_text_width(&font, "ab", 2);
+    ui_color red = { 1, 0, 0, 1 };
+
+    ui_font_release_atlas(&font);
+    CHECK(font.rgba == NULL);
+    CHECK(font.glyphs != NULL && font.count > 0);
+    CHECK(near(ui_font_text_width(&font, "ab", 2), width));
+
+    list.count = 0;
+    ui_font_draw_text(&font, &list, 0, 0, "ab", 2, red);
+    CHECK(list.count == 2);
+
+    ui_font_release_atlas(&font);
+    ui_font_release_atlas(NULL);
+    CHECK(font.rgba == NULL);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "usage: %s font.ttf\n", argv[0]);
@@ -210,6 +343,8 @@ int main(int argc, char **argv) {
     check_width();
     check_draw();
     check_prebaked_roundtrip();
+    check_fallback(argv[1]);
+    check_release();
 
     ui_font_destroy(&font);
     if (ui_test_failures) {
