@@ -5,9 +5,13 @@
  * quad's color, so a quad's tint sets the text color. The top two rows hold a solid white block for filled
  * rectangles (coverage 255), and glyph pixels are written below it.
  *
- * TrueType outlines are rasterized by stb_truetype. OpenType CFF outlines, which stb_truetype does not
- * read, are rasterized by FreeType at FONT_OVERSAMPLE times the size and box-filtered down, so they
- * come out with the same weight and placement as the TrueType path.
+ * There are two rasterization modes (see font_bake.h):
+ *   GRAY  anti-aliased coverage. TrueType outlines are rasterized by stb_truetype, which does no hinting.
+ *         OpenType CFF outlines, which stb_truetype does not read, are rasterized by FreeType at
+ *         FONT_OVERSAMPLE times the size and box-filtered down, so both paths come out with the same weight.
+ *   MONO  FreeType's 1-bit rasterizer at the real size, with hinting. Every texel is 0 or 255, and the stems
+ *         and heights land on whole pixels. Small UI sizes use it, because a gray stem narrower than a pixel
+ *         cannot reach full strength and smears across two columns.
  */
 #include "font_bake.h"
 
@@ -36,14 +40,25 @@ typedef struct ft_bitmap_copy {
     float advance;
 } ft_bitmap_copy;
 
-static int ft_open_face(const unsigned char *data, size_t len, float pixel_height, FT_Library *library, FT_Face *face) {
+/* How FreeType rasterizes a glyph in one mode: the size multiplier it renders at, the load flags, and the render
+ * mode. An oversample above 1 renders at that multiple and box-filters down; 1 renders at the real size. */
+typedef struct ft_raster {
+    int oversample;
+    FT_Int32 load;
+    FT_Render_Mode mode;
+} ft_raster;
+
+static const ft_raster ft_gray = { FONT_OVERSAMPLE, FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP, FT_RENDER_MODE_NORMAL };
+static const ft_raster ft_mono = { 1, FT_LOAD_TARGET_MONO | FT_LOAD_NO_BITMAP, FT_RENDER_MODE_MONO };
+
+static int ft_open_face(const unsigned char *data, size_t len, float pixel_height, int oversample, FT_Library *library, FT_Face *face) {
     if (!data || len == 0 || len > (size_t)LONG_MAX || FT_Init_FreeType(library) != 0) return 0;
     if (FT_New_Memory_Face(*library, data, (FT_Long)len, 0, face) != 0) {
         FT_Done_FreeType(*library);
         *library = NULL;
         return 0;
     }
-    if (FT_Set_Char_Size(*face, 0, (FT_F26Dot6)(pixel_height * (float)FONT_OVERSAMPLE * 64.0f + 0.5f), 72, 72) != 0) {
+    if (FT_Set_Char_Size(*face, 0, (FT_F26Dot6)(pixel_height * (float)oversample * 64.0f + 0.5f), 72, 72) != 0) {
         FT_Done_Face(*face);
         FT_Done_FreeType(*library);
         *face = NULL;
@@ -77,18 +92,18 @@ static int ft_copy_bitmap(const FT_Bitmap *bitmap, unsigned char **pixels) {
     return 1;
 }
 
-/* Renders one codepoint at FONT_OVERSAMPLE times the size and box-filters it to the final size. */
-static int ft_render_codepoint(FT_Face face, int cp, ft_bitmap_copy *out) {
-    FT_Int32 flags = FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP;
+/* Renders one codepoint with `raster`. An oversample above 1 is box-filtered down to the final size. */
+static int ft_render_codepoint(FT_Face face, int cp, const ft_raster *raster, ft_bitmap_copy *out) {
+    const int oversample = raster->oversample;
     unsigned char *raw;
     memset(out, 0, sizeof *out);
-    if (FT_Load_Char(face, (FT_ULong)cp, flags) != 0) return 0;
-    if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) return 0;
-    out->width = ((int)face->glyph->bitmap.width + FONT_OVERSAMPLE - 1) / FONT_OVERSAMPLE;
-    out->height = ((int)face->glyph->bitmap.rows + FONT_OVERSAMPLE - 1) / FONT_OVERSAMPLE;
-    out->left = (face->glyph->bitmap_left + FONT_OVERSAMPLE / 2) / FONT_OVERSAMPLE;
-    out->top = (face->glyph->bitmap_top + FONT_OVERSAMPLE / 2) / FONT_OVERSAMPLE;
-    out->advance = (float)face->glyph->advance.x / 64.0f / (float)FONT_OVERSAMPLE;
+    if (FT_Load_Char(face, (FT_ULong)cp, raster->load) != 0) return 0;
+    if (FT_Render_Glyph(face->glyph, raster->mode) != 0) return 0;
+    out->width = ((int)face->glyph->bitmap.width + oversample - 1) / oversample;
+    out->height = ((int)face->glyph->bitmap.rows + oversample - 1) / oversample;
+    out->left = (face->glyph->bitmap_left + oversample / 2) / oversample;
+    out->top = (face->glyph->bitmap_top + oversample / 2) / oversample;
+    out->advance = (float)face->glyph->advance.x / 64.0f / (float)oversample;
     if (!ft_copy_bitmap(&face->glyph->bitmap, &raw)) return 0;
     if (out->width <= 0 || out->height <= 0 || !raw) { free(raw); return 1; }
     out->pixels = malloc((size_t)out->width * (size_t)out->height);
@@ -97,11 +112,11 @@ static int ft_render_codepoint(FT_Face face, int cp, ft_bitmap_copy *out) {
         for (int x = 0; x < out->width; x++) {
             unsigned sum = 0;
             unsigned samples = 0;
-            for (int oy = 0; oy < FONT_OVERSAMPLE; oy++) {
-                int sy = y * FONT_OVERSAMPLE + oy;
+            for (int oy = 0; oy < oversample; oy++) {
+                int sy = y * oversample + oy;
                 if (sy >= (int)face->glyph->bitmap.rows) continue;
-                for (int ox = 0; ox < FONT_OVERSAMPLE; ox++) {
-                    int sx = x * FONT_OVERSAMPLE + ox;
+                for (int ox = 0; ox < oversample; ox++) {
+                    int sx = x * oversample + ox;
                     if (sx >= (int)face->glyph->bitmap.width) continue;
                     sum += raw[(size_t)sy * face->glyph->bitmap.width + sx];
                     samples++;
@@ -114,7 +129,9 @@ static int ft_render_codepoint(FT_Face face, int cp, ft_bitmap_copy *out) {
     return 1;
 }
 
-static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pixel_height, int first, int count, ui_font *font) {
+static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pixel_height, int first, int count,
+                                 const ft_raster *raster, ui_font *font) {
+    const int oversample = raster->oversample;
     FT_Library library = NULL;
     FT_Face face = NULL;
     ft_bitmap_copy *bitmaps = NULL;
@@ -125,14 +142,14 @@ static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pi
     if (!font) return -1;
     memset(font, 0, sizeof *font);
     if (!data || len == 0 || count <= 0 || first < 0 || first + (int64_t)count > 0x110000 || !(pixel_height > 0) ||
-        !ft_open_face(data, len, pixel_height, &library, &face)) return -1;
-    asc = round_px((float)face->size->metrics.ascender / 64.0f / (float)FONT_OVERSAMPLE);
-    line_height = round_px((float)face->size->metrics.height / 64.0f / (float)FONT_OVERSAMPLE);
+        !ft_open_face(data, len, pixel_height, oversample, &library, &face)) return -1;
+    asc = round_px((float)face->size->metrics.ascender / 64.0f / (float)oversample);
+    line_height = round_px((float)face->size->metrics.height / 64.0f / (float)oversample);
     bitmaps = (ft_bitmap_copy *)calloc((size_t)count, sizeof *bitmaps);
     font->glyphs = (ui_glyph *)calloc((size_t)count, sizeof *font->glyphs);
     if (!bitmaps || !font->glyphs) goto done;
     for (int i = 0; i < count; i++) {
-        if (!ft_render_codepoint(face, first + i, &bitmaps[i])) goto done;
+        if (!ft_render_codepoint(face, first + i, raster, &bitmaps[i])) goto done;
         font->glyphs[i].xoff = (float)bitmaps[i].left;
         font->glyphs[i].yoff = (float)-bitmaps[i].top;
         font->glyphs[i].xadvance = bitmaps[i].advance;
@@ -175,7 +192,7 @@ static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pi
                 FT_Vector delta;
                 if (!right || FT_Get_Kerning(face, left, right, FT_KERNING_DEFAULT, &delta) != 0 || delta.x == 0) continue;
                 kernings[kerning_count++] = (ui_kerning){ (unsigned int)(first + i), (unsigned int)(first + j),
-                    (float)delta.x / 64.0f / (float)FONT_OVERSAMPLE };
+                    (float)delta.x / 64.0f / (float)oversample };
             }
         }
         if (kerning_count) qsort(kernings, (size_t)kerning_count, sizeof *kernings, compare_kerning);
@@ -272,7 +289,8 @@ static int build_kerning(const stbtt_fontinfo *info, float scale, int first, int
     return 1;
 }
 
-int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int first, int count, ui_font *font) {
+/* The gray path: stb_truetype for TrueType outlines, and FreeType's gray path for OpenType CFF. */
+static int ui_font_bake_gray(const unsigned char *ttf, size_t len, float pixel_height, int first, int count, ui_font *font) {
     stbtt_fontinfo info;
     stbtt_bakedchar *baked = NULL;
     unsigned char *alpha = NULL;
@@ -285,7 +303,7 @@ int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int f
     if (ttf == NULL) return -1;
     if (len < 12 || count <= 0 || pixel_height <= 0) return -1;
     if ((len >= 4 && memcmp(ttf, "OTTO", 4) == 0) || !stbtt_InitFont(&info, ttf, 0)) {
-        if (ui_font_bake_freetype(ttf, len, pixel_height, first, count, font) != 0) return -1;
+        if (ui_font_bake_freetype(ttf, len, pixel_height, first, count, &ft_gray, font) != 0) return -1;
         font->fallback = ui_font_default_fallback(first, count);
         return 0;
     }
@@ -353,4 +371,24 @@ fail:
     free(kernings);
     memset(font, 0, sizeof *font);
     return -1;
+}
+
+int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int first, int count, ui_font *font) {
+    return ui_font_bake_mode(ttf, len, pixel_height, first, count, UI_FONT_RASTER_GRAY, font);
+}
+
+int ui_font_bake_mode(const unsigned char *ttf, size_t len, float pixel_height, int first, int count,
+                      ui_font_raster raster, ui_font *font) {
+    if (font == NULL) return -1;
+    if (raster == UI_FONT_RASTER_MONO) {
+        /* FreeType at the real size with hinting. Every texel is 0 or 255, so there is no gray to smear. */
+        if (ui_font_bake_freetype(ttf, len, pixel_height, first, count, &ft_mono, font) != 0) return -1;
+        font->fallback = ui_font_default_fallback(first, count);
+        return 0;
+    }
+    if (raster != UI_FONT_RASTER_GRAY) {
+        memset(font, 0, sizeof *font);
+        return -1;
+    }
+    return ui_font_bake_gray(ttf, len, pixel_height, first, count, font);
 }

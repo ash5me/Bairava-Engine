@@ -140,6 +140,8 @@ fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, wi
         .target = b.graph.host,
         .optimize = .Debug,
         .link_libc = true,
+        // Same FreeType build as the asset builder; see the note there.
+        .sanitize_c = .off,
     });
     module.addIncludePath(b.path("vendor"));
     module.addIncludePath(b.path("src/engine/text"));
@@ -427,6 +429,10 @@ pub fn build(b: *std.Build) void {
             .target = b.graph.host,
             .optimize = .ReleaseSafe,
             .link_libc = true,
+            // FreeType's module tables call functions through pointers of their own typedefs. Clang's
+            // `function` undefined-behavior check traps on that, and the trap is silent. The asset builder
+            // is host tooling, and its own C code is checked separately.
+            .sanitize_c = .off,
         }),
     });
     asset_builder.root_module.addIncludePath(b.path("vendor"));
@@ -458,8 +464,13 @@ pub fn build(b: *std.Build) void {
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs pixel height");
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs first codepoint");
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs glyph count");
+            // An optional ninth field names the rasterization: gray (the default) or mono.
+            if (fields.peek()) |raster| {
+                if (!std.mem.eql(u8, raster, "gray") and !std.mem.eql(u8, raster, "mono")) @panic("assets/asset_manifest.txt: font rasterization must be gray or mono");
+                _ = fields.next();
+            }
         }
-        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or eight for a font: pixel height, first codepoint, glyph count");
+        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or eight or nine for a font: pixel height, first codepoint, glyph count, optional gray or mono");
         run_asset_builder.addFileInput(b.path(source));
     }
     const install_runtime_assets = b.addInstallDirectory(.{

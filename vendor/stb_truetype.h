@@ -3196,7 +3196,9 @@ static void stbtt__fill_active_edges_new(float *scanline, float *scanline_fill, 
                // check if final y_crossing is blown up; no test case for this
                if (y_final > y_bottom) {
                   y_final = y_bottom;
-                  dy = (y_final - y_crossing ) / (x2 - (x1+1)); // if denom=0, y_final = y_crossing, so y_final <= y_bottom
+                  // Bairava: a zero denominator means the segment stays in one pixel column, so it has no height
+                  // change per column. Dividing by zero here is undefined behavior, which the Zig build traps on.
+                  dy = (x2 - (x1+1)) != 0 ? (y_final - y_crossing ) / (x2 - (x1+1)) : 0.0f;
                }
 
                // in second pixel, area covered by line segment found in first pixel

@@ -6,8 +6,9 @@
  * Dependencies are comma-separated asset names, or '-'. Paths are project-relative and
  * outputs are relative to the generated asset directory.
  *
- * A font row adds pixel height, first codepoint, and glyph count. Its output is the prebaked
- * atlas, a .bfnt file, so each size the game uses is its own row and file.
+ * A font row adds pixel height, first codepoint, and glyph count, then an optional rasterization: `gray`
+ * (the default) or `mono`. Its output is the prebaked atlas, a .bfnt file, so each size the game uses is its
+ * own row and file.
  */
 
 #include "../../vendor/stb_image.h"
@@ -44,6 +45,7 @@ typedef struct {
     float font_pixel_height;
     int font_first;
     int font_count;
+    int font_mono; /* 1 when the font row names `mono`, 0 for `gray` or no mode */
 } entry;
 
 enum { TEX_RGBA8 = 0, TEX_BC1 = 1, TEX_BC3 = 2, TEX_ASTC_4X4 = 3 };
@@ -349,7 +351,8 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     if (!read_ok) { free(ttf); return 0; }
 
     ui_font font;
-    if (ui_font_bake(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, &font) != 0) {
+    const ui_font_raster raster = item->font_mono ? UI_FONT_RASTER_MONO : UI_FONT_RASTER_GRAY;
+    if (ui_font_bake_mode(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, raster, &font) != 0) {
         fprintf(stderr, "asset_build: could not bake font '%s' at %.2f px\n", item->name, item->font_pixel_height);
         free(ttf);
         return 0;
@@ -591,15 +594,17 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         line_number++;
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
         entry item = {0};
-        char font_height_text[32] = {0}, font_first_text[32] = {0}, font_count_text[32] = {0}, extra[2];
-        /* One field past a font's eight is read, so a leftover mode such as `sdf` is reported, not ignored. */
-        int fields = sscanf(line, "%1023s %31s %1023s %1023s %1023s %31s %31s %31s %1s",
+        char font_height_text[32] = {0}, font_first_text[32] = {0}, font_count_text[32] = {0}, font_raster_text[16] = {0}, extra[2];
+        /* A font has eight fields, or nine when the ninth names its rasterization. A tenth field is read, so it is
+         * reported rather than ignored. */
+        int fields = sscanf(line, "%1023s %31s %1023s %1023s %1023s %31s %31s %31s %15s %1s",
                             item.name, item.type, item.source, item.output, item.dependencies,
-                            font_height_text, font_first_text, font_count_text, extra);
-        if (fields < 5 || (strcmp(item.type, "font") == 0 ? fields != 8 : fields != 5)) {
-            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight for fonts (pixel height, first codepoint, glyph count)\n", manifest_path, line_number); failed = 1; break;
+                            font_height_text, font_first_text, font_count_text, font_raster_text, extra);
+        const int is_font = strcmp(item.type, "font") == 0;
+        if (fields < 5 || (is_font ? (fields != 8 && fields != 9) : fields != 5)) {
+            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight or nine for fonts (pixel height, first codepoint, glyph count, optional gray or mono)\n", manifest_path, line_number); failed = 1; break;
         }
-        if (strcmp(item.type, "font") == 0) {
+        if (is_font) {
             char *end = NULL;
             item.font_pixel_height = strtof(font_height_text, &end);
             if (end == font_height_text || *end != '\0' || !(item.font_pixel_height > 0.0f && item.font_pixel_height <= 4096.0f)) {
@@ -615,6 +620,13 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
                 fprintf(stderr, "asset_build: %s:%zu: invalid font glyph count\n", manifest_path, line_number); failed = 1; break;
             }
             item.font_count = (int)glyph_count;
+            if (fields == 9) {
+                if (strcmp(font_raster_text, "mono") == 0) item.font_mono = 1;
+                else if (strcmp(font_raster_text, "gray") == 0) item.font_mono = 0;
+                else {
+                    fprintf(stderr, "asset_build: %s:%zu: font rasterization must be gray or mono\n", manifest_path, line_number); failed = 1; break;
+                }
+            }
         }
         if (!safe_name(item.name) || !safe_relative_path(item.source) || !safe_relative_path(item.output) ||
             count == MAX_ENTRIES || !file_exists(item.source) || !valid_kind(&item)) {

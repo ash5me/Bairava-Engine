@@ -279,7 +279,7 @@ def test_rejects_mode_fields(builder, work):
         check=False,
     )
     assert result.returncode != 0, "builder accepted a font row with a leftover SDF mode field"
-    assert "eight for fonts" in result.stderr, result.stderr
+    assert "font rasterization must be gray or mono" in result.stderr, result.stderr
     assert not (output / "font_sdf.bfnt").exists()
 
 

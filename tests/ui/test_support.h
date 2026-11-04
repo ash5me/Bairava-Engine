@@ -2,6 +2,7 @@
 #define BAIRAVA_UI_TEST_SUPPORT_H
 
 #include "text.h"
+#include "font_bake.h"
 #include <stdio.h>
 
 extern int ui_test_failures;
@@ -15,5 +16,6 @@ extern int ui_test_failures;
     } while (0)
 
 int ui_test_load_font(const char *path, float pixel_height, int first, int count, ui_font *font);
+int ui_test_load_font_raster(const char *path, float pixel_height, int first, int count, ui_font_raster raster, ui_font *font);
 
 #endif

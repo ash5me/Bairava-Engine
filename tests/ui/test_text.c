@@ -4,6 +4,7 @@
  * Run from the project root with `zig build test-ui`.
  */
 #include "text.h"
+#include "font_bake.h"
 #include "test_support.h"
 
 #include <stdio.h>
@@ -97,6 +98,73 @@ static void check_draw(void) {
     list.count = 0;
     ui_font_draw_text(&font, &list, 0, 0, "", 0, red);
     CHECK(list.count == 0);
+}
+
+/* The mono bake at 7 px, the size the debug overlay uses. Hinting at the real size makes every texel 0 or 255,
+ * puts each stem on one whole column, puts the x-height on a whole row, and gives whole-pixel advances. */
+static ui_font mono;
+
+static void check_mono(const char *path) {
+    int w, h, i, bad_texels = 0, bad_advances = 0, l_index, z_index, x;
+    const ui_glyph *l, *z;
+    if (!ui_test_load_font_raster(path, 7.0f, 32, 224, UI_FONT_RASTER_MONO, &mono)) {
+        CHECK(0);
+        return;
+    }
+    w = mono.atlas_w;
+    h = mono.atlas_h;
+
+    /* Every texel is either empty or full: there is no gray. */
+    for (i = 0; i < w * h; i++) {
+        if (mono.alpha[i] != 0 && mono.alpha[i] != 255) bad_texels++;
+    }
+    CHECK(bad_texels == 0);
+    CHECK(mono.alpha[0] == 255 && mono.alpha[1] == 255); /* the white block survives */
+
+    /* Hinted advances are whole pixels, so letter spacing is even. */
+    for (i = 0; i < mono.count; i++) {
+        if (mono.glyphs[i].xadvance != (float)(int)mono.glyphs[i].xadvance) bad_advances++;
+    }
+    CHECK(bad_advances == 0);
+
+    /* The stem of 'l' fills exactly one column of its middle row, at full strength. */
+    l_index = 'l' - mono.first;
+    l = &mono.glyphs[l_index];
+    CHECK(l->x1 > l->x0 && l->y1 > l->y0);
+    if (l->x1 > l->x0 && l->y1 > l->y0) {
+        int row = l->y0 + (l->y1 - l->y0) / 2, peak = 0, columns = 0;
+        for (x = l->x0; x < l->x1; x++) {
+            int v = mono.alpha[row * w + x];
+            if (v > peak) peak = v;
+            if (v != 0) columns++;
+        }
+        CHECK(peak == 255);
+        CHECK(columns == 1);
+    }
+
+    /* The top row of 'z' is full, so the x-height falls on a pixel edge rather than splitting a row. */
+    z_index = 'z' - mono.first;
+    z = &mono.glyphs[z_index];
+    CHECK(z->x1 > z->x0 && z->y1 > z->y0);
+    if (z->x1 > z->x0 && z->y1 > z->y0) {
+        int peak = 0;
+        for (x = z->x0; x < z->x1; x++) {
+            int v = mono.alpha[z->y0 * w + x];
+            if (v > peak) peak = v;
+        }
+        CHECK(peak == 255);
+    }
+
+    /* An invalid raster or size is rejected, and leaves the font empty. */
+    {
+        ui_font rejected;
+        memset(&rejected, 0xA5, sizeof rejected);
+        CHECK(ui_font_bake_mode(NULL, 0, 7.0f, 32, 224, UI_FONT_RASTER_MONO, &rejected) != 0);
+        CHECK(rejected.alpha == NULL && rejected.glyphs == NULL);
+        CHECK(ui_font_bake_mode(NULL, 0, 7.0f, 32, 224, (ui_font_raster)99, &rejected) != 0);
+        CHECK(rejected.alpha == NULL && rejected.glyphs == NULL);
+    }
+    ui_font_destroy(&mono);
 }
 
 static void put_u16le(unsigned char *p, unsigned short value) {
@@ -344,6 +412,7 @@ int main(int argc, char **argv) {
     check_prebaked_roundtrip();
     check_fallback(argv[1]);
     check_release();
+    check_mono(argv[1]);
 
     ui_font_destroy(&font);
     if (ui_test_failures) {

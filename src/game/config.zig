@@ -101,9 +101,10 @@ comptime {
 /// 320x180 view. The file must have been baked at exactly this size.
 pub const ui_font_path = "assets/ui_font_8px.bfnt";
 pub const ui_font_px: f32 = 8;
-/// The font for the debug overlay, and its height. It is baked from the same TTF, at its own size.
-pub const debug_font_path = "assets/debug_font_7px.bfnt";
-pub const debug_font_px: f32 = 7;
+/// The font for the debug overlay, and its height. It is a 9 px mono atlas of its own: at 7 px mono hinting drops
+/// strokes, and at 8 px parentheses and some letters still blur together. The file must be baked at 9.
+pub const debug_font_path = "assets/debug_font_9px.bfnt";
+pub const debug_font_px: f32 = 9;
 
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.
 pub const log_file_name: ?[:0]const u8 = "Semkootru.log";

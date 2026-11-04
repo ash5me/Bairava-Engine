@@ -165,7 +165,8 @@ fn formatAccepted(kind: []const u8, source: []const u8) bool {
 }
 
 /// Checks the asset manifest: `name type source output dependencies`, one asset per line. A font line
-/// adds `pixel_height first_codepoint glyph_count` after the dependencies. Names must be
+/// adds `pixel_height first_codepoint glyph_count` after the dependencies, then an optional `gray` or `mono`
+/// rasterization. Names must be
 /// valid and unique. Types must be known. A source must exist, be inside the project, and have a format
 /// its type accepts. Each dependency must name an asset declared in the same manifest.
 pub fn checkManifest(path: []const u8, text: []const u8, files: Files, report: *Report) void {
@@ -251,10 +252,12 @@ fn checkManifestLine(path: []const u8, number: u32, line: []const u8, declared: 
 }
 
 fn checkFontFields(path: []const u8, number: u32, fields: Fields, report: *Report) void {
-    // Fonts are baked as bitmaps, one file per size, so a font line has exactly eight fields. A ninth
-    // field (such as an old `sdf` mode) is reported rather than ignored.
-    if (fields.len != 8) {
-        report.add(path, number, "a font line is: name font source output deps pixel_height first_codepoint glyph_count");
+    // Fonts are baked as bitmaps, one file per size. A font line has eight fields, or nine when the ninth names
+    // its rasterization: `gray` (the default) or `mono`. Any other ninth field, such as an old `sdf` mode, is
+    // reported rather than ignored.
+    const mode_ok = fields.len == 9 and (std.mem.eql(u8, fields.items[8], "gray") or std.mem.eql(u8, fields.items[8], "mono"));
+    if (fields.len != 8 and !mode_ok) {
+        report.add(path, number, "a font line is: name font source output deps pixel_height first_codepoint glyph_count [gray or mono]");
         return;
     }
     const px = std.fmt.parseFloat(f32, fields.items[5]) catch -1.0;
@@ -502,11 +505,27 @@ test "a dependency may name an asset declared on a later line" {
     try std.testing.expect(report.ok());
 }
 
-test "a font line with a ninth field is reported, since fonts are baked as bitmaps" {
+test "a font line with a ninth field that is not gray or mono is reported, since the old sdf mode is gone" {
     const text = "font font assets/font.ttf font.bfnt - 10 32 224 sdf\n";
     var report = Report{};
     checkManifest("assets/asset_manifest.txt", text, FakeFiles.files(), &report);
-    try std.testing.expectEqualStrings("a font line is: name font source output deps pixel_height first_codepoint glyph_count", report.items[0].message);
+    try std.testing.expectEqualStrings("a font line is: name font source output deps pixel_height first_codepoint glyph_count [gray or mono]", report.items[0].message);
+}
+
+test "a font line may name its rasterization as gray or mono, and a tenth field is reported" {
+    const text =
+        \\ui_font_8px font assets/font.ttf ui_font_8px.bfnt - 8 32 224 mono
+        \\debug_font_7px font assets/font.ttf debug_font_7px.bfnt - 7 32 224 gray
+        \\default_font_10px font assets/font.ttf default_font_10px.bfnt - 10 32 224
+        \\
+    ;
+    var report = Report{};
+    checkManifest("assets/asset_manifest.txt", text, FakeFiles.files(), &report);
+    try std.testing.expect(report.ok());
+
+    var extra = Report{};
+    checkManifest("assets/asset_manifest.txt", "font font assets/font.ttf font.bfnt - 10 32 224 mono extra\n", FakeFiles.files(), &extra);
+    try std.testing.expectEqual(@as(usize, 1), extra.count);
 }
 
 test "a clean sprite list reports nothing, and a duplicate or missing image is reported" {
