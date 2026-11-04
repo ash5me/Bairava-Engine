@@ -165,7 +165,7 @@ fn formatAccepted(kind: []const u8, source: []const u8) bool {
 }
 
 /// Checks the asset manifest: `name type source output dependencies`, one asset per line. A font line
-/// adds `pixel_height first_codepoint glyph_count [bitmap|sdf]` after the dependencies. Names must be
+/// adds `pixel_height first_codepoint glyph_count` after the dependencies. Names must be
 /// valid and unique. Types must be known. A source must exist, be inside the project, and have a format
 /// its type accepts. Each dependency must name an asset declared in the same manifest.
 pub fn checkManifest(path: []const u8, text: []const u8, files: Files, report: *Report) void {
@@ -251,8 +251,10 @@ fn checkManifestLine(path: []const u8, number: u32, line: []const u8, declared: 
 }
 
 fn checkFontFields(path: []const u8, number: u32, fields: Fields, report: *Report) void {
-    if (fields.len != 8 and fields.len != 9) {
-        report.add(path, number, "a font line is: name font source output deps pixel_height first_codepoint glyph_count [mode]");
+    // Fonts are baked as bitmaps, one file per size, so a font line has exactly eight fields. A ninth
+    // field (such as an old `sdf` mode) is reported rather than ignored.
+    if (fields.len != 8) {
+        report.add(path, number, "a font line is: name font source output deps pixel_height first_codepoint glyph_count");
         return;
     }
     const px = std.fmt.parseFloat(f32, fields.items[5]) catch -1.0;
@@ -260,12 +262,6 @@ fn checkFontFields(path: []const u8, number: u32, fields: Fields, report: *Repor
     if (parseU32(fields.items[6]) == null) report.add(path, number, "font first codepoint must be a whole number");
     const glyphs = parseU32(fields.items[7]) orelse 0;
     if (glyphs == 0) report.add(path, number, "font glyph count must be a whole number above 0");
-    if (fields.len == 9) {
-        const mode = fields.items[8];
-        if (!std.mem.eql(u8, mode, "bitmap") and !std.mem.eql(u8, mode, "sdf")) {
-            report.add(path, number, "font mode must be bitmap or sdf");
-        }
-    }
 }
 
 // ---- Sprite list ---------------------------------------------------------------------------------------
@@ -506,11 +502,11 @@ test "a dependency may name an asset declared on a later line" {
     try std.testing.expect(report.ok());
 }
 
-test "a font mode other than bitmap or sdf is reported" {
-    const text = "font font assets/font.ttf font.ttf - 10 32 224 wobble\n";
+test "a font line with a ninth field is reported, since fonts are baked as bitmaps" {
+    const text = "font font assets/font.ttf font.bfnt - 10 32 224 sdf\n";
     var report = Report{};
     checkManifest("assets/asset_manifest.txt", text, FakeFiles.files(), &report);
-    try std.testing.expectEqualStrings("font mode must be bitmap or sdf", report.items[0].message);
+    try std.testing.expectEqualStrings("a font line is: name font source output deps pixel_height first_codepoint glyph_count", report.items[0].message);
 }
 
 test "a clean sprite list reports nothing, and a duplicate or missing image is reported" {

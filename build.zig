@@ -51,8 +51,8 @@ const cglm_sources = [_][]const u8{
     "vendor/cglm/src/clipspace/project_zo.c",
 };
 
-/// Minimal FreeType sources for TTF and OpenType CFF rasterization. Optional compressed-font
-/// modules are disabled in the vendored ftoption.h, so this remains dependency-free.
+/// FreeType sources for the offline font baker, which rasterizes OpenType CFF outlines (tools/assets/font_bake.c).
+/// The runtime engine never links them. Optional compressed-font modules are disabled in the vendored ftoption.h.
 const freetype_sources = [_][]const u8{
     "vendor/freetype-2.15.0/src/autofit/autofit.c",
     "vendor/freetype-2.15.0/src/base/ftbase.c",
@@ -144,10 +144,12 @@ fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, wi
     module.addIncludePath(b.path("vendor"));
     module.addIncludePath(b.path("src/engine/text"));
     module.addIncludePath(b.path("src/engine/ui"));
+    module.addIncludePath(b.path("tools/assets"));
     addFreeType(b, module);
     module.addCSourceFile(.{ .file = b.path(test_source) });
     module.addCSourceFile(.{ .file = b.path("tests/ui/test_support.c") });
     module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    module.addCSourceFile(.{ .file = b.path("tools/assets/font_bake.c") });
     module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     if (with_imgui) module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
 
@@ -182,11 +184,9 @@ fn configureEngineModule(
     module.addIncludePath(b.path("src/engine/ui"));
     module.addIncludePath(b.path("src/engine/text"));
     module.addIncludePath(b.path("src/engine/logging"));
-    addFreeType(b, module);
     addCglm(b, module);
     addJobsAndScript(b, module);
     module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
-    module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
     module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
     module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
@@ -435,6 +435,7 @@ pub fn build(b: *std.Build) void {
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/font_bake.c") });
     const run_asset_builder = b.addRunArtifact(asset_builder);
     run_asset_builder.addFileArg(b.path("assets/asset_manifest.txt"));
     const runtime_assets = run_asset_builder.addOutputDirectoryArg("runtime-assets");
@@ -456,12 +457,8 @@ pub fn build(b: *std.Build) void {
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs pixel height");
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs first codepoint");
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs glyph count");
-            if (fields.next()) |mode| {
-                if (!std.mem.eql(u8, mode, "bitmap") and !std.mem.eql(u8, mode, "sdf"))
-                    @panic("assets/asset_manifest.txt: font mode must be bitmap or sdf");
-            }
         }
-        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or font pixel height, first codepoint, glyph count, and optional mode");
+        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or eight for a font: pixel height, first codepoint, glyph count");
         run_asset_builder.addFileInput(b.path(source));
     }
     const install_runtime_assets = b.addInstallDirectory(.{

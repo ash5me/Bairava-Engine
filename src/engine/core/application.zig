@@ -42,9 +42,9 @@ pub const Config = struct {
     zoom_max: f32 = 4.0,
     /// How fast the camera eases to a new zoom, per second. Zero snaps.
     zoom_rate: f32 = 8.0,
-    /// Font for the debug overlay: a TrueType file relative to the executable's folder, and its
-    /// height in native pixels.
-    debug_font_path: []const u8 = "assets/font.ttf",
+    /// Font for the debug overlay: a prebaked `.bfnt` file relative to the executable's folder, baked at exactly
+    /// `debug_font_px`. A missing or mismatched file turns the overlay off.
+    debug_font_path: []const u8 = "assets/default_font_10px.bfnt",
     debug_font_px: f32 = 10.0,
     /// Name of the log file, written beside the executable. Each run replaces the file from the
     /// last run. Null logs to the terminal only.

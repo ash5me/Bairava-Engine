@@ -5,10 +5,14 @@
  *   name type source output dependencies
  * Dependencies are comma-separated asset names, or '-'. Paths are project-relative and
  * outputs are relative to the generated asset directory.
+ *
+ * A font row adds pixel height, first codepoint, and glyph count. Its output is the prebaked
+ * atlas, a .bfnt file, so each size the game uses is its own row and file.
  */
 
 #include "../../vendor/stb_image.h"
 #include "../../src/engine/text/text.h"
+#include "font_bake.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -40,7 +44,6 @@ typedef struct {
     float font_pixel_height;
     int font_first;
     int font_count;
-    int font_sdf;
 } entry;
 
 enum { TEX_RGBA8 = 0, TEX_BC1 = 1, TEX_BC3 = 2, TEX_ASTC_4X4 = 3 };
@@ -329,6 +332,8 @@ static int valid_kind(const entry *item) {
     return 1;
 }
 
+/* Bakes a font at its manifest size and writes the BFNT v2 file to `output_path`. That file is the
+ * runtime asset: the source TTF is read here and is not copied into the output directory. */
 static int build_prebaked_font(const entry *item, const char *output_path) {
     FILE *source = fopen(item->source, "rb");
     if (source == NULL || fseek(source, 0, SEEK_END) != 0) {
@@ -344,27 +349,21 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     if (!read_ok) { free(ttf); return 0; }
 
     ui_font font;
-    int bake_result = item->font_sdf
-        ? ui_font_bake_sdf(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, 8.0f, &font)
-        : ui_font_bake(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, &font);
-    if (bake_result != 0) {
+    if (ui_font_bake(ttf, (size_t)ttf_size, item->font_pixel_height, item->font_first, item->font_count, &font) != 0) {
         fprintf(stderr, "asset_build: could not bake font '%s' at %.2f px\n", item->name, item->font_pixel_height);
         free(ttf);
         return 0;
     }
     free(ttf);
     unsigned int atlas_pixels = (unsigned int)font.atlas_w * (unsigned int)font.atlas_h;
-    char prebaked_path[FIELD_SIZE * 2];
-    if (snprintf(prebaked_path, sizeof prebaked_path, "%s.bfnt", output_path) >= (int)sizeof prebaked_path) {
-        ui_font_destroy(&font); return 0;
-    }
-    FILE *output = fopen(prebaked_path, "wb");
+    FILE *output = fopen(output_path, "wb");
     if (output == NULL) { ui_font_destroy(&font); return 0; }
 
-    unsigned char header[56] = {0};
+    /* A 52-byte BFNT v2 header, then the glyph table, the kerning pairs, and one alpha byte per atlas pixel. */
+    unsigned char header[52] = {0};
     memcpy(header, "BFNT", 4);
-    write_u16le(header + 4, font.sdf ? 3 : 2);
-    write_u16le(header + 6, font.sdf ? 56 : 52);
+    write_u16le(header + 4, 2);
+    write_u16le(header + 6, 52);
     unsigned int pixel_height_bits = 0;
     memcpy(&pixel_height_bits, &font.pixel_height, sizeof pixel_height_bits);
     write_u32le(header + 8, pixel_height_bits);
@@ -380,10 +379,8 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     write_u16le(header + 44, (unsigned short)font.white.w);
     write_u16le(header + 46, (unsigned short)font.white.h);
     write_u32le(header + 48, (unsigned int)font.kerning_count);
-    write_u32le(header + 52, font.sdf ? 1u : 0u);
 
-    size_t header_size = font.sdf ? 56 : 52;
-    int ok = fwrite(header, 1, header_size, output) == header_size;
+    int ok = fwrite(header, 1, sizeof header, output) == sizeof header;
     for (int i = 0; ok && i < font.count; i++) {
         unsigned char glyph[20];
         const ui_glyph *g = &font.glyphs[i];
@@ -405,7 +402,7 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     }
     for (unsigned int i = 0; ok && i < atlas_pixels; i++) ok = fwrite(&font.rgba[(size_t)i * 4 + 3], 1, 1, output) == 1;
     if (fclose(output) != 0) ok = 0;
-    if (!ok) { fprintf(stderr, "asset_build: failed to write preprocessed font '%s'\n", prebaked_path); remove(prebaked_path); }
+    if (!ok) { fprintf(stderr, "asset_build: failed to write preprocessed font '%s'\n", output_path); remove(output_path); }
     ui_font_destroy(&font);
     return ok;
 }
@@ -594,12 +591,12 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
         entry item = {0};
         char font_height_text[32] = {0}, font_first_text[32] = {0}, font_count_text[32] = {0}, extra[2];
-        char font_mode_text[16] = {0};
-        int fields = sscanf(line, "%1023s %31s %1023s %1023s %1023s %31s %31s %31s %15s %1s",
+        /* One field past a font's eight is read, so a leftover mode such as `sdf` is reported, not ignored. */
+        int fields = sscanf(line, "%1023s %31s %1023s %1023s %1023s %31s %31s %31s %1s",
                             item.name, item.type, item.source, item.output, item.dependencies,
-                            font_height_text, font_first_text, font_count_text, font_mode_text, extra);
-        if (fields < 5 || (strcmp(item.type, "font") == 0 ? (fields != 8 && fields != 9) : fields != 5)) {
-            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight/nine for fonts\n", manifest_path, line_number); failed = 1; break;
+                            font_height_text, font_first_text, font_count_text, extra);
+        if (fields < 5 || (strcmp(item.type, "font") == 0 ? fields != 8 : fields != 5)) {
+            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight for fonts (pixel height, first codepoint, glyph count)\n", manifest_path, line_number); failed = 1; break;
         }
         if (strcmp(item.type, "font") == 0) {
             char *end = NULL;
@@ -617,12 +614,6 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
                 fprintf(stderr, "asset_build: %s:%zu: invalid font glyph count\n", manifest_path, line_number); failed = 1; break;
             }
             item.font_count = (int)glyph_count;
-            if (fields == 9) {
-                if (strcmp(font_mode_text, "sdf") == 0) item.font_sdf = 1;
-                else if (strcmp(font_mode_text, "bitmap") != 0) {
-                    fprintf(stderr, "asset_build: %s:%zu: font mode must be bitmap or sdf\n", manifest_path, line_number); failed = 1; break;
-                }
-            }
         }
         if (!safe_name(item.name) || !safe_relative_path(item.source) || !safe_relative_path(item.output) ||
             count == MAX_ENTRIES || !file_exists(item.source) || !valid_kind(&item)) {
@@ -691,23 +682,21 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         memcpy(parent, destination, strlen(destination) + 1);
         char *slash = strrchr(parent, PATH_SEPARATOR);
         if (slash != NULL) { *slash = '\0'; if (!mkdirs(parent)) { failed = 1; break; } }
-        if (!copy_file(entries[i].source, destination)) { failed = 1; break; }
+        const int is_font = strcmp(entries[i].type, "font") == 0;
+        if (!is_font && !copy_file(entries[i].source, destination)) { failed = 1; break; }
         int astc_available = 0;
         if (strcmp(entries[i].type, "image") == 0 && !build_texture_variants(&entries[i], destination, output_dir, &astc_available)) { failed = 1; break; }
         char ima_path[FIELD_SIZE * 2] = {0};
         if (strcmp(entries[i].type, "audio") == 0) {
             if (snprintf(ima_path, sizeof ima_path, "%s.ima", destination) >= (int)sizeof ima_path || !encode_ima_wav(entries[i].source, ima_path)) { failed = 1; break; }
         }
-        char prebaked_font_path[FIELD_SIZE * 2] = {0};
-        if (strcmp(entries[i].type, "font") == 0) {
-            if (snprintf(prebaked_font_path, sizeof prebaked_font_path, "%s.bfnt", destination) >= (int)sizeof prebaked_font_path || !build_prebaked_font(&entries[i], destination)) { failed = 1; break; }
-        }
+        if (is_font && !build_prebaked_font(&entries[i], destination)) { failed = 1; break; }
         const char *source_for_index = safe_relative_path(entries[i].source) ? entries[i].source : "generated";
         fprintf(index, "%s %s %s %s %s", entries[i].name, entries[i].type, entries[i].output, source_for_index, entries[i].dependencies);
         if (strcmp(entries[i].type, "image") == 0) fprintf(index, " %s.rgba %s.bc1 %s.bc3 %s", entries[i].output, entries[i].output, entries[i].output, astc_available ? entries[i].output : "-");
         if (strcmp(entries[i].type, "image") == 0 && astc_available) fprintf(index, ".astc");
         if (strcmp(entries[i].type, "audio") == 0) fprintf(index, " %s.ima", entries[i].output);
-        if (strcmp(entries[i].type, "font") == 0) fprintf(index, " %s.bfnt px=%.2f first=%d count=%d", entries[i].output, entries[i].font_pixel_height, entries[i].font_first, entries[i].font_count);
+        if (is_font) fprintf(index, " px=%.2f first=%d count=%d", entries[i].font_pixel_height, entries[i].font_first, entries[i].font_count);
         fputc('\n', index);
     }
     if (fclose(index) != 0) failed = 1;

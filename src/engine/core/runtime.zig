@@ -149,7 +149,7 @@ pub fn run(comptime Game: type, config: Config) !void {
     };
     defer game.deinit();
 
-    // The overlay bakes its own copy of the debug font, loaded from the same files as the game's fonts.
+    // The overlay loads its own copy of the debug font from its prebaked file.
     // Release builds have no overlay, so they load no font for it.
     const debug_font: ?ui.Font = if (gate.enabled) loadOverlayFont(ctx, config) else null;
     var overlay = debug_overlay.Overlay.init(allocators.engineAllocator(), debug_font);

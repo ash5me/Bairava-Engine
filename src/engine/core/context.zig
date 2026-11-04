@@ -94,20 +94,13 @@ const FontLoadJob = struct {
 
 fn runFontLoad(job: *FontLoadJob) void {
     const relative = job.relative[0..job.relative_len];
-    var prebaked_buf: [max_full_path]u8 = undefined;
-    const prebaked_path = std.fmt.bufPrint(&prebaked_buf, "{s}.bfnt", .{relative}) catch {
-        job.failure = error.PathTooLong;
-        return;
-    };
-    const prebaked = platform.files.readQuiet(job.allocator, .packaged, prebaked_path) catch null;
-    defer if (prebaked) |bytes| job.allocator.free(bytes);
-    const ttf = platform.files.readQuiet(job.allocator, .packaged, relative) catch null;
-    defer if (ttf) |bytes| job.allocator.free(bytes);
-    if (prebaked == null and ttf == null) {
+    const bytes = platform.files.readQuiet(job.allocator, .packaged, relative) catch null;
+    defer if (bytes) |data| job.allocator.free(data);
+    const payload = bytes orelse {
         job.failure = error.FileNotFound;
         return;
-    }
-    job.staged = font.stage(ttf orelse &.{}, prebaked orelse &.{}, job.pixel_height) catch {
+    };
+    job.staged = font.stage(payload, job.pixel_height) catch {
         job.failure = error.FontLoadFailed;
         return;
     };
@@ -452,7 +445,8 @@ pub const Context = struct {
         platform.gpu.waitIdle(contextGpuDevice(self));
     }
 
-    /// Loads a UI font. Missing or malformed font assets return an error instead of crashing startup.
+    /// Loads a prebaked UI font from its `.bfnt` file, which must have been baked at `pixel_height`. Missing or
+    /// malformed files return an error instead of crashing startup.
     pub fn loadFont(self: *const Context, relative: []const u8, pixel_height: f32) AssetError!ui.Font {
         var staged: font.Staged = undefined;
         if (self.jobs) |pool| {
@@ -469,15 +463,10 @@ pub const Context = struct {
             if (job.failure) |err| return err;
             staged = job.staged orelse return error.FontLoadFailed;
         } else {
-            var prebaked_buf: [max_full_path]u8 = undefined;
-            const prebaked_path = std.fmt.bufPrint(&prebaked_buf, "{s}.bfnt", .{relative}) catch return error.PathTooLong;
-            const prebaked = self.readFile(self.allocators.asset, prebaked_path) catch null;
-            defer if (prebaked) |bytes| self.allocators.asset.free(bytes);
-            const ttf_file = self.readFile(self.allocators.asset, relative) catch null;
-            defer if (ttf_file) |bytes| self.allocators.asset.free(bytes);
-            staged = font.stage(ttf_file orelse &.{}, prebaked orelse &.{}, pixel_height) catch {
-                return error.FontLoadFailed;
-            };
+            const bytes = self.readFile(self.allocators.asset, relative) catch null;
+            defer if (bytes) |data| self.allocators.asset.free(data);
+            const payload = bytes orelse return error.FileNotFound;
+            staged = font.stage(payload, pixel_height) catch return error.FontLoadFailed;
         }
         return staged.upload(self.allocators.asset, contextGpuDevice(self));
     }

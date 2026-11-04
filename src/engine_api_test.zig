@@ -194,7 +194,6 @@ test "Canvas text layout validates dimensions through the public UI API" {
     var font = bairava.ui.Font{
         .baked = .{ .line_height = 10 },
         .texture = undefined,
-        .uploaded_generation = 0,
     };
     const canvas = bairava.ui.Canvas{
         .allocator = std.testing.allocator,

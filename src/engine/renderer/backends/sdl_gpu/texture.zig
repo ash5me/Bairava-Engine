@@ -15,22 +15,21 @@ pub const State = struct {
     allocator: std.mem.Allocator,
 };
 
-/// Uploads tightly packed RGBA8 pixels. `linear` selects linear filtering, used for signed-distance-field
-/// font atlases. Otherwise sampling is nearest-neighbor, so pixel art stays sharp when it is scaled up.
-pub fn uploadRgba8(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const u8, linear: bool) *State {
-    return upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height, linear);
+/// Uploads tightly packed RGBA8 pixels. Sampling is nearest-neighbor, so pixel art stays sharp when it is scaled up.
+pub fn uploadRgba8(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const u8) *State {
+    return upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height);
 }
 
 /// Uploads a prebuilt block-compressed image. The caller checks `supportsCompression` first.
 pub fn uploadCompressed(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, compression: image.Compression, blocks: []const u8) *State {
     const format = gpuFormat(compression) orelse unreachable;
-    return upload(allocator, device, width, height, format, blocks, 0, 0, false);
+    return upload(allocator, device, width, height, format, blocks, 0, 0);
 }
 
 /// Creates a texture the GPU can both sample and draw into. The native view is one of these.
 pub fn createTarget(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat) *State {
     const texture = createTexture(device, width, height, format, c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
-    return wrap(allocator, device, texture, createSampler(device, false), null);
+    return wrap(allocator, device, texture, createSampler(device), null);
 }
 
 /// True when the device can sample the block-compressed format.
@@ -76,7 +75,7 @@ pub fn destroy(state: *State) void {
     state.allocator.destroy(state);
 }
 
-fn upload(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, pixels: []const u8, pixels_per_row: u32, rows_per_layer: u32, linear: bool) *State {
+fn upload(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, pixels: []const u8, pixels_per_row: u32, rows_per_layer: u32) *State {
     const texture = createTexture(device, width, height, format, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
 
     // Stage the pixels in an upload buffer, then copy them into the texture.
@@ -121,7 +120,7 @@ fn upload(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, he
     const fence = c.SDL_SubmitGPUCommandBufferAndAcquireFence(cmd) orelse {
         std.debug.panic("SDL_SubmitGPUCommandBufferAndAcquireFence failed: {s}", .{c.SDL_GetError()});
     };
-    return wrap(allocator, device, texture, createSampler(device, linear), fence);
+    return wrap(allocator, device, texture, createSampler(device), fence);
 }
 
 fn wrap(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, texture: *c.SDL_GPUTexture, sampler: *c.SDL_GPUSampler, fence: ?*c.SDL_GPUFence) *State {
@@ -153,10 +152,10 @@ fn createTexture(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SD
     };
 }
 
-fn createSampler(device: *c.SDL_GPUDevice, linear: bool) *c.SDL_GPUSampler {
+fn createSampler(device: *c.SDL_GPUDevice) *c.SDL_GPUSampler {
     var info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
-    info.min_filter = if (linear) c.SDL_GPU_FILTER_LINEAR else c.SDL_GPU_FILTER_NEAREST;
-    info.mag_filter = if (linear) c.SDL_GPU_FILTER_LINEAR else c.SDL_GPU_FILTER_NEAREST;
+    info.min_filter = c.SDL_GPU_FILTER_NEAREST;
+    info.mag_filter = c.SDL_GPU_FILTER_NEAREST;
     info.mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
     info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;

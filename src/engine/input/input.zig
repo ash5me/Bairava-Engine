@@ -513,7 +513,7 @@ test "F3 and F11 are read as commands, not as keys" {
     try std.testing.expectEqual(@as(?Key, null), keyFor(.f3));
     try std.testing.expectEqual(@as(?Key, null), keyFor(.f11));
     try std.testing.expectEqual(@as(?Key, null), keyFor(.f4));
-    try std.testing.expectEqual(@as(usize, 30), std.enums.values(Scancode).len);
+    try std.testing.expectEqual(@as(usize, 31), std.enums.values(Scancode).len);
     try std.testing.expectEqual(@as(usize, 25), key_count);
 }
 

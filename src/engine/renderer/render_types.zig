@@ -37,7 +37,6 @@ pub const Vertex = extern struct {
     pos: [2]f32,
     uv: [2]f32,
     color: [4]f32,
-    sdf: f32,
     normal_basis: [4]f32,
 };
 

@@ -1,41 +1,18 @@
-//! Fonts on the GPU. A font is baked from TTF data at a pixel height, or loaded from the build's
-//! preprocessed `.bfnt` sidecar when that matches. Its glyph atlas is uploaded as one texture, and
-//! `refreshTexture` uploads it again when a lazily rasterized glyph grows the atlas.
+//! Fonts on the GPU. A font is a prebaked `.bfnt` file that the asset builder wrote from a TTF or OTF
+//! (tools/assets/font_bake.c). Loading parses that file and uploads its glyph atlas once. Nothing here
+//! rasterizes outlines, so a character the font was not baked with draws as '?'.
 
-const c = @import("../ui/c.zig").c;
 const std = @import("std");
+const c = @import("../ui/c.zig").c;
 const platform = @import("../platform/platform.zig");
-const profile = @import("../profiling/profile.zig");
 const texture = @import("../renderer/texture.zig");
 const Texture = texture.Texture;
 
-/// The first codepoint baked, and how many. 32 to 255 covers printable ASCII and Latin-1.
-const first_codepoint: c_int = 32;
-const codepoint_count: c_int = 224;
-
-
 /// A font on the GPU: the baked metrics and glyphs from C, plus the atlas texture they sample.
 pub const Font = struct {
-    /// Metrics and glyphs, owned by the C side. Pass `&font.baked` to C functions.
+    /// Metrics, kerning, and glyphs, owned by the C side. Pass `&font.baked` to C functions.
     baked: c.ui_font,
     texture: Texture,
-    uploaded_generation: u32,
-
-    /// Enables lazy rasterization for codepoints outside the baked range. The font bytes are copied
-    /// into the C font object and kept until deinit.
-    pub fn enableDynamic(self: *Font, ttf: []const u8) !void {
-        if (c.ui_font_enable_dynamic(&self.baked, ttf.ptr, ttf.len) != 0) return error.DynamicFontFailed;
-    }
-
-    pub fn refreshTexture(self: *Font) void {
-        if (self.uploaded_generation == self.baked.atlas_generation) return;
-        self.texture.deinit();
-        const w: u32 = @intCast(self.baked.atlas_w);
-        const h: u32 = @intCast(self.baked.atlas_h);
-        const pixels = self.baked.rgba[0 .. @as(usize, w) * @as(usize, h) * 4];
-        texture.updateRgba8(&self.texture, w, h, pixels, self.baked.sdf != 0);
-        self.uploaded_generation = self.baked.atlas_generation;
-    }
 
     pub fn deinit(self: *Font) void {
         self.texture.deinit();
@@ -43,82 +20,33 @@ pub const Font = struct {
     }
 };
 
-/// CPU-side font result. Creating its GPU texture must happen on the main thread; baking and file
-/// parsing may run on a worker because this type does not touch GPU objects.
+/// CPU-side font result. Creating its GPU texture must happen on the main thread. Parsing the file may run
+/// on a worker, because this type does not touch GPU objects.
 pub const Staged = struct {
     baked: c.ui_font,
+
     pub fn upload(self: Staged, allocator: std.mem.Allocator, device: *platform.gpu.Device) Font {
         return fromBaked(allocator, device, self.baked);
     }
+
     pub fn deinit(self: *Staged) void {
         c.ui_font_destroy(&self.baked);
         self.* = undefined;
     }
 };
 
-/// Bakes or parses font data on the calling CPU thread. No GPU resource is created.
-pub fn stage(ttf: []const u8, prebaked: []const u8, pixel_height: f32) !Staged {
-    if (prebaked.len > 0) {
-        var baked: c.ui_font = undefined;
-        if (c.ui_font_load_prebaked(prebaked.ptr, prebaked.len, pixel_height, &baked) == 0) {
-            if (ttf.len > 0) {
-                if (c.ui_font_enable_dynamic(&baked, ttf.ptr, ttf.len) != 0) {
-                    c.ui_font_destroy(&baked);
-                    return error.DynamicFontFailed;
-                }
-            }
-            return .{ .baked = baked };
-        }
-    }
+/// Parses a prebaked `.bfnt` file on the calling CPU thread. No GPU resource is created. The file must have been
+/// baked at exactly `pixel_height`. Any other size, or a malformed file, is an error.
+pub fn stage(prebaked: []const u8, pixel_height: f32) error{InvalidFont}!Staged {
+    if (prebaked.len == 0) return error.InvalidFont;
     var baked: c.ui_font = undefined;
-    if (c.ui_font_bake(ttf.ptr, ttf.len, pixel_height, first_codepoint, codepoint_count, &baked) != 0) return error.BakeFailed;
-    if (ttf.len > 0) {
-        if (c.ui_font_enable_dynamic(&baked, ttf.ptr, ttf.len) != 0) {
-            c.ui_font_destroy(&baked);
-            return error.DynamicFontFailed;
-        }
-    }
+    if (c.ui_font_load_prebaked(prebaked.ptr, prebaked.len, pixel_height, &baked) != 0) return error.InvalidFont;
     return .{ .baked = baked };
-}
-
-/// Loads a build-preprocessed font when present, otherwise baking the supplied TTF bytes.
-pub fn load(allocator: std.mem.Allocator, device: *platform.gpu.Device, ttf: []const u8, prebaked: []const u8, pixel_height: f32) !Font {
-    if (prebaked.len > 0) {
-        var baked: c.ui_font = undefined;
-        if (c.ui_font_load_prebaked(prebaked.ptr, prebaked.len, pixel_height, &baked) == 0) {
-            var loaded = fromBaked(allocator, device, baked);
-            if (ttf.len > 0) try loaded.enableDynamic(ttf);
-            return loaded;
-        }
-    }
-    var baked = try bake(allocator, device, ttf, pixel_height);
-    try baked.enableDynamic(ttf);
-    return baked;
-}
-
-pub fn bake(allocator: std.mem.Allocator, device: *platform.gpu.Device, ttf: []const u8, pixel_height: f32) !Font {
-    const zone = profile.zoneNamed(@src(), "bake font");
-    defer zone.End();
-    var baked: c.ui_font = undefined;
-    if (c.ui_font_bake(ttf.ptr, ttf.len, pixel_height, first_codepoint, codepoint_count, &baked) != 0) return error.BakeFailed;
-    return fromBaked(allocator, device, baked);
-}
-
-pub fn bakeSdf(allocator: std.mem.Allocator, device: *platform.gpu.Device, ttf: []const u8, pixel_height: f32, distance_range: f32) !Font {
-    const zone = profile.zoneNamed(@src(), "bake SDF font");
-    defer zone.End();
-    var baked: c.ui_font = undefined;
-    if (c.ui_font_bake_sdf(ttf.ptr, ttf.len, pixel_height, first_codepoint, codepoint_count, distance_range, &baked) != 0) return error.BakeFailed;
-    return fromBaked(allocator, device, baked);
 }
 
 fn fromBaked(allocator: std.mem.Allocator, device: *platform.gpu.Device, baked: c.ui_font) Font {
     const width: u32 = @intCast(baked.atlas_w);
     const height: u32 = @intCast(baked.atlas_h);
     const pixels = baked.rgba[0 .. @as(usize, width) * height * 4];
-    const atlas_texture = if (baked.sdf != 0)
-        texture.createRgba8Linear(allocator, device, width, height, pixels)
-    else
-        texture.createRgba8(allocator, device, width, height, pixels);
-    return .{ .baked = baked, .texture = atlas_texture, .uploaded_generation = baked.atlas_generation };
+    return .{ .baked = baked, .texture = texture.createRgba8(allocator, device, width, height, pixels) };
 }

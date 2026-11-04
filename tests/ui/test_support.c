@@ -1,4 +1,5 @@
 #include "test_support.h"
+#include "font_bake.h"
 
 #include <stdio.h>
 #include <stdlib.h>

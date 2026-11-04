@@ -96,11 +96,14 @@ comptime {
     }
 }
 
-/// The font for the demo panel, relative to the executable's folder, and its height in native
-/// pixels. The UI is drawn at native resolution, so 8 keeps it compact at the 320x180 view. The
-/// build's preprocessed `<path>.bfnt` beside it is used when it matches this size.
-pub const ui_font_path = "assets/font.ttf";
+/// The font for the demo panel: a prebaked `.bfnt` file from the asset manifest, relative to the executable's
+/// folder, and its height in native pixels. The UI is drawn at native resolution, so 8 keeps it compact at the
+/// 320x180 view. The file must have been baked at exactly this size.
+pub const ui_font_path = "assets/ui_font_8px.bfnt";
 pub const ui_font_px: f32 = 8;
+/// The font for the debug overlay, and its height. It is baked from the same TTF, at its own size.
+pub const debug_font_path = "assets/debug_font_7px.bfnt";
+pub const debug_font_px: f32 = 7;
 
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.
 pub const log_file_name: ?[:0]const u8 = "Semkootru.log";

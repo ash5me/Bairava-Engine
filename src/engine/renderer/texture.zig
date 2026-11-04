@@ -34,12 +34,7 @@ pub const Texture = struct {
 
 /// Uploads tightly packed RGBA8 pixels (4 bytes per pixel, row 0 at the top).
 pub fn createRgba8(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, pixels: []const u8) Texture {
-    return wrapWithSdl(backend.texture.uploadRgba8(allocator, device, width, height, pixels, false), width, height, pixels);
-}
-
-/// Uploads RGBA8 pixels with linear filtering, used for signed-distance-field font atlases.
-pub fn createRgba8Linear(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, pixels: []const u8) Texture {
-    return wrapWithSdl(backend.texture.uploadRgba8(allocator, device, width, height, pixels, true), width, height, pixels);
+    return wrapWithSdl(backend.texture.uploadRgba8(allocator, device, width, height, pixels), width, height, pixels);
 }
 
 pub fn supportsCompression(device: *backend.Device, compression: image.Compression) bool {
@@ -56,14 +51,6 @@ pub fn createCompressed(allocator: std.mem.Allocator, device: *backend.Device, w
 
 pub fn createTarget(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, format: backend.TextureFormat) Texture {
     return wrap(backend.texture.createTarget(allocator, device, width, height, format), width, height);
-}
-
-pub fn updateRgba8(texture_ref: *Texture, width: u32, height: u32, pixels: []const u8, linear: bool) void {
-    const state = backendState(texture_ref);
-    const device = state.device;
-    const allocator = state.allocator;
-    texture_ref.deinit();
-    texture_ref.* = if (linear) createRgba8Linear(allocator, device, width, height, pixels) else createRgba8(allocator, device, width, height, pixels);
 }
 
 /// The GPU texture object, for drawing into this texture as a render target.

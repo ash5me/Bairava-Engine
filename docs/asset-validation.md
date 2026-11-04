@@ -26,7 +26,7 @@ animation bounds check can use the generated atlas index.
 ## Rules
 
 Manifest lines are `name type source output dependencies`. A font line adds `pixel_height
-first_codepoint glyph_count [bitmap|sdf]` after the dependencies.
+first_codepoint glyph_count` after the dependencies, and its output is the baked `.bfnt` file.
 
 | Rule | Reason shown |
 |---|---|
@@ -37,7 +37,7 @@ first_codepoint glyph_count [bitmap|sdf]` after the dependencies.
 | Sources exist | source file does not exist |
 | Sources have a format the type accepts (`image`: png, jpg, jpeg, bmp, tga; `audio`/`wav`: wav; `font`: ttf, otf; `map`: txt; `file`: any) | ... must be ... |
 | Dependencies name an asset declared in the same manifest, in any order | dependency names an asset ... |
-| Font pixel height is above 0, the glyph count is above 0, the mode is `bitmap` or `sdf` | font ... |
+| Font pixel height is above 0, the glyph count is above 0, and a font line has exactly eight fields (no SDF mode) | font ... |
 | Atlas index: `size W H` first, then `name x y w h`; the rectangle is inside the atlas and nonzero | sprite reaches past the edge ... |
 | Atlas size matches the image's header size | the atlas size does not match its image |
 

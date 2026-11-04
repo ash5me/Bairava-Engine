@@ -1,7 +1,11 @@
 # name type source output dependencies
+# A font row adds: pixel_height first_codepoint glyph_count. Each size the game draws at is its own row,
+# because a prebaked font loads only at the exact size it was baked at (see docs/text.md).
 tile image assets/tile.png tile.png -
 warrior image assets/warrior_16x32.png warrior_16x32.png -
-font font assets/font.ttf font.ttf - 10 32 224
+ui_font_8px font assets/font.ttf ui_font_8px.bfnt - 8 32 224
+debug_font_7px font assets/font.ttf debug_font_7px.bfnt - 7 32 224
+default_font_10px font assets/font.ttf default_font_10px.bfnt - 10 32 224
 level1 map assets/maps/level1.txt maps/level1.txt tile
 level1_spawn file assets/maps/level1.spawn maps/level1.spawn level1,game_prefabs
 game_prefabs file assets/prefabs.txt prefabs.txt -

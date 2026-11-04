@@ -175,6 +175,10 @@ static void check_prebaked_roundtrip(void) {
     data[0] = 'B';
     data[4] = 2;
     expect_prebaked_rejected(data, len, font.pixel_height); /* unsupported version */
+    data[4] = 3;
+    put_u16le(data + 6, 56);
+    expect_prebaked_rejected(data, len, font.pixel_height); /* SDF atlases (v3) are no longer supported */
+    put_u16le(data + 6, 48);
     data[4] = 1;
     data[36] ^= 1;
     expect_prebaked_rejected(data, len, font.pixel_height); /* inconsistent atlas pixel count */

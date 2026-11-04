@@ -45,8 +45,6 @@ pub const Options = struct {
     /// Draw order. Lower values draw first. Sprites with equal values keep the order they were added in.
     /// Batches only merge neighbors with the same texture, so alternating textures in z order costs draw calls.
     z: i32 = 0,
-    /// Treat the texture alpha channel as a signed distance field and reconstruct smooth coverage.
-    sdf: bool = false,
     /// A normal map that lights the sprite with the batch's point lights. Its colors store unit normals as 0..1 per
     /// channel: x points right, y points down the image, and z points out of the screen. It must be the same size as
     /// the texture and read at the same source rectangle, so the sprite's texel coordinates index both. The normals
@@ -523,17 +521,16 @@ fn cornersFor(projection: *const math.Mat4, texture_ref: *const Texture, src: Re
     const p_tr = math.transformPoint(projection, pivot_x + o_tr[0], pivot_y + o_tr[1]);
 
     const color = [4]f32{ opts.tint[0], opts.tint[1], opts.tint[2], opts.alpha };
-    const sdf: f32 = if (opts.sdf) 1 else 0;
     // A normal map turns with the sprite. The flip happens in the sprite's own frame and the rotation after it, so the
     // basis is R * F: R is the clockwise turn `turned` applies, and F mirrors x or y. Normal z never changes.
     const flip_x_sign: f32 = if (opts.flip_x) -1 else 1;
     const flip_y_sign: f32 = if (opts.flip_y) -1 else 1;
     const basis = [4]f32{ co * flip_x_sign, -s * flip_y_sign, s * flip_x_sign, co * flip_y_sign };
     return .{
-        .{ .pos = p_tl, .uv = .{ u_left, v_top }, .color = color, .sdf = sdf, .normal_basis = basis },
-        .{ .pos = p_bl, .uv = .{ u_left, v_bottom }, .color = color, .sdf = sdf, .normal_basis = basis },
-        .{ .pos = p_br, .uv = .{ u_right, v_bottom }, .color = color, .sdf = sdf, .normal_basis = basis },
-        .{ .pos = p_tr, .uv = .{ u_right, v_top }, .color = color, .sdf = sdf, .normal_basis = basis },
+        .{ .pos = p_tl, .uv = .{ u_left, v_top }, .color = color, .normal_basis = basis },
+        .{ .pos = p_bl, .uv = .{ u_left, v_bottom }, .color = color, .normal_basis = basis },
+        .{ .pos = p_br, .uv = .{ u_right, v_bottom }, .color = color, .normal_basis = basis },
+        .{ .pos = p_tr, .uv = .{ u_right, v_top }, .color = color, .normal_basis = basis },
     };
 }
 

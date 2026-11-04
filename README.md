@@ -13,7 +13,7 @@ Semkootru is the included vertical-slice game and also a reference for building 
 - Fixed native resolution rendering with fit and integer scale modes
 - Sprite batching, tile maps, cameras, zoom, post-processing, lighting, and skeletal drawing
 - Manifest-driven asset builds, atlases, BC1/BC3/ASTC/RGBA8 texture variants, streaming, hot reload, dependency tracking, and generated asset indexes
-- Text and bitmap/SDF font tooling, immediate-mode UI widgets, and layout
+- Prebaked bitmap font tooling, immediate-mode UI widgets, and layout
 - ECS-style entities, string/integer animation events, AABB/rotated collision components, uniform-grid queries, navigation, AI, replay, particles, and localization
 - Audio playback, streaming, spatial mixing, and background job workers
 - A small game scripting runtime and typed host bindings
@@ -34,7 +34,7 @@ Optional tools and targets:
 - GPU validation: build with `-Dgpu-debug=true`
 - ASTC textures: install Arm `astcenc` on `PATH`
 
-SDL3 3.4.2, ztracy, stb_image, stb_image_write, stb_rect_pack, stb_truetype, FreeType, cglm, Parson, and log.c are pinned or vendored. See the [dependency policy](docs/dependency-policy.md) and [dependency lock](docs/dependency-lock.json) before updating them.
+SDL3 3.4.2, ztracy, stb_image, stb_image_write, stb_rect_pack, stb_truetype, FreeType, cglm, Parson, and log.c are pinned or vendored. stb_truetype and FreeType are linked only into the offline asset builder and the UI tests, never into the game. See the [dependency policy](docs/dependency-policy.md) and [dependency lock](docs/dependency-lock.json) before updating them.
 
 ## Quick start
 
@@ -135,11 +135,11 @@ Import names must be unique and use lowercase letters, digits, `_`, or `-`. The 
 
 For texture formats, the runtime prefers a format supported by the active GPU device. It falls back through ASTC, BC3, BC1, prebuilt RGBA8, or source-image decoding as capabilities allow. The asset build emits RGBA8 plus BC1/BC3 variants and ASTC variants when `astcenc` is available.
 
-Fonts generate `.bfnt` v2/v3 sidecars by default, with configurable codepoint ranges and kerning metadata. Font rows may append `sdf` for a distance-field atlas. Missing glyphs can rasterize dynamically from FreeType or stb_truetype and grow the GPU atlas. Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
+Font rows bake a bitmap atlas offline into a `.bfnt` v2 file, with configurable codepoint ranges and kerning metadata. Each size is its own row and file, and the game loads a font only at the size it was baked at. Characters outside the baked range draw as `?`; nothing is rasterized at runtime. See [text and prebaked fonts](docs/text.md). Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
 
 ## Requirements status
 
-The implementation manifest in [requirements.md](requirements.md) is complete. This includes manifest-driven asset builds and generated indexes; BC1/BC3/ASTC variants with RGBA8 fallback; build-time bitmap/SDF fonts with kerning, dynamic glyph caching, and FreeType CFF support; ECS collision components with rotated boxes, layers, and masks; uniform-grid collision queries and movement; string or integer animation events; and normal-map sprites with ECS-accumulated point lights and shadow segments.
+The implementation manifest in [requirements.md](requirements.md) is complete. This includes manifest-driven asset builds and generated indexes; BC1/BC3/ASTC variants with RGBA8 fallback; build-time bitmap fonts with kerning and FreeType CFF support; ECS collision components with rotated boxes, layers, and masks; uniform-grid collision queries and movement; string or integer animation events; and normal-map sprites with ECS-accumulated point lights and shadow segments.
 
 Rotated boxes use separating-axis overlap and exact oriented-box point containment. Rotated grid insertion uses conservative AABB bounds, while movement performs exact narrow-phase overlap checks. Broad-phase movement and linear queries share X-first/Y-second resolution; the complete movement response remains axis-based and does not rotate the mover.
 
@@ -194,6 +194,7 @@ Start with the subsystem guides that match your work:
 - [Scripting](docs/scripting.md)
 - [Prefabs](docs/prefabs.md)
 - [Tile maps](docs/tilemap.md)
+- [Text and prebaked fonts](docs/text.md)
 - [Saves and replay](docs/replay.md)
 - [Developer console](docs/developer-console.md)
 - [Logging](docs/logging.md)

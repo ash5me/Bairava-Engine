@@ -213,8 +213,8 @@ def test_builder(builder, work):
             (
                 "tile image assets/tile.png tile.png -",
                 "wind1 audio assets/wind.wav wind.wav -",
-                "font font assets/font.ttf font.ttf - 10 32 224",
-                "font_sdf font assets/font.ttf font_sdf.ttf - 10 32 224 sdf",
+                "font_10px font assets/font.ttf font_10px.bfnt - 10 32 224",
+                "font_8px font assets/font.ttf font_8px.bfnt - 8 32 224",
             )
         )
         + "\n",
@@ -246,19 +246,40 @@ def test_builder(builder, work):
     assert struct.unpack_from("<I", ima, 16)[0] == 8
     assert len(ima) == 24 + 8
 
-    for file_name, version, header_size in (("font.ttf.bfnt", 2, 52), ("font_sdf.ttf.bfnt", 3, 56)):
+    # Each font size is its own BFNT v2 file. The source TTF is read at build time and never copied.
+    for file_name, pixel_height in (("font_10px.bfnt", 10.0), ("font_8px.bfnt", 8.0)):
         font = (output / file_name).read_bytes()
         assert font[:4] == b"BFNT"
-        assert struct.unpack_from("<HH", font, 4) == (version, header_size)
-        pixel_height = struct.unpack_from("<f", font, 8)[0]
-        assert pixel_height == 10.0
+        assert struct.unpack_from("<HH", font, 4) == (2, 52), f"{file_name} is not a BFNT v2 bitmap atlas"
+        assert struct.unpack_from("<f", font, 8)[0] == pixel_height
         assert struct.unpack_from("<II", font, 12) == (32, 224)
         atlas_width, atlas_height = struct.unpack_from("<II", font, 28)
         assert atlas_width > 0 and atlas_height > 0
-        assert len(font) > header_size + 224 * 20
+        assert len(font) > 52 + 224 * 20
+    assert not (output / "font.ttf").exists(), "a font's source must not be copied into the runtime assets"
 
     assert "wind1 audio wind.wav" in index
-    assert "font font font.ttf" in index
+    assert "font_10px font font_10px.bfnt" in index
+    assert "font_8px font font_8px.bfnt" in index
+
+
+def test_rejects_mode_fields(builder, work):
+    project = work / "modes"
+    (project / "assets").mkdir(parents=True)
+    (project / "assets" / "font.ttf").write_bytes((ROOT / "assets" / "font.ttf").read_bytes())
+    manifest = project / "manifest.txt"
+    manifest.write_text("font font assets/font.ttf font_sdf.bfnt - 10 32 224 sdf\n", encoding="utf-8")
+    output = project / "runtime"
+    result = subprocess.run(
+        [str(builder), str(manifest), str(output)],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0, "builder accepted a font row with a leftover SDF mode field"
+    assert "eight for fonts" in result.stderr, result.stderr
+    assert not (output / "font_sdf.bfnt").exists()
 
 
 def main():
@@ -270,6 +291,7 @@ def main():
         test_importer(importer.resolve(), work)
         test_keyer(keyer.resolve(), work)
         test_builder(builder.resolve(), work)
+        test_rejects_mode_fields(builder.resolve(), work)
     print("asset importer and converter integration tests passed")
 
 

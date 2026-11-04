@@ -1,6 +1,6 @@
 //! Text and widgets, bridged from the C code in src/engine/ui/. The C side builds quads in pixels,
-//! all sampling one font atlas. This file queues each quad as a sprite. Fonts are loaded and baked
-//! in text/font.zig.
+//! all sampling one font atlas. This file queues each quad as a sprite. Fonts are loaded from prebaked
+//! `.bfnt` files in text/font.zig.
 //!
 //! The C headers are private to this file and to text/font.zig. Everything else reaches the UI
 //! through `Canvas` (text and rectangles) and `Ui` (widgets), which take and return Zig types.
@@ -306,7 +306,6 @@ fn toC(color: Color) c.ui_color {
 /// `texture`, its `dst` is its pixel rectangle, and the color's RGB and alpha become the sprite's
 /// tint and alpha. `z` puts the UI above or below other sprites, as with any sprite.
 fn queueQuads(batch: *sprite.SpriteBatch, font: *Font, list: *const c.ui_quad_list, z: i32) void {
-    font.refreshTexture();
     const count: usize = @intCast(list.count);
     for (list.items[0..count]) |q| {
         const snap = @floor(q.dst.x + 0.5);
@@ -317,7 +316,7 @@ fn queueQuads(batch: *sprite.SpriteBatch, font: *Font, list: *const c.ui_quad_li
             &font.texture,
             .{ .x = q.src.x, .y = q.src.y, .w = q.src.w, .h = q.src.h },
             .{ .x = snap, .y = snap_y, .w = snap_w, .h = snap_h },
-            .{ .tint = .{ q.color.r, q.color.g, q.color.b }, .alpha = q.color.a, .z = z, .sdf = q.sdf != 0 },
+            .{ .tint = .{ q.color.r, q.color.g, q.color.b }, .alpha = q.color.a, .z = z },
         );
     }
 }

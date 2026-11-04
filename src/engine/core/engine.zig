@@ -134,7 +134,7 @@ pub const diagnostics = @import("../diagnostics/diagnostics.zig");
 pub const console = @import("../diagnostics/console.zig");
 /// Debug geometry for the world: the tile grid, solid cells, and the camera bounds.
 pub const debug_geometry = @import("../renderer/debug_geometry.zig");
-/// Text and widgets: fonts baked with stb_truetype, and the IMGUI widgets in src/engine/ui/.
+/// Text and widgets: prebaked bitmap fonts, and the IMGUI widgets in src/engine/ui/.
 pub const ui = @import("../ui/ui.zig");
 /// Logging and assertions. Game code uses `engine.log.scoped("name")` and `engine.log.assert`.
 pub const log = @import("../logging/log.zig");

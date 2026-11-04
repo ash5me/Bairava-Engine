@@ -1,12 +1,15 @@
 /*
- * text.h: TrueType and OpenType fonts are baked into a texture atlas of white glyphs, with
- * coverage or SDF data in the alpha channel. Each frame, a string becomes one quad per glyph.
+ * text.h: prebaked bitmap fonts, loaded and drawn by the engine.
  *
- * Fonts can lazily rasterize glyphs beyond their baked codepoint range when dynamic caching is
- * enabled. Kerning is applied where the font backend exposes it; text is UTF-8 decoded into
- * individual codepoints and does not perform script shaping.
+ * A font is a BFNT file that the asset builder bakes offline (tools/assets/font_bake.c). It holds an
+ * atlas of white glyphs with coverage in the alpha channel, glyph metrics, and kerning pairs. The
+ * engine never rasterizes outlines: it parses the file, uploads the atlas once, and each frame a
+ * string becomes one quad per glyph. Quads that sample the same atlas are drawn as one batch.
  *
- * This header does not include stb_truetype.h or FreeType headers; only text.c depends on them.
+ * A codepoint outside the baked range draws as '?'. Kerning comes only from the baked table. Text is
+ * UTF-8 decoded into codepoints and is not shaped.
+ *
+ * Nothing in this header or in text.c depends on FreeType or stb_truetype.
  */
 #ifndef UI_TEXT_H
 #define UI_TEXT_H
@@ -28,37 +31,19 @@ typedef struct ui_kerning {
 
 typedef struct ui_font {
     int first, count;      /* baked codepoints: first .. first + count - 1 */
-    float pixel_height;
+    float pixel_height;    /* the size the atlas was baked at */
     int ascent;            /* distance from the top of a line to its baseline */
     int line_height;       /* distance from one baseline to the next */
-    int atlas_w, atlas_h;  /* power-of-two atlas dimensions; dynamic glyphs can grow its height */
-    int sdf;               /* atlas alpha stores signed distance when set */
-    float sdf_range;
-    int freetype_backend;  /* dynamic cache uses FreeType for this source font */
+    int atlas_w, atlas_h;  /* power-of-two atlas dimensions, fixed once baked */
     unsigned char *rgba;   /* atlas pixels, RGBA8, row 0 at the top. Upload this as a texture. */
     ui_glyph *glyphs;      /* count entries, indexed by codepoint - first */
     ui_kerning *kernings;  /* sorted by (left, right), for binary search */
     int kerning_count;
-    unsigned char *source_font; /* retained only when dynamic glyph caching is enabled */
-    size_t source_font_len;
-    int dynamic_glyphs;
-    int *extra_codepoints;
-    ui_glyph *extra_glyphs;
-    int extra_count, extra_capacity;
-    int dynamic_x, dynamic_y, dynamic_row_height;
-    unsigned int atlas_generation;
     ui_rect white;         /* a solid 2x2 block in the atlas, for filled rectangles */
 } ui_font;
 
-/* Bakes `count` codepoints from `first` out of font data at `pixel_height`. Returns 0 on success.
- * The atlas starts at 128 pixels and doubles until every glyph fits, up to 4096. */
-int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int first, int count, ui_font *font);
-/* Bakes SDF glyphs for smooth scaling. `distance_range` is the encoded distance range in pixels. */
-int ui_font_bake_sdf(const unsigned char *ttf, size_t len, float pixel_height, int first, int count,
-                     float distance_range, ui_font *font);
-/* Retains the font source and enables lazy rasterization for codepoints outside the baked range. */
-int ui_font_enable_dynamic(ui_font *font, const unsigned char *font_data, size_t len);
-/* Loads a generated BFNT v1, v2, or v3 font atlas and metrics. The requested height must match the baked size. */
+/* Loads a BFNT v1 or v2 font: its metrics, glyphs, kerning, and atlas. The file must have been baked at
+ * `expected_pixel_height`, or it is rejected. Returns 0 on success. On failure `font` is left empty. */
 int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_pixel_height, ui_font *font);
 void ui_font_destroy(ui_font *font);
 
