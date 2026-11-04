@@ -2,7 +2,7 @@
  * text.h: prebaked bitmap fonts, loaded and drawn by the engine.
  *
  * A font is a BFNT file that the asset builder bakes offline (tools/assets/font_bake.c). It holds an
- * atlas of white glyphs with coverage in the alpha channel, glyph metrics, and kerning pairs. The
+ * atlas of glyph coverage, one byte per texel, plus glyph metrics and kerning pairs. The
  * engine never rasterizes outlines: it parses the file, uploads the atlas once, and each frame a
  * string becomes one quad per glyph. Quads that sample the same atlas are drawn as one batch.
  *
@@ -37,8 +37,8 @@ typedef struct ui_font {
     int ascent;            /* distance from the top of a line to its baseline */
     int line_height;       /* distance from one baseline to the next */
     int atlas_w, atlas_h;  /* power-of-two atlas dimensions, fixed once baked */
-    unsigned char *rgba;   /* atlas pixels, RGBA8, row 0 at the top. Upload this as a texture, then call
-                              ui_font_release_atlas. NULL once released. */
+    unsigned char *alpha;  /* atlas coverage, one byte per texel, row 0 at the top. Upload it as an R8 texture,
+                              then call ui_font_release_atlas. The white block is 255. NULL once released. */
     ui_glyph *glyphs;      /* count entries, indexed by codepoint - first */
     ui_kerning *kernings;  /* sorted by (left, right), for binary search */
     int kerning_count;

@@ -43,6 +43,16 @@ pub const lit_fragment = shader.Source{
     .resources = .{ .samplers = 2, .uniform_buffers = 1 },
 };
 
+/// The coverage fragment shader, for the glyph atlases of prebaked fonts. Those are R8 textures with one coverage byte
+/// per texel, so the shader reads the red channel and applies the vertex color. It takes the one sampler slot.
+pub const coverage_fragment = shader.Source{
+    .name = "default_font.frag",
+    .entry = "fontFragmentMain",
+    .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
+    .code = .{ .spirv = embedded.default_font_frag, .dxil = embedded.default_font_frag_dxil, .msl = embedded.default_font_frag_msl },
+    .resources = .{ .samplers = 1 },
+};
+
 /// The GPU objects of one sprite batch. The engine keeps a pointer to the state, and `destroy` frees it.
 pub const State = struct {
     device: *c.SDL_GPUDevice,
@@ -52,6 +62,8 @@ pub const State = struct {
     upload_buffer: *c.SDL_GPUTransferBuffer,
     /// The pipeline for normal-mapped runs. Null when the batch was created without a lit fragment shader.
     lit_pipeline: ?*c.SDL_GPUGraphicsPipeline,
+    /// The pipeline for alpha-only atlas runs (fonts). Null when the batch was created without a coverage shader.
+    coverage_pipeline: ?*c.SDL_GPUGraphicsPipeline,
     index_buffer: *c.SDL_GPUBuffer,
     ib_binding: c.SDL_GPUBufferBinding,
     index_filled: bool = false,
@@ -59,17 +71,18 @@ pub const State = struct {
     gpu_vertex_capacity: usize,
 };
 
-/// Builds the GPU objects of a batch. `fragment` is the plain fragment stage, and `lit` the lit one, or null for a
-/// batch that draws no lit sprites. `initial_vertices` is the starting capacity; the vertex buffer is
+/// Builds the GPU objects of a batch. `fragment` is the plain fragment stage, `lit` the lit one, and `coverage` the one
+/// for alpha-only atlases; each of the last two is null for a batch that draws none of that kind. `initial_vertices` is the starting capacity; the vertex buffer is
 /// replaced when a frame needs more. `color_format` is the swapchain format the sprites render into. Every
 /// fragment shader must read the samplers and uniform blocks declared in its source.
-pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat, initial_vertices: usize, fragment: shader.Source, lit: ?shader.Source) *State {
+pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat, initial_vertices: usize, fragment: shader.Source, lit: ?shader.Source, coverage: ?shader.Source) *State {
     const format = shader.pickFormat(device);
     const vert = shader.load(device, format, vertex_source);
     defer c.SDL_ReleaseGPUShader(device, vert);
 
     const pipeline = makePipeline(device, format, vert, fragment, color_format);
     const lit_pipeline: ?*c.SDL_GPUGraphicsPipeline = if (lit) |source| makePipeline(device, format, vert, source, color_format) else null;
+    const coverage_pipeline: ?*c.SDL_GPUGraphicsPipeline = if (coverage) |source| makePipeline(device, format, vert, source, color_format) else null;
 
     // The GPU buffers start at the initial size and are replaced when a frame needs more. The index buffer
     // has one set of six indices for each quad the vertex buffer holds.
@@ -82,6 +95,7 @@ pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_form
         .device = device,
         .pipeline = pipeline,
         .lit_pipeline = lit_pipeline,
+        .coverage_pipeline = coverage_pipeline,
         .vertex_buffer = vertex_buffer,
         .vb_binding = .{ .buffer = vertex_buffer, .offset = 0 },
         .upload_buffer = upload_buffer,
@@ -129,15 +143,20 @@ pub fn beginDraw(state: *const State, pass: ?*c.SDL_GPURenderPass) void {
 }
 
 /// Draws one run of quads that share a texture and a normal map: the vertices from `first_vertex` on, `vertex_count`
-/// of them. A run with a normal map binds the lit pipeline and both samplers. Any other run binds the plain pipeline
-/// and one sampler. The indices name absolute vertices, so the draw starts at this run's first quad in the index
+/// of them. A run with a normal map binds the lit pipeline and both samplers. An alpha-only run (`coverage`) binds the
+/// coverage pipeline and one sampler. Any other run binds the plain pipeline and one sampler. The indices name absolute vertices, so the draw starts at this run's first quad in the index
 /// buffer and uses no base vertex.
-pub fn drawRun(state: *const State, pass: ?*c.SDL_GPURenderPass, tex: *const texture.State, normal: ?*const texture.State, first_vertex: u32, vertex_count: u32) void {
+pub fn drawRun(state: *const State, pass: ?*c.SDL_GPURenderPass, tex: *const texture.State, normal: ?*const texture.State, coverage: bool, first_vertex: u32, vertex_count: u32) void {
     if (normal) |map| {
         const lit = state.lit_pipeline orelse std.debug.panic("a normal-mapped sprite needs a batch with a lit pipeline", .{});
         c.SDL_BindGPUGraphicsPipeline(pass, lit);
         const samplers = [2]c.SDL_GPUTextureSamplerBinding{ texture.binding(tex), texture.binding(map) };
         c.SDL_BindGPUFragmentSamplers(pass, 0, &samplers, 2);
+    } else if (coverage) {
+        const coverage_pipeline = state.coverage_pipeline orelse std.debug.panic("an alpha-only atlas needs a batch with a coverage pipeline", .{});
+        c.SDL_BindGPUGraphicsPipeline(pass, coverage_pipeline);
+        const sampler = texture.binding(tex);
+        c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
     } else {
         c.SDL_BindGPUGraphicsPipeline(pass, state.pipeline);
         const sampler = texture.binding(tex);
@@ -155,6 +174,7 @@ pub fn destroy(state: *State, allocator: std.mem.Allocator) void {
     c.SDL_ReleaseGPUBuffer(state.device, state.index_buffer);
     c.SDL_ReleaseGPUBuffer(state.device, state.vertex_buffer);
     if (state.lit_pipeline) |lit| c.SDL_ReleaseGPUGraphicsPipeline(state.device, lit);
+    if (state.coverage_pipeline) |coverage| c.SDL_ReleaseGPUGraphicsPipeline(state.device, coverage);
     c.SDL_ReleaseGPUGraphicsPipeline(state.device, state.pipeline);
     allocator.destroy(state);
 }

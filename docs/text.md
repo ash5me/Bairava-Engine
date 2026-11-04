@@ -25,14 +25,16 @@ solid white for filled rectangles. Atlas sizes are powers of two from 128 to 409
 ## Runtime
 
 `ctx.loadFont(path, pixel_height)` reads the `.bfnt` file. The file must have been baked at exactly
-`pixel_height`; a mismatch is rejected rather than rebuilt. The atlas uploads once as a texture and is
-not refreshed afterward. Once the upload has copied the pixels, the CPU copy of the atlas is released,
-so a loaded font keeps only its metrics, glyph table, and kerning pairs. Measuring and drawing never
-read atlas pixels.
+`pixel_height`; a mismatch is rejected rather than rebuilt. The atlas uploads once, and is not refreshed
+afterward. It is stored as one coverage byte per texel: an R8 texture on the GPU, a quarter of the memory
+of RGBA8. Its glyphs are drawn through a coverage pipeline, which reads that byte as the glyph's alpha and
+applies the text color. Once the upload has copied the bytes, the CPU copy is released, so a loaded font keeps
+only its metrics, glyph table, and kerning pairs. Measuring and drawing never read atlas pixels.
 
 Each frame, a string becomes one quad per visible glyph. A quad's source is the glyph's rectangle in the
 atlas, and its destination is a whole-pixel rectangle on screen. Quads are queued on the sprite batch,
-which draws each run of consecutive quads that share the atlas in one draw call.
+which draws each run of consecutive quads that share the atlas in one draw call. A font atlas is never lit,
+so its quads always take the coverage pipeline.
 
 ## Limits
 
@@ -41,6 +43,8 @@ which draws each run of consecutive quads that share the atlas in one draw call.
   characters it lacks. Text is decoded as UTF-8, but it is not shaped.
 - Kerning comes only from the baked pair table.
 - Glyphs are placed on whole pixels. There is no signed-distance or sub-pixel scaling.
+- A font atlas is a single coverage channel. A glyph's color comes only from the quad's tint, so a font
+  cannot carry its own colors.
 - Each size is a separate file. To draw at a new size, add a manifest row and load its file with the same
   pixel height.
 
@@ -54,7 +58,10 @@ range includes it, otherwise none. Version 3, which carried a signed-distance fl
 
 - `src/engine/text/text.h`, `text.c`: the runtime loader, text measuring, quad building, and
   `ui_font_release_atlas`. They depend on nothing but the C standard library.
-- `src/engine/text/font.zig`: the GPU upload of a loaded font's atlas, followed by the release of
-  its CPU copy.
+- `src/engine/text/font.zig`: the GPU upload of a loaded font's atlas as an R8 texture, followed by the
+  release of its CPU copy.
+- `src/engine/renderer/texture.zig` (`createCoverage`) and `backends/sdl_gpu/texture.zig` (`uploadCoverage`):
+  the alpha-only texture. `shaders/default.slang` (`fontFragmentMain`) and `backends/sdl_gpu/sprite.zig`
+  (`coverage_fragment`) make the coverage pipeline that draws it.
 - `tools/assets/font_bake.h`, `font_bake.c`: the offline baker, used by the asset builder and the UI tests.
 - `tools/assets/build.c`: writes the BFNT file for each font row.

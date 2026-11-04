@@ -117,7 +117,7 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
     int first, count, atlas_w, atlas_h, version, fallback, kerning_count = 0;
     float pixel_height;
     size_t header_len, pixels, glyph_offset, pixel_offset, expected_len;
-    unsigned char *rgba = NULL;
+    unsigned char *alpha = NULL;
     ui_glyph *glyphs = NULL;
     ui_kerning *kernings = NULL;
     if (font == NULL) return -1;
@@ -160,9 +160,9 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
     if (len != expected_len) return -1;
 
     glyphs = (ui_glyph *)calloc((size_t)count, sizeof *glyphs);
-    rgba = (unsigned char *)malloc(pixels * 4);
+    alpha = (unsigned char *)malloc(pixels);
     kernings = kerning_count > 0 ? (ui_kerning *)calloc((size_t)kerning_count, sizeof *kernings) : NULL;
-    if (glyphs == NULL || rgba == NULL || (kerning_count > 0 && kernings == NULL)) goto fail;
+    if (glyphs == NULL || alpha == NULL || (kerning_count > 0 && kernings == NULL)) goto fail;
     for (int i = 0; i < count; i++) {
         const unsigned char *src = data + glyph_offset + (size_t)i * 20;
         ui_glyph *g = &glyphs[i];
@@ -184,12 +184,7 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
             !(kernings[i].advance == kernings[i].advance) || kernings[i].advance < -atlas_w || kernings[i].advance > atlas_w) goto fail;
         if (i > 0 && compare_kerning(&kernings[i - 1], &kernings[i]) >= 0) goto fail;
     }
-    for (size_t i = 0; i < pixels; i++) {
-        rgba[i * 4 + 0] = 255;
-        rgba[i * 4 + 1] = 255;
-        rgba[i * 4 + 2] = 255;
-        rgba[i * 4 + 3] = data[pixel_offset + i];
-    }
+    memcpy(alpha, data + pixel_offset, pixels);
     font->first = first;
     font->count = count;
     font->fallback = fallback;
@@ -198,7 +193,7 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
     font->line_height = (int)(int32_t)read_u32le(data + 24);
     font->atlas_w = atlas_w;
     font->atlas_h = atlas_h;
-    font->rgba = rgba;
+    font->alpha = alpha;
     font->glyphs = glyphs;
     font->kernings = kernings;
     font->kerning_count = kerning_count;
@@ -210,14 +205,14 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
 fail_font:
     memset(font, 0, sizeof *font);
 fail:
-    free(rgba);
+    free(alpha);
     free(glyphs);
     free(kernings);
     return -1;
 }
 
 void ui_font_destroy(ui_font *font) {
-    free(font->rgba);
+    free(font->alpha);
     free(font->glyphs);
     free(font->kernings);
     memset(font, 0, sizeof *font);
@@ -225,8 +220,8 @@ void ui_font_destroy(ui_font *font) {
 
 void ui_font_release_atlas(ui_font *font) {
     if (font == NULL) return;
-    free(font->rgba);
-    font->rgba = NULL;
+    free(font->alpha);
+    font->alpha = NULL;
 }
 
 float ui_font_text_width(ui_font *font, const char *text, size_t len) {

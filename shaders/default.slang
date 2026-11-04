@@ -52,6 +52,15 @@ float4 fragmentMain(VSOutput input) : SV_Target {
     return texel * input.color;
 }
 
+// Glyphs from a prebaked font. Its atlas is an R8 texture with one coverage byte per texel, which samples as the red
+// channel. The text color comes from the vertex color, so this gives the same result as the RGBA path would for a
+// white texel of coverage c: (color.rgb, c * color.a).
+[shader("fragment")]
+float4 fontFragmentMain(VSOutput input) : SV_Target {
+    float coverage = sampleTex(input.uv).r;
+    return float4(input.color.rgb, coverage * input.color.a);
+}
+
 // Settings every post-processing pass reads. The layout matches PostParams in renderer/render_types.zig: one row of
 // four floats. x is the vignette strength, y the dimmed scanline brightness, z the grayscale amount, and w is unused.
 #ifdef POST_SHADER

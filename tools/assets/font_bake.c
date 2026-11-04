@@ -1,9 +1,9 @@
 /*
  * font_bake.c: bakes TrueType and OpenType outlines into a bitmap glyph atlas, offline.
  *
- * The atlas is RGBA8 with white glyphs. Coverage goes into alpha and RGB stays white, so a quad's tint
- * sets the text color. The top two rows hold a solid white block for filled rectangles, and glyph pixels
- * are written below it.
+ * The atlas is one coverage byte per texel. The engine samples it as an R8 texture and tints it with the
+ * quad's color, so a quad's tint sets the text color. The top two rows hold a solid white block for filled
+ * rectangles (coverage 255), and glyph pixels are written below it.
  *
  * TrueType outlines are rasterized by stb_truetype. OpenType CFF outlines, which stb_truetype does not
  * read, are rasterized by FreeType at FONT_OVERSAMPLE times the size and box-filtered down, so they
@@ -119,7 +119,7 @@ static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pi
     FT_Face face = NULL;
     ft_bitmap_copy *bitmaps = NULL;
     ui_kerning *kernings = NULL;
-    unsigned char *rgba = NULL;
+    unsigned char *alpha = NULL;
     int side, x, y, row_height, kerning_count = 0, asc, line_height;
     int ok = 0;
     if (!font) return -1;
@@ -153,19 +153,15 @@ static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pi
         if (fits) break;
         if (side == ATLAS_MAX) goto done;
     }
-    rgba = malloc((size_t)side * side * 4);
-    if (!rgba) goto done;
-    for (size_t p = 0; p < (size_t)side * side; p++) {
-        rgba[p * 4] = rgba[p * 4 + 1] = rgba[p * 4 + 2] = 255;
-        rgba[p * 4 + 3] = 0;
-    }
-    for (int yy = 0; yy < WHITE_ROWS; yy++) for (int xx = 0; xx < WHITE_COLS; xx++) rgba[((size_t)yy * side + xx) * 4 + 3] = 255;
+    alpha = calloc((size_t)side * side, 1);
+    if (!alpha) goto done;
+    for (int yy = 0; yy < WHITE_ROWS; yy++) for (int xx = 0; xx < WHITE_COLS; xx++) alpha[(size_t)yy * side + xx] = 255;
     for (int i = 0; i < count; i++) {
         ui_glyph *g = &font->glyphs[i];
         int w = g->x1 - g->x0, h = g->y1 - g->y0;
         if (w <= 0 || h <= 0) continue;
         for (int yy = 0; yy < h; yy++) for (int xx = 0; xx < w; xx++)
-            rgba[((size_t)(g->y0 + yy) * side + g->x0 + xx) * 4 + 3] = bitmaps[i].pixels[(size_t)yy * w + xx];
+            alpha[(size_t)(g->y0 + yy) * side + g->x0 + xx] = bitmaps[i].pixels[(size_t)yy * w + xx];
     }
     if (count <= 512) {
         size_t capacity = (size_t)count * (size_t)count;
@@ -187,13 +183,13 @@ static int ui_font_bake_freetype(const unsigned char *data, size_t len, float pi
     }
     font->first = first; font->count = count; font->pixel_height = pixel_height;
     font->ascent = asc; font->line_height = line_height > 0 ? line_height : asc;
-    font->atlas_w = side; font->atlas_h = side; font->rgba = rgba;
+    font->atlas_w = side; font->atlas_h = side; font->alpha = alpha;
     font->kernings = kernings; font->kerning_count = kerning_count;
     font->white = (ui_rect){ 0, 0, WHITE_COLS, WHITE_ROWS };
-    rgba = NULL; kernings = NULL; ok = 1;
+    alpha = NULL; kernings = NULL; ok = 1;
 done:
     if (bitmaps) for (int i = 0; i < count; i++) free(bitmaps[i].pixels);
-    free(bitmaps); free(rgba); free(kernings);
+    free(bitmaps); free(alpha); free(kernings);
     if (face) FT_Done_Face(face);
     if (library) FT_Done_FreeType(library);
     if (!ok) { free(font->glyphs); memset(font, 0, sizeof *font); }
@@ -279,7 +275,7 @@ static int build_kerning(const stbtt_fontinfo *info, float scale, int first, int
 int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int first, int count, ui_font *font) {
     stbtt_fontinfo info;
     stbtt_bakedchar *baked = NULL;
-    unsigned char *alpha = NULL, *rgba = NULL;
+    unsigned char *alpha = NULL;
     int asc, desc, gap, side, rows, i, kerning_count = 0;
     float scale;
     ui_kerning *kernings = NULL;
@@ -312,9 +308,8 @@ int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int f
         if (side >= ATLAS_MAX) goto fail;
     }
 
-    rgba = malloc((size_t)side * side * 4);
     font->glyphs = malloc(sizeof *font->glyphs * (size_t)count);
-    if (!rgba || !font->glyphs) goto fail;
+    if (!font->glyphs) goto fail;
     if (!build_kerning(&info, scale, first, count, &kernings, &kerning_count)) goto fail;
 
     /* The glyph rows are relative to the bitmap stb was given, which starts below the white block. */
@@ -325,12 +320,6 @@ int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int f
     for (int y = 0; y < WHITE_ROWS; y++)
         for (int x = 0; x < WHITE_COLS; x++)
             alpha[y * side + x] = 255;
-    for (size_t p = 0; p < (size_t)side * side; p++) {
-        rgba[p * 4 + 0] = 255;
-        rgba[p * 4 + 1] = 255;
-        rgba[p * 4 + 2] = 255;
-        rgba[p * 4 + 3] = alpha[p];
-    }
     for (i = 0; i < count; i++) {
         font->glyphs[i].x0 = baked[i].x0;
         font->glyphs[i].y0 = baked[i].y0;
@@ -348,19 +337,18 @@ int ui_font_bake(const unsigned char *ttf, size_t len, float pixel_height, int f
     font->line_height = round_px((float)(asc - desc + gap) * scale);
     font->atlas_w = side;
     font->atlas_h = side;
-    font->rgba = rgba;
+    font->alpha = alpha;
+    alpha = NULL;
     font->white = (ui_rect){ 0, 0, WHITE_COLS, WHITE_ROWS };
     font->kernings = kernings;
     font->kerning_count = kerning_count;
     font->fallback = ui_font_default_fallback(first, count);
-    free(alpha);
     free(baked);
     return 0;
 
 fail:
     free(alpha);
     free(baked);
-    free(rgba);
     free(font->glyphs);
     free(kernings);
     memset(font, 0, sizeof *font);

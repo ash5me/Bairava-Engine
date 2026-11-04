@@ -14,6 +14,8 @@ pub const Texture = struct {
     width: u32,
     height: u32,
     has_upload_fence: bool,
+    /// True for an alpha-only atlas (see createCoverage). It samples through the coverage pipeline and is never lit.
+    coverage: bool = false,
 
     /// Releases the GPU resources. The owning engine runtime must outlive the texture.
     pub fn deinit(self: *Texture) void {
@@ -35,6 +37,27 @@ pub const Texture = struct {
 /// Uploads tightly packed RGBA8 pixels (4 bytes per pixel, row 0 at the top).
 pub fn createRgba8(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, pixels: []const u8) Texture {
     return wrapWithSdl(backend.texture.uploadRgba8(allocator, device, width, height, pixels), width, height, pixels);
+}
+
+/// Uploads one coverage byte per texel (row 0 at the top) as a coverage texture: the glyph atlas of a prebaked font.
+/// It is an R8 texture, a quarter of the memory of RGBA8, and sprites that use it are drawn through the coverage
+/// pipeline. The 2D renderer has no such format, so it gets a white RGBA copy, which is freed before this returns.
+pub fn createCoverage(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, alpha: []const u8) Texture {
+    var result = wrap(backend.texture.uploadCoverage(allocator, device, width, height, alpha), width, height);
+    result.coverage = true;
+    const expanded = allocator.alloc(u8, alpha.len * 4) catch @panic("out of memory");
+    defer allocator.free(expanded);
+    for (alpha, 0..) |coverage, index| {
+        expanded[index * 4 + 0] = 255;
+        expanded[index * 4 + 1] = 255;
+        expanded[index * 4 + 2] = 255;
+        expanded[index * 4 + 3] = coverage;
+    }
+    result.sdl2d_state = if (platform.renderer2d.createTexture(width, height, expanded)) |sdl_texture|
+        @ptrCast(sdl_texture)
+    else
+        null;
+    return result;
 }
 
 pub fn supportsCompression(device: *backend.Device, compression: image.Compression) bool {

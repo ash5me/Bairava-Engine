@@ -20,6 +20,12 @@ pub fn uploadRgba8(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width
     return upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height);
 }
 
+/// Uploads one coverage byte per texel as an R8 texture, for the glyph atlas of a prebaked font. Sampling returns the
+/// coverage in the red channel, which the coverage fragment shader reads. A quarter of the memory of RGBA8.
+pub fn uploadCoverage(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, alpha: []const u8) *State {
+    return upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8_UNORM, alpha, width, height);
+}
+
 /// Uploads a prebuilt block-compressed image. The caller checks `supportsCompression` first.
 pub fn uploadCompressed(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, compression: image.Compression, blocks: []const u8) *State {
     const format = gpuFormat(compression) orelse unreachable;

@@ -401,7 +401,7 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
         write_u32le(kerning + 8, advance_bits);
         ok = fwrite(kerning, 1, sizeof kerning, output) == sizeof kerning;
     }
-    for (unsigned int i = 0; ok && i < atlas_pixels; i++) ok = fwrite(&font.rgba[(size_t)i * 4 + 3], 1, 1, output) == 1;
+    for (unsigned int i = 0; ok && i < atlas_pixels; i++) ok = fwrite(&font.alpha[i], 1, 1, output) == 1;
     if (fclose(output) != 0) ok = 0;
     if (!ok) { fprintf(stderr, "asset_build: failed to write preprocessed font '%s'\n", output_path); remove(output_path); }
     ui_font_destroy(&font);

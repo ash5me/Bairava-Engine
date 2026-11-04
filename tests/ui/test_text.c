@@ -23,7 +23,7 @@ static const ui_glyph *glyph(int cp) {
 }
 
 static unsigned char alpha_at(int x, int y) {
-    return font.rgba[((size_t)y * font.atlas_w + x) * 4 + 3];
+    return font.alpha[(size_t)y * font.atlas_w + x];
 }
 
 static void check_atlas(void) {
@@ -39,7 +39,6 @@ static void check_atlas(void) {
         for (int x = 0; x < w; x++) {
             int expect = x < 2 ? 255 : 0;
             CHECK(alpha_at(x, y) == expect);
-            CHECK(font.rgba[((size_t)y * w + x) * 4 + 0] == 255);
         }
     }
 
@@ -116,7 +115,7 @@ static void expect_prebaked_rejected(const unsigned char *data, size_t len, floa
     ui_font rejected;
     memset(&rejected, 0xA5, sizeof rejected);
     CHECK(ui_font_load_prebaked(data, len, height, &rejected) != 0);
-    CHECK(rejected.rgba == NULL && rejected.glyphs == NULL);
+    CHECK(rejected.alpha == NULL && rejected.glyphs == NULL);
     CHECK(rejected.count == 0 && rejected.atlas_w == 0);
 }
 
@@ -154,14 +153,14 @@ static void check_prebaked_roundtrip(void) {
         memcpy(&bits, &g->yoff, sizeof bits); put_u32le(dst + 12, bits);
         memcpy(&bits, &g->xadvance, sizeof bits); put_u32le(dst + 16, bits);
     }
-    for (size_t i = 0; i < pixels; i++) data[pixel_offset + i] = font.rgba[i * 4 + 3];
+    for (size_t i = 0; i < pixels; i++) data[pixel_offset + i] = font.alpha[i];
 
     CHECK(ui_font_load_prebaked(data, len, font.pixel_height, &loaded) == 0);
-    if (loaded.rgba != NULL) {
+    if (loaded.alpha != NULL) {
         CHECK(loaded.first == font.first && loaded.count == font.count);
         CHECK(loaded.pixel_height == font.pixel_height && loaded.line_height == font.line_height);
         CHECK(loaded.atlas_w == font.atlas_w && loaded.atlas_h == font.atlas_h);
-        CHECK(memcmp(loaded.rgba, font.rgba, pixels * 4) == 0);
+        CHECK(memcmp(loaded.alpha, font.alpha, pixels) == 0);
         CHECK(loaded.fallback == '?'); /* v1 has no field, so the default applies */
         CHECK(near(loaded.glyphs['a' - loaded.first].xadvance, glyph('a')->xadvance));
         ui_font_destroy(&loaded);
@@ -238,7 +237,7 @@ static unsigned char *write_v4(const ui_font *f, int fallback, size_t *len_out) 
         put_u32le(dst + 4, f->kernings[i].right);
         memcpy(&bits, &f->kernings[i].advance, sizeof bits); put_u32le(dst + 8, bits);
     }
-    for (p = 0; p < pixels; p++) data[pos + p] = f->rgba[p * 4 + 3];
+    for (p = 0; p < pixels; p++) data[pos + p] = f->alpha[p];
     *len_out = len;
     return data;
 }
@@ -256,7 +255,7 @@ static void check_fallback(const char *path) {
     CHECK(data != NULL);
     if (data != NULL) {
         CHECK(ui_font_load_prebaked(data, len, font.pixel_height, &loaded) == 0);
-        if (loaded.rgba != NULL) {
+        if (loaded.alpha != NULL) {
             CHECK(loaded.fallback == '?');
             ui_font_destroy(&loaded);
         }
@@ -264,7 +263,7 @@ static void check_fallback(const char *path) {
         expect_prebaked_rejected(data, len, font.pixel_height);
         put_u32le(data + 52, (unsigned int)-1); /* none is always allowed */
         CHECK(ui_font_load_prebaked(data, len, font.pixel_height, &loaded) == 0);
-        if (loaded.rgba != NULL) {
+        if (loaded.alpha != NULL) {
             CHECK(loaded.fallback == -1);
             list.count = 0;
             ui_font_draw_text(&loaded, &list, 0, 0, "\xE4\xB8\x80", 3, red); /* U+4E00, not baked */
@@ -295,7 +294,7 @@ static void check_fallback(const char *path) {
     CHECK(data != NULL);
     if (data != NULL) {
         CHECK(ui_font_load_prebaked(data, len, letters.pixel_height, &loaded) == 0);
-        if (loaded.rgba != NULL) {
+        if (loaded.alpha != NULL) {
             const ui_glyph *b = &letters.glyphs['b' - letters.first];
             CHECK(loaded.fallback == 'b');
             list.count = 0;
@@ -316,7 +315,7 @@ static void check_release(void) {
     ui_color red = { 1, 0, 0, 1 };
 
     ui_font_release_atlas(&font);
-    CHECK(font.rgba == NULL);
+    CHECK(font.alpha == NULL);
     CHECK(font.glyphs != NULL && font.count > 0);
     CHECK(near(ui_font_text_width(&font, "ab", 2), width));
 
@@ -326,7 +325,7 @@ static void check_release(void) {
 
     ui_font_release_atlas(&font);
     ui_font_release_atlas(NULL);
-    CHECK(font.rgba == NULL);
+    CHECK(font.alpha == NULL);
 }
 
 int main(int argc, char **argv) {

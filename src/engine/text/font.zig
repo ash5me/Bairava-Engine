@@ -10,7 +10,7 @@ const texture = @import("../renderer/texture.zig");
 const Texture = texture.Texture;
 
 /// A font on the GPU: the baked metrics and glyphs from C, plus the atlas texture they sample. The CPU copy of
-/// the atlas is released after upload, so `baked.rgba` is null; measuring and drawing read only metrics.
+/// the atlas is released after upload, so `baked.alpha` is null; measuring and drawing read only metrics.
 pub const Font = struct {
     /// Metrics, kerning, and glyphs, owned by the C side. Pass `&font.baked` to C functions.
     baked: c.ui_font,
@@ -53,9 +53,9 @@ pub fn stage(prebaked: []const u8, pixel_height: f32) error{InvalidFont}!Staged 
 fn fromBaked(allocator: std.mem.Allocator, device: *platform.gpu.Device, baked: c.ui_font) Font {
     const width: u32 = @intCast(baked.atlas_w);
     const height: u32 = @intCast(baked.atlas_h);
-    const pixels = baked.rgba[0 .. @as(usize, width) * height * 4];
-    const atlas = texture.createRgba8(allocator, device, width, height, pixels);
-    // createRgba8 copies the pixels into the GPU and into the 2D renderer's texture before it returns, so nothing
+    const pixels = baked.alpha[0 .. @as(usize, width) * height];
+    const atlas = texture.createCoverage(allocator, device, width, height, pixels);
+    // createCoverage copies the coverage into the GPU and into the 2D renderer's texture before it returns, so nothing
     // reads the CPU copy after this point. Drop it now; the font keeps the metrics, glyphs, and kerning.
     var owned = baked;
     c.ui_font_release_atlas(&owned);
