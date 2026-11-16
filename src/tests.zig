@@ -14,6 +14,8 @@ const tilemap = @import("engine/scene/tilemap.zig");
 const physics_queries = @import("engine/physics/queries.zig");
 
 test {
+    _ = @import("engine/text/hb_smoke.zig");
+    _ = @import("engine/text/hb_shape_test.zig");
     _ = @import("engine/renderer/renderer.zig");
     _ = @import("engine/renderer/post.zig");
     _ = @import("engine/renderer/render_types.zig");

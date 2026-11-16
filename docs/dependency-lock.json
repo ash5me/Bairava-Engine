@@ -28,20 +28,25 @@
       "name": "cglm",
       "version": "0.9.7",
       "source": "https://github.com/recp/cglm",
-      "paths": ["vendor/cglm"],
+      "paths": [
+        "vendor/cglm"
+      ],
       "sha256": "1557fd3f7d9d74f6db729f31954a2c0d38a8d2807fe258e484fdab45348f4857"
     },
     {
       "name": "FreeType",
       "version": "2.15.0",
       "source": "https://gitlab.freedesktop.org/freetype/freetype",
-      "paths": ["vendor/freetype-2.15.0"],
+      "paths": [
+        "vendor/freetype-2.15.0"
+      ],
       "sha256": "1bfbfc08d56f1cf03fc20fe249c6c518502ba47dfd0ed0794088f55bf54d4a12"
     },
     {
       "name": "stb",
-      "version": "image 2.30; image_write 1.16; rect_pack 1.01; truetype 1.26",
+      "version": "image 2.32; image_write 1.18; rect_pack 1.02; truetype 1.28",
       "source": "https://github.com/nothings/stb",
+      "commit": "9600522de53973336fa033a289858a4354cbb04c",
       "paths": [
         "vendor/stb_image.h",
         "vendor/stb_image_write.h",
@@ -50,21 +55,38 @@
         "vendor/stb_image_impl.c",
         "vendor/stb_truetype_impl.c"
       ],
-      "sha256": "bb97d75f3e14eae7448a3c50308d0f525344b764eb20c26b2b2ff1a980b55f71"
+      "sha256": "843f1d62dfc240427a5fa3044d9ffd0b87d8d7665789c4f66c4165f04460863c"
     },
     {
       "name": "rxi/log.c",
       "version": "0.1.0",
       "source": "https://github.com/rxi/log.c",
-      "paths": ["vendor/log.c", "vendor/log.h"],
+      "paths": [
+        "vendor/log.c",
+        "vendor/log.h"
+      ],
       "sha256": "4c1af86f4c62bf404a28d59e966065a2511724c892264a2f422fe3da8a133374"
     },
     {
       "name": "Parson",
       "version": "1.5.4",
       "source": "https://github.com/kgabis/parson",
-      "paths": ["vendor/parson.c", "vendor/parson.h", "vendor/parson-LICENSE"],
+      "paths": [
+        "vendor/parson.c",
+        "vendor/parson.h",
+        "vendor/parson-LICENSE"
+      ],
       "sha256": "35613a28bf64906fd5e08589afddd5595363074b97a9c91d3871c79b17cf9446"
+    },
+    {
+      "name": "HarfBuzz",
+      "version": "15.1.0",
+      "source": "https://github.com/harfbuzz/harfbuzz",
+      "commit": "3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372",
+      "paths": [
+        "vendor/harfbuzz-15.1.0"
+      ],
+      "sha256": "6c1fac27a81a9728e7da272ce22a8cc1f1e79d5bd980f8b2aa97bd93cadfee0c"
     }
   ]
 }

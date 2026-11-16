@@ -1,6 +1,6 @@
 # Bairava Engine — Rendering Migration Plan
 
-**Status:** Proposed — planning only; no implementation started  
+**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated)  
 **Target:** Replace Bairava's prebaked-only text path with a runtime glyph-rasterization and text-shaping pipeline inspired by the uploaded SDL3 GPU proof of concept.  
 **Estimated effort:** **16–25 engineering days** (approximately 3–5 weeks for one developer, allowing for review and integration).  
 **Repository baseline reviewed:** `ash5me/Bairava-Engine`, `main`  
@@ -123,7 +123,7 @@ UTF-8 text + font + text options
 - [x] Decide whether the first release supports only TrueType `glyf` outlines or must retain OpenType CFF support. *(Decided: runtime TrueType only; CFF stays prebaked. Runtime rasterizer: stb_truetype, the plan default. See report section 6.)*
 - [x] Decide initial direction/language controls and whether right-to-left/bidirectional text is part of this migration. *(Decided: left to right; no RTL or bidi in this migration.)*
 - [x] Decide whether the existing `.bfnt` format remains loadable during a transition period. *(Keep loading v1, v2, and v4. Required by the stb_truetype decision.)*
-- [x] Define memory limits and an atlas growth policy (multiple pages, page growth, or bounded cache with eviction). *(Working assumption: four 1024² pages, then fallback, no eviction. Confirm in Phase 3.)*
+- [x] Define memory limits and an atlas growth policy (multiple pages, page growth, or bounded cache with eviction). *(Working assumption: four 1024² pages, then fallback, no eviction. Confirm in Phase 3. **Still awaiting your confirmation.**)*
 - [ ] Capture baseline screenshots and performance numbers for the existing UI and sample. *(Blocked here: needs the full repository and a display. A raster coverage baseline was captured instead.)*
 
 **Deliverable:** short text-rendering design note, agreed compatibility matrix, and baseline test corpus.
@@ -134,14 +134,16 @@ UTF-8 text + font + text options
 
 **Estimate: 2–4 days**
 
-- [ ] Pin a specific HarfBuzz source revision or package version; do not track an unpinned branch.
-- [ ] Reuse Bairava's existing stb_truetype source/header where its version and build configuration are suitable. Avoid adding a duplicate implementation.
-- [ ] Integrate the required HarfBuzz C API and C++ implementation into Bairava's Zig build.
-- [ ] Verify C++ runtime/linker settings for Linux, Windows, and macOS.
-- [ ] Keep the current SDL dependency and version; do not replace it with the PoC's SDL pin.
-- [ ] Keep Bairava's Slang shader pipeline and its SPIR-V, optional DXIL, and optional MSL outputs.
-- [ ] Add a minimal compile/link smoke test that calls the HarfBuzz API from Zig.
-- [ ] Record HarfBuzz and stb licenses and pinned revisions in the dependency policy/lock documentation.
+Legend: `[x]` done, with evidence; `[~]` partly done; `[ ]` open.
+
+- [~] Pin a specific HarfBuzz source revision or package version; do not track an unpinned branch. *(Version 15.1.0, commit `3df40d9…`, and tree hash `0db1ed94…` are in `docs/dependency-lock.json`. The checker verifies the hash, not the commit. The commit still needs checking against the vendored tree.)*
+- [x] Reuse Bairava's existing stb_truetype source/header where its version and build configuration are suitable. Avoid adding a duplicate implementation. *(`vendor/stb_truetype.h` is upstream 1.28 and the only compiled copy. The local edit is gone. Lock entry `truetype 1.28`, hash `6ad5c81a…`. Commit `9600522…` recorded. Its file hash still needs checking against the commit.)*
+- [~] Integrate the required HarfBuzz C API and C++ implementation into Bairava's Zig build. *(Test module only. `addHarfBuzz` compiles `vendor/harfbuzz-15.1.0/src/harfbuzz.cc` with `-std=c++11 -fno-exceptions -fno-rtti`. The shipped engine module does not link it yet; that waits for shaping in Phase 4.)*
+- [~] Verify C++ runtime/linker settings for Linux, Windows, and macOS. *(Windows: `zig build` and `zig build test` pass with `module.link_libcpp = true`, Zig 0.16.0-dev.3142+5ccfeb926. Linux and macOS not run.)*
+- [x] Keep the current SDL dependency and version; do not replace it with the PoC's SDL pin. *(SDL pin in `build.zig.zon` and the lock unchanged.)*
+- [~] Keep Bairava's Slang shader pipeline and its SPIR-V, optional DXIL, and optional MSL outputs. *(No shader changes. Slang 2026.20 archive pins verified. DXIL and MSL output not checked in this work; needs a Windows and macOS run.)*
+- [x] Add a minimal compile/link smoke test that calls the HarfBuzz API from Zig. *(`src/engine/text/hb_smoke.zig` checks that `hb_version_string()` returns 15.1.0. `src/engine/text/hb_shape_test.zig` adds four shaping tests. Both pass on Windows in Debug.)*
+- [~] Record HarfBuzz and stb licenses and pinned revisions in the dependency policy/lock documentation. *(Done: `dependency-policy.md` lists HarfBuzz, with a license and change-history section for both. Commit IDs for HarfBuzz 15.1.0 and stb 1.28 are in the lock and the policy. Checks against the vendored files are pending.)*
 
 **Important compatibility note:** the uploaded proof of concept targets Zig `0.17.0`, while Bairava's current `build.zig.zon` declares `0.16.0-dev.3142+5ccfeb926`. Its build script must not be copied verbatim. Treat the build API and cross-platform C++ linking as an integration task.
 
@@ -354,3 +356,46 @@ The critical path is dependency integration → runtime font ownership → glyph
 - `docs/text.md`
 
 **Planning note:** estimates should be revised after Phase 0 confirms font-format requirements, whether mixed-direction text is required, and whether the existing CFF behavior must be preserved.
+
+---
+
+## 12. Progress log
+
+Entries are dated 2026-11-16. Items marked *(user-reported)* come from build and test runs on the Windows machine, which this work could not see directly.
+
+- **Repository re-check.** The earlier summary's deliverables (the phase1 zip, the repo-changes zip, and the updated status file with sections 12 and 13) were not in the uploads. This file was rebuilt from the repository copy. The pin checker failed on stb: the vendored truetype header was 1.26 with one unrecorded local edit, and the lock still held the upstream hash.
+- **Post-processing order verified.** In `src/engine/core/runtime.zig`, the game UI and debug overlay share one world batch and one pass. The post chain runs after that pass. The `sdl2d` branch presents before the post chain, so configured effects do not apply on that path. The shipped game sets `post_effects` to empty.
+- **HarfBuzz located.** It is not under `vendor/` in the upload. The uploaded checkout is HarfBuzz 15.1.0 under `tools/third_party/harfbuzz`. Its `src/` plus `COPYING` hash to `0db1ed94…` over 588 files. The earlier summary's `6c1fac27…` over 584 files does not match this tree.
+- **stb 1.28 adopted (option A).** The uploaded header is v1.28 and hashes to `6ad5c81a…`, matching the earlier option-A hash. Upstream 1.28 guards the zero-denominator case with `if (denom != 0)`, so the local edit is superseded. One behavior difference: when the denominator is zero, 1.28 leaves `dy` unchanged, while the local edit set it to zero. No test reached that case.
+- **C consumers compile.** `tools/assets/font_bake.c`, two Phase 0 harnesses, and `vendor/stb_truetype_impl.c` produce zero diagnostics under `-std=c99 -Wall -Wextra` with both 1.26 and 1.28.
+- **Rasterization unchanged on these fonts.** The glyph bitmaps from 1.26 and 1.28 match for four fonts (`assets/font.ttf`, `assets/font2.ttf`, `tools/assets/font.ttf`, and `tools/assets/tamil.ttf`). The test covered codepoints 0x0000–0x2FFF and the Tamil block at 27 pixel heights from 4 to 64, about one million bitmaps per version. The earlier claim of one changed glyph in the PoC Latin font was not reproduced. The test went through codepoint lookup, not raw glyph IDs, and the cmap defect was not reproduced either.
+- **HarfBuzz compiles and shapes.** `harfbuzz.cc` builds with g++ under upstream's flags with zero warnings. A test program shapes VT323 "AVATAR" into six monospaced glyphs. It also shapes a Tamil word into five glyphs, with the vowel sign attached by a zero-advance offset, and empty input gives length zero.
+- **Zig wiring.** The first `addHarfBuzz` used a method, `linkLibCpp`, that this Zig version does not have. Checking `Build/Module.zig` showed the `link_libcpp` field, which the compile step reads, so the call was changed to that field.
+- **Commit IDs supplied (2026-11-16).** HarfBuzz `3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372` and stb `9600522de53973336fa033a289858a4354cbb04c` are recorded in the lock as a `commit` field, which the checker ignores. The commits are not yet verified. The stb header hash and the HarfBuzz tree comparison are described in the policy.
+- **Windows build and tests (user-reported).** `zig build` and `zig build test` pass under Zig 0.16.0-dev.3142+5ccfeb926 in Debug. The test set includes the version check and the four shaping tests.
+- **Pin checker (user-reported, Windows).** All seven lock entries verify.
+
+## 13. Decisions and open items
+
+### Decided
+
+1. **stb_truetype: option A.** Upstream 1.28 is vendored and the lock is updated. `PHASE0_REPORT.md` section 6 (the stay-on-1.26 decision) is superseded by this choice. That report has not been edited.
+2. **HarfBuzz vendoring: under `vendor/`.** `vendor/harfbuzz-15.1.0/` holds `src/` and `COPYING`. The default build uses only `harfbuzz.cc`. `src/rust` and `src/wasm` are unused by that build, and the optional kbts subproject is disabled by default.
+3. **Post-processing: effects stay over the UI.** This is the current behavior and no code change is needed. The 2D path issue below still needs its own decision.
+
+### Assumptions awaiting your confirmation
+
+4. The glyph cache uses four 1024² pages with no eviction, plus a `glyph_cache_full` diagnostic. Recorded for Phase 3.
+5. The text migration lands before the Dear ImGui migration. One adapter owns the coverage atlas, and ImGui's font atlas becomes a client of the glyph cache. Glyph uploads for glyphs first used in a frame are recorded before the render pass that samples them. No page is destroyed while queued sprites still reference it.
+
+### Open items
+
+- **Commit checks.** The commits are supplied (HarfBuzz `3df40d9…`, stb `9600522…`) and recorded in the lock. They haven't been checked here, because GitHub didn't resolve in search. Two checks are in the policy: the stb header's SHA-256 against the commit, and the HarfBuzz tree against `git archive`.
+- **`src/hb-version.h`.** The vendored HarfBuzz tree has a generated-looking version header. If upstream doesn't track it, the vendored tree differs from the commit by that file.
+- **Other stb files.** `stb_image.h`, `stb_image_write.h`, and `stb_rect_pack.h` are still unverified against any commit.
+- **Linux and macOS.** Build, C++ runtime linking, and tests. Only Windows has been run.
+- **Shipped engine.** HarfBuzz is linked only into the test module. It joins the engine module when shaping lands in Phase 4.
+- **Sanitizer coverage.** The shaping tests cover Latin text only. Tamil and malformed UTF-8 have not run under Debug checks.
+- **Rasterization coverage.** The comparison did not exercise glyph-ID rasterization, and the cmap defect was not reproduced.
+- **Effects on the 2D path (deferred at your request).** Configured post effects apply on SDL_GPU but not on the `sdl2d` path. The decision is still open.
+- **Blocked here.** DXIL and MSL output, baseline screenshots, and performance numbers need a Windows and macOS run with a display.

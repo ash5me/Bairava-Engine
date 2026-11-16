@@ -1,0 +1,12 @@
+stb_truetype 1.26 (patched, as in the uploaded vendor.zip) vs 1.28 (uploaded file)
+Harness: checks/stb_raster_dump.c, rendering every codepoint 0x0000-0x2FFF and 0x0B80-0x0BFF
+at 27 pixel heights (4-64 px) with stbtt_GetCodepointBitmap; each glyph bitmap is FNV-1a hashed.
+
+Font                        glyph lines   differing (1.26 patched vs 1.28)
+assets/font.ttf             15174         0
+assets/font2.ttf           331263         0
+tools/assets/font.ttf      334827         0   (PoC Latin font)
+tools/assets/tamil.ttf     335178         0
+
+Also 0 differences: 1.26 reverted-guess vs 1.28, and 1.26 patched vs reverted-guess.
+The summary's claim of one changed glyph in the PoC Latin font was not reproduced.

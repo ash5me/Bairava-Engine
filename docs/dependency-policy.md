@@ -14,6 +14,7 @@ and reflected in the version records that ship with release artifacts.
 | ztracy | Full Git commit and Zig package content hash in `build.zig.zon` |
 | Slang compiler | Version in `.github/workflows/ci.yml`; per-platform archive digests in [`dependency-lock.json`](dependency-lock.json) |
 | cglm, FreeType, stb, log.c, Parson | Versions, upstream references, and source-tree SHA-256 values in [`dependency-lock.json`](dependency-lock.json) |
+| HarfBuzz | Version, upstream reference, and source-tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); vendored under `vendor/harfbuzz-15.1.0/` (`src/` and `COPYING`) |
 
 The lock file covers every file in the vendored dependency paths, not just
 version headers. It also mirrors the Zig, Slang, SDL, and ztracy pins. The
@@ -49,6 +50,21 @@ Raise the minimum Zig version only when the code or build requires it. Update
 the full platform matrix. Security fixes should be prioritized; otherwise
 review pinned dependency updates at least quarterly. Keep the prior pin in the
 change history for rollback.
+
+## Licenses and change history for HarfBuzz and stb
+
+**HarfBuzz 15.1.0** (`vendor/harfbuzz-15.1.0/`)
+
+- `COPYING` is the "Old MIT" license. It covers the HarfBuzz sources except where a subdirectory states otherwise.
+- `src/ms-use/COPYING` is the MIT License, copyright Microsoft Corporation. The default build compiles only `src/harfbuzz.cc`, which does not include that code.
+- The build compiles HarfBuzz as C++11 with `-fno-exceptions -fno-rtti` and links the C++ runtime. These match upstream's build settings.
+- Upstream commit: `3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372`, recorded in the lock. Before release, check it against the vendored tree. Export it with `git archive 3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372 src COPYING`, place the output under `vendor/harfbuzz-15.1.0/`, and compare the two. If the commit does not track `src/hb-version.h`, that file is generated and should be recorded as such, not as upstream source.
+
+**stb** (`stb_image.h` 2.30, `stb_image_write.h` 1.16, `stb_rect_pack.h` 1.01, `stb_truetype.h` 1.28)
+
+- Each header offers two alternative licenses: MIT, and public domain (the Unlicense text). Use is permitted under either. This was checked for all four headers.
+- Upstream commit: `9600522de53973336fa033a289858a4354cbb04c`, recorded in the lock for `stb_truetype.h` 1.28. Check it with `git show 9600522de53973336fa033a289858a4354cbb04c:stb_truetype.h | sha256sum`. The result should be `428cfe93520f2aed5e413a220b0db5bba5b17e2ebe5a64e4a8efa9eeeb67ec5f` if your copy is byte-identical to the commit. The other stb files in the lock entry are not yet tied to a commit.
+- Change history for `stb_truetype.h`: version 1.26 (lock hash `bb97d75f…`) was replaced by upstream 1.28 (lock hash `6ad5c81a…`). The 1.26 pin is kept here for rollback. A locally edited 1.26 (hash `0a7a878f…`) was never recorded and is superseded by 1.28.
 
 ## Release record
 

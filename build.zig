@@ -109,6 +109,20 @@ fn addFreeType(b: *std.Build, module: *std.Build.Module) void {
     for (freetype_sources) |path| module.addCSourceFile(.{ .file = b.path(path) });
 }
 
+/// HarfBuzz 15.1.0, vendored under vendor/harfbuzz-15.1.0. Its one translation unit includes every
+/// shaper and table. Platform backends (CoreText, DirectWrite, GDI, FreeType, GLib, Graphite2) compile
+/// to nothing unless a HAVE_* macro is defined, so none is defined here. Upstream builds it as C++11
+/// without exceptions or RTTI, and these flags match that.
+const harfbuzz_source = "vendor/harfbuzz-15.1.0/src/harfbuzz.cc";
+const harfbuzz_flags = [_][]const u8{ "-std=c++11", "-fno-exceptions", "-fno-rtti" };
+
+fn addHarfBuzz(b: *std.Build, module: *std.Build.Module) void {
+    module.addIncludePath(b.path("vendor/harfbuzz-15.1.0/src"));
+    module.addCSourceFile(.{ .file = b.path(harfbuzz_source), .flags = &harfbuzz_flags });
+    // HarfBuzz is C++, so the compile step must link the C++ runtime. The compile step reads this field.
+    module.link_libcpp = true;
+}
+
 /// The job system and the scripting runtime are plain C with no SDL. The engine and the test module both link them.
 fn addJobsAndScript(b: *std.Build, module: *std.Build.Module) void {
     module.addIncludePath(b.path("src/engine/jobs"));
@@ -576,6 +590,8 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     addCglm(b, test_module);
+    // Shaping is not in the shipped engine yet, so only the test module links HarfBuzz for now.
+    addHarfBuzz(b, test_module);
     // Renderer modules use SDL GPU declarations, and embedded shaders are needed to compile them.
     // Tests open no window and create no GPU device.
     test_module.linkLibrary(sdl.artifact("SDL3"));
