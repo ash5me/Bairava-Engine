@@ -1,6 +1,6 @@
 # Bairava Engine — Rendering Migration Plan
 
-**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated)  
+**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated; HarfBuzz lock hash conflict open, see section 12)  
 **Target:** Replace Bairava's prebaked-only text path with a runtime glyph-rasterization and text-shaping pipeline inspired by the uploaded SDL3 GPU proof of concept.  
 **Estimated effort:** **16–25 engineering days** (approximately 3–5 weeks for one developer, allowing for review and integration).  
 **Repository baseline reviewed:** `ash5me/Bairava-Engine`, `main`  
@@ -118,7 +118,7 @@ UTF-8 text + font + text options
 **Estimate: 1–2 days**
 
 - [x] Inventory all font-loading and text-drawing call sites in the engine, sample, tests, and game code. *(Done: `inventory/call_sites.txt`.)*
-- [x] Record existing public behavior: font sizing, baseline convention, text measurement, wrapping, alignment, color/alpha, and rectangle drawing. *(Done for the C runtime: `characterization/`, 70 of 70. The Zig side was read, not run.)*
+- [x] Record existing public behavior: font sizing, baseline convention, text measurement, wrapping, alignment, color/alpha, and rectangle drawing. *(Done for the C runtime: `characterization/`, 70 of 70. The Zig side was read, not run. Re-run 2026-11-16 against the uploaded `src/engine/text/text.c`: 70 checks, 0 failed, no warnings under `gcc -std=c99 -Wall -Wextra`.)*
 - [x] Define initial supported scripts and test strings. At minimum include ASCII/Latin and Tamil. *(Accepted: Latin and Tamil. Corpus in report section 5.)*
 - [x] Decide whether the first release supports only TrueType `glyf` outlines or must retain OpenType CFF support. *(Decided: runtime TrueType only; CFF stays prebaked. Runtime rasterizer: stb_truetype, the plan default. See report section 6.)*
 - [x] Decide initial direction/language controls and whether right-to-left/bidirectional text is part of this migration. *(Decided: left to right; no RTL or bidi in this migration.)*
@@ -136,14 +136,14 @@ UTF-8 text + font + text options
 
 Legend: `[x]` done, with evidence; `[~]` partly done; `[ ]` open.
 
-- [~] Pin a specific HarfBuzz source revision or package version; do not track an unpinned branch. *(Version 15.1.0, commit `3df40d9…`, and tree hash `0db1ed94…` are in `docs/dependency-lock.json`. The checker verifies the hash, not the commit. The commit still needs checking against the vendored tree.)*
-- [x] Reuse Bairava's existing stb_truetype source/header where its version and build configuration are suitable. Avoid adding a duplicate implementation. *(`vendor/stb_truetype.h` is upstream 1.28 and the only compiled copy. The local edit is gone. Lock entry `truetype 1.28`, hash `6ad5c81a…`. Commit `9600522…` recorded. Its file hash still needs checking against the commit.)*
+- [~] Pin a specific HarfBuzz source revision or package version; do not track an unpinned branch. *(Version 15.1.0 and commit `3df40d9…` are in `docs/dependency-lock.json`. The uploaded lock's HarfBuzz `sha256` is `6c1fac27…`. This file previously cited `0db1ed94…` as the lock's tree hash, which is wrong for this upload. Open; see section 12. The checker verifies the hash, not the commit, and the commit still needs checking against the vendored tree.)*
+- [x] Reuse Bairava's existing stb_truetype source/header where its version and build configuration are suitable. Avoid adding a duplicate implementation. *(`vendor/stb_truetype.h` is upstream 1.28 and the only compiled copy. The local edit is gone. The lock has one group hash, `843f1d62…`, for all six stb paths, not a per-file `truetype` hash. This file previously cited `6ad5c81a…` as a lock entry; that value is not in the lock. Commit `9600522…` recorded. Its file hash still needs checking against the commit.)*
 - [~] Integrate the required HarfBuzz C API and C++ implementation into Bairava's Zig build. *(Test module only. `addHarfBuzz` compiles `vendor/harfbuzz-15.1.0/src/harfbuzz.cc` with `-std=c++11 -fno-exceptions -fno-rtti`. The shipped engine module does not link it yet; that waits for shaping in Phase 4.)*
 - [~] Verify C++ runtime/linker settings for Linux, Windows, and macOS. *(Windows: `zig build` and `zig build test` pass with `module.link_libcpp = true`, Zig 0.16.0-dev.3142+5ccfeb926. Linux and macOS not run.)*
 - [x] Keep the current SDL dependency and version; do not replace it with the PoC's SDL pin. *(SDL pin in `build.zig.zon` and the lock unchanged.)*
 - [~] Keep Bairava's Slang shader pipeline and its SPIR-V, optional DXIL, and optional MSL outputs. *(No shader changes. Slang 2026.20 archive pins verified. DXIL and MSL output not checked in this work; needs a Windows and macOS run.)*
 - [x] Add a minimal compile/link smoke test that calls the HarfBuzz API from Zig. *(`src/engine/text/hb_smoke.zig` checks that `hb_version_string()` returns 15.1.0. `src/engine/text/hb_shape_test.zig` adds four shaping tests. Both pass on Windows in Debug.)*
-- [~] Record HarfBuzz and stb licenses and pinned revisions in the dependency policy/lock documentation. *(Done: `dependency-policy.md` lists HarfBuzz, with a license and change-history section for both. Commit IDs for HarfBuzz 15.1.0 and stb 1.28 are in the lock and the policy. Checks against the vendored files are pending.)*
+- [~] Record HarfBuzz and stb licenses and pinned revisions in the dependency policy/lock documentation. *(Done: `dependency-policy.md` lists HarfBuzz, with a license and change-history section for both. Commit IDs for HarfBuzz 15.1.0 and stb 1.28 are in the lock and the policy. Checks against the vendored files are pending. The policy's stb versions (image 2.30, image_write 1.16, rect_pack 1.01) disagree with the lock's (2.32, 1.18, 1.02); which is correct is unresolved.)*
 
 **Important compatibility note:** the uploaded proof of concept targets Zig `0.17.0`, while Bairava's current `build.zig.zon` declares `0.16.0-dev.3142+5ccfeb926`. Its build script must not be copied verbatim. Treat the build API and cross-platform C++ linking as an integration task.
 
@@ -164,7 +164,7 @@ Legend: `[x]` done, with evidence; `[~]` partly done; `[ ]` open.
 - [ ] Define clean error behavior for invalid fonts, unsupported outline formats, and rasterization failures.
 - [ ] Add lifecycle tests for font creation, reuse, and destruction.
 
-**Font-format decision:** the reference uses stb_truetype. Its own helper warns that CFF outlines are not confirmed to work with that rasterizer. Bairava's existing prebake documentation says its CFF path is handled by FreeType. Switching to stb-only rasterization could regress fonts that currently work. Either preserve CFF rasterization through FreeType or explicitly accept and document a reduced initial font-format matrix. Preserving CFF may add effort.
+**Font-format decision:** the reference uses stb_truetype. Its own helper warns that CFF outlines are not confirmed to work with that rasterizer. Bairava's existing prebake documentation says its CFF path is handled by FreeType. Switching to stb-only rasterization could regress fonts that currently work. Either preserve CFF rasterization through FreeType or explicitly accept and document a reduced initial font-format matrix. Preserving CFF may add effort. *Evidence (2026-11-16):* none of the shipped fonts in `assets/` is CFF. `font.ttf` (VT323) and `font2.ttf` ("November") are both TrueType `glyf`, so the stb-only choice cannot change a shipped asset. CFF fonts supplied by games or users remain unresolved.
 
 **Deliverable:** a runtime font object that can shape and rasterize a requested glyph in isolation, before atlas integration.
 
@@ -374,6 +374,14 @@ Entries are dated 2026-11-16. Items marked *(user-reported)* come from build and
 - **Commit IDs supplied (2026-11-16).** HarfBuzz `3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372` and stb `9600522de53973336fa033a289858a4354cbb04c` are recorded in the lock as a `commit` field, which the checker ignores. The commits are not yet verified. The stb header hash and the HarfBuzz tree comparison are described in the policy.
 - **Windows build and tests (user-reported).** `zig build` and `zig build test` pass under Zig 0.16.0-dev.3142+5ccfeb926 in Debug. The test set includes the version check and the four shaping tests.
 - **Pin checker (user-reported, Windows).** All seven lock entries verify.
+- **Continuation check (2026-11-16, `bairava.zip`).** The upload has no `vendor/` directory, no `tools/third_party/harfbuzz`, no `tools/assets/tamil.ttf`, and no stb headers. Vendored-tree hashes, the commit checks, the `hb-version.h` question, and the stb header checks cannot run from it. The sandbox has no Zig, no HarfBuzz or stb packages, and no network. Everything below was run in the sandbox.
+- **Pin checker run.** `scripts/check-dependency-pins.py` verifies SDL, ztracy, Zig 0.16.0-dev.3142+5ccfeb926, Slang 2026.20, and the five Slang archive digests. All six vendored entries fail with "locked path does not exist." That is the missing `vendor/` tree, not a hash mismatch.
+- **HarfBuzz lock conflict.** The lock's HarfBuzz `sha256` is `6c1fac27…`. The `0db1ed94…` value this file cited is not in the lock, and the entry above says `6c1fac27…` does not match the tree. CI runs this checker on Linux, macOS, and Windows, so whichever value is committed must match the vendored tree. The user-reported Windows pass suggests the lock on that machine differs from this upload's, or that its tree hashes to `6c1fac27…`. Confirm which lock and tree are current. Per the policy, do not change the hash without reviewing the tree.
+- **stb record conflicts.** `dependency-policy.md` lists image 2.30, image_write 1.16, and rect_pack 1.01. The lock lists 2.32, 1.18, and 1.02. The policy and this file cite a lock hash of `6ad5c81a…` for truetype 1.28, but the lock has only the group hash `843f1d62…`. The policy's expected commit hash for `stb_truetype.h` is `428cfe93…`, which remains unchecked.
+- **Lock entry count.** "All seven lock entries verify" does not match the upload's lock, which has six `dependencies` entries plus two Zig packages. Record what was counted.
+- **Characterization re-run.** `harness.c` compiles with `gcc -std=c99 -Wall -Wextra` with no warnings and reports 70 checks, 0 failed, against `src/engine/text/text.c` in the upload. This re-runs the existing result and adds no new check.
+- **Platform boundary.** `scripts/boundary_scan.py --self-test` rejects 3 of 3 negative fixtures, and `--fail` reports 0 reachable violations. Both are CI gates and both pass here.
+- **Shipped fonts.** `assets/font.ttf` is VT323 (TrueType `glyf`, 584 glyphs, GSUB and GPOS present, no `kern`), which matches the VT323 assumption in `hb_shape_test.zig`. `assets/font2.ttf` is "November" (TrueType `glyf`, 247 glyphs, no GSUB or GPOS). Neither is CFF.
 
 ## 13. Decisions and open items
 
@@ -390,7 +398,7 @@ Entries are dated 2026-11-16. Items marked *(user-reported)* come from build and
 
 ### Open items
 
-- **Commit checks.** The commits are supplied (HarfBuzz `3df40d9…`, stb `9600522…`) and recorded in the lock. They haven't been checked here, because GitHub didn't resolve in search. Two checks are in the policy: the stb header's SHA-256 against the commit, and the HarfBuzz tree against `git archive`.
+- **Commit checks.** The commits are supplied (HarfBuzz `3df40d9…`, stb `9600522…`) and recorded in the lock. They haven't been checked here, because GitHub didn't resolve in search. Two checks are in the policy: the stb header's SHA-256 against the commit, and the HarfBuzz tree against `git archive`. The continuation check could not run either one, since the upload has no network and no vendored tree. Once `vendor/` is present, `scripts/verify-dependency-commits.py --harfbuzz <clone> --stb <clone>` runs both.
 - **`src/hb-version.h`.** The vendored HarfBuzz tree has a generated-looking version header. If upstream doesn't track it, the vendored tree differs from the commit by that file.
 - **Other stb files.** `stb_image.h`, `stb_image_write.h`, and `stb_rect_pack.h` are still unverified against any commit.
 - **Linux and macOS.** Build, C++ runtime linking, and tests. Only Windows has been run.
@@ -399,3 +407,9 @@ Entries are dated 2026-11-16. Items marked *(user-reported)* come from build and
 - **Rasterization coverage.** The comparison did not exercise glyph-ID rasterization, and the cmap defect was not reproduced.
 - **Effects on the 2D path (deferred at your request).** Configured post effects apply on SDL_GPU but not on the `sdl2d` path. The decision is still open.
 - **Blocked here.** DXIL and MSL output, baseline screenshots, and performance numbers need a Windows and macOS run with a display.
+- **HarfBuzz lock hash (new).** Decide whether the lock's `6c1fac27…` or the `0db1ed94…` tree hash this file previously cited is the reviewed value. Run `check-dependency-pins.py` against the vendored tree and record the result. Do not edit the lock hash without reviewing the tree.
+- **stb records (new).** Resolve the version conflict between the policy and the lock (2.30, 1.16, 1.01 against 2.32, 1.18, 1.02). Then check the stb headers against the lock's group hash, and the truetype header against commit `428cfe93…`.
+- **Vendored tree not in this upload (new).** The checker, the Zig build, and the commit checks all need `vendor/`, and section 12 cites `tools/third_party/harfbuzz`, which is also absent. A full checkout including `vendor/` is needed.
+- **Tamil font not in this upload (new).** `tools/assets/tamil.ttf` and the PoC `tools/assets/font.ttf` are absent. Tamil shaping and the Tamil fixture claims are unverified here.
+- **Lock entry count (new).** Confirm what "seven lock entries" referred to.
+- **Phase 0 confirmations.** Items 4 and 5 under Assumptions are still awaiting your answer.

@@ -8,9 +8,6 @@ zig-pkg
 # Dependency fetch and vendored build artifacts
 /deps/
 /vendor/build/
-/vendor/freetype-2.15.0/
-/vendor/harfbuzz-15.1.0/
-/vendor/cglm/
 *.tmp
 
 # CMake / native builds used by SDL3 or Slang (if built from source)
