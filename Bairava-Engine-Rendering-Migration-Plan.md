@@ -113,16 +113,18 @@ UTF-8 text + font + text options
 
 ### Phase 0 — Baseline, requirements, and compatibility decisions
 
+**Phase 0 status:** exit criteria agreed, subject to the working assumptions in report section 6. Deliverables are in `docs/Bairava_Phase0/PHASE0_REPORT.md`. Baseline screenshots and performance numbers are blocked until the full repository is available.
+
 **Estimate: 1–2 days**
 
-- [ ] Inventory all font-loading and text-drawing call sites in the engine, sample, tests, and game code.
-- [ ] Record existing public behavior: font sizing, baseline convention, text measurement, wrapping, alignment, color/alpha, and rectangle drawing.
-- [ ] Define initial supported scripts and test strings. At minimum include ASCII/Latin and Tamil.
-- [ ] Decide whether the first release supports only TrueType `glyf` outlines or must retain OpenType CFF support.
-- [ ] Decide initial direction/language controls and whether right-to-left/bidirectional text is part of this migration.
-- [ ] Decide whether the existing `.bfnt` format remains loadable during a transition period.
-- [ ] Define memory limits and an atlas growth policy (multiple pages, page growth, or bounded cache with eviction).
-- [ ] Capture baseline screenshots and performance numbers for the existing UI and sample.
+- [x] Inventory all font-loading and text-drawing call sites in the engine, sample, tests, and game code. *(Done: `inventory/call_sites.txt`.)*
+- [x] Record existing public behavior: font sizing, baseline convention, text measurement, wrapping, alignment, color/alpha, and rectangle drawing. *(Done for the C runtime: `characterization/`, 70 of 70. The Zig side was read, not run.)*
+- [x] Define initial supported scripts and test strings. At minimum include ASCII/Latin and Tamil. *(Accepted: Latin and Tamil. Corpus in report section 5.)*
+- [x] Decide whether the first release supports only TrueType `glyf` outlines or must retain OpenType CFF support. *(Decided: runtime TrueType only; CFF stays prebaked. Runtime rasterizer: stb_truetype, the plan default. See report section 6.)*
+- [x] Decide initial direction/language controls and whether right-to-left/bidirectional text is part of this migration. *(Decided: left to right; no RTL or bidi in this migration.)*
+- [x] Decide whether the existing `.bfnt` format remains loadable during a transition period. *(Keep loading v1, v2, and v4. Required by the stb_truetype decision.)*
+- [x] Define memory limits and an atlas growth policy (multiple pages, page growth, or bounded cache with eviction). *(Working assumption: four 1024² pages, then fallback, no eviction. Confirm in Phase 3.)*
+- [ ] Capture baseline screenshots and performance numbers for the existing UI and sample. *(Blocked here: needs the full repository and a display. A raster coverage baseline was captured instead.)*
 
 **Deliverable:** short text-rendering design note, agreed compatibility matrix, and baseline test corpus.
 
