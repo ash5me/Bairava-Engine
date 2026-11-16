@@ -9,7 +9,7 @@ rasterizer; a character the font was not baked with draws the fallback glyph the
 A font is one manifest row in `assets/asset_manifest.txt`:
 
 ```text
-ui_font_8px font assets/font.ttf ui_font_8px.bfnt - 8 32 224 mono
+ui_font_9px font assets/font.ttf ui_font_9px.bfnt - 9 32 224 mono
 ```
 
 The fields are the asset name, the type, the TTF or OTF source, the output `.bfnt` file, the
@@ -40,8 +40,9 @@ the outline in gray mode would fix heights and advances, but it would not widen 
 mode that makes them whole. Mono is aliased, which reads as a pixel
 font, so it suits the engine's nearest-neighbor sampling and whole-number scales. Mono is not a cure at every
 size, though: at 7 px the hinted outline loses strokes and letters become hard to tell apart, and at 8 px
-parentheses and some letters still blur together, so the debug overlay uses a 9 px atlas. Check a new small
-size by reading it on screen before shipping it.
+parentheses and some letters still blur together. The game UI and the debug overlay therefore both use the
+9 px mono atlas. Gray at 8 px was the other option, but its strokes are too faint on a dark background. Check
+a new small size by reading it on screen before shipping it.
 
 Mono uses FreeType's kerning table, which is the classic `kern` table. The gray path also reads GPOS pairs, so a
 font that kerns only through GPOS loses those pairs when it is baked in mono. The shipped font has no kerning

@@ -99,11 +99,11 @@ comptime {
 /// The font for the demo panel: a prebaked `.bfnt` file from the asset manifest, relative to the executable's
 /// folder, and its height in native pixels. The UI is drawn at native resolution, so 8 keeps it compact at the
 /// 320x180 view. The file must have been baked at exactly this size.
-pub const ui_font_path = "assets/ui_font_8px.bfnt";
-pub const ui_font_px: f32 = 8;
-/// The font for the debug overlay, and its height. It is a 9 px mono atlas of its own: at 7 px mono hinting drops
-/// strokes, and at 8 px parentheses and some letters still blur together. The file must be baked at 9.
-pub const debug_font_path = "assets/debug_font_9px.bfnt";
+pub const ui_font_path = "assets/ui_font_9px.bfnt";
+pub const ui_font_px: f32 = 9;
+/// The font for the debug overlay, and its height. It is the same 9 px mono atlas as the demo panel, so the file
+/// must be baked at 9. At 7 px mono hinting drops strokes, and at 8 px some glyphs still blur together.
+pub const debug_font_path = "assets/ui_font_9px.bfnt";
 pub const debug_font_px: f32 = 9;
 
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.

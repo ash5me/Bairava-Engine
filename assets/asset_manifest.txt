@@ -4,8 +4,7 @@
 # baked at. The small UI sizes use mono, since a gray stem narrower than a pixel smears (see docs/text.md).
 tile image assets/tile.png tile.png -
 warrior image assets/warrior_16x32.png warrior_16x32.png -
-ui_font_8px font assets/font.ttf ui_font_8px.bfnt - 8 32 224 mono
-debug_font_9px font assets/font.ttf debug_font_9px.bfnt - 9 32 224 mono
+ui_font_9px font assets/font.ttf ui_font_9px.bfnt - 9 32 224 mono
 default_font_10px font assets/font.ttf default_font_10px.bfnt - 10 32 224
 level1 map assets/maps/level1.txt maps/level1.txt tile
 level1_spawn file assets/maps/level1.spawn maps/level1.spawn level1,game_prefabs
