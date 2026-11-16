@@ -27,6 +27,12 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Record font fingerprint
+        shell: bash
+        run: |
+          python -c "import hashlib; d = open('assets/font.ttf', 'rb').read(); print('assets/font.ttf bytes=%d sha256=%s' % (len(d), hashlib.sha256(d).hexdigest()))"
+          git ls-files --eol assets/font.ttf
+
       - name: Platform boundary self-test
         run: python scripts/boundary_scan.py --self-test
 
@@ -36,8 +42,10 @@ jobs:
       - name: Platform boundary check
         run: python scripts/boundary_scan.py --fail
 
-      - name: Install Zig from build.zig.zon
+      - name: Install pinned Zig
         uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.3142+5ccfeb926
 
       - name: Install Slang on Linux and macOS
         if: runner.os != 'Windows'
