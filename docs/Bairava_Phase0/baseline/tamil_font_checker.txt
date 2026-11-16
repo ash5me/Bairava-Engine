@@ -1,0 +1,70 @@
+### Latin font
+File: assets/font.ttf
+Outlines: TrueType (glyf). Supported.
+Tamil block coverage: 0 of 128 code points mapped (U+0B80-U+0BFF)
+Missing core Tamil characters (47 of 47):
+    U+0B85 TAMIL LETTER A
+    U+0B86 TAMIL LETTER AA
+    U+0B87 TAMIL LETTER I
+    U+0B88 TAMIL LETTER II
+    U+0B89 TAMIL LETTER U
+    U+0B8A TAMIL LETTER UU
+    U+0B8E TAMIL LETTER E
+    U+0B8F TAMIL LETTER EE
+    U+0B90 TAMIL LETTER AI
+    U+0B92 TAMIL LETTER O
+    U+0B93 TAMIL LETTER OO
+    U+0B94 TAMIL LETTER AU
+    U+0B95 TAMIL LETTER KA
+    U+0B99 TAMIL LETTER NGA
+    U+0B9A TAMIL LETTER CA
+    U+0B9C TAMIL LETTER JA
+    U+0B9E TAMIL LETTER NYA
+    U+0B9F TAMIL LETTER TTA
+    U+0BA3 TAMIL LETTER NNA
+    U+0BA4 TAMIL LETTER TA
+    U+0BA8 TAMIL LETTER NA
+    U+0BA9 TAMIL LETTER NNNA
+    U+0BAA TAMIL LETTER PA
+    U+0BAE TAMIL LETTER MA
+    U+0BAF TAMIL LETTER YA
+    U+0BB0 TAMIL LETTER RA
+    U+0BB1 TAMIL LETTER RRA
+    U+0BB2 TAMIL LETTER LA
+    U+0BB3 TAMIL LETTER LLA
+    U+0BB4 TAMIL LETTER LLLA
+    U+0BB5 TAMIL LETTER VA
+    U+0BB6 TAMIL LETTER SHA
+    U+0BB7 TAMIL LETTER SSA
+    U+0BB8 TAMIL LETTER SA
+    U+0BB9 TAMIL LETTER HA
+    U+0BBE TAMIL VOWEL SIGN AA
+    U+0BBF TAMIL VOWEL SIGN I
+    U+0BC0 TAMIL VOWEL SIGN II
+    U+0BC1 TAMIL VOWEL SIGN U
+    U+0BC2 TAMIL VOWEL SIGN UU
+    U+0BC6 TAMIL VOWEL SIGN E
+    U+0BC7 TAMIL VOWEL SIGN EE
+    U+0BC8 TAMIL VOWEL SIGN AI
+    U+0BCA TAMIL VOWEL SIGN O
+    U+0BCB TAMIL VOWEL SIGN OO
+    U+0BCC TAMIL VOWEL SIGN AU
+    U+0BCD TAMIL SIGN VIRAMA
+GSUB: Tamil script 'taml' present: NO
+GSUB: features: c2sc, calt, ccmp, dlig, dnom, fina, frac, init, isol, liga, lnum, locl, medi, numr, onum, pnum, rclt, rlig, salt, smcp, ss01, ss02, ss03, tnum, unic
+GPOS: Tamil script 'taml' present: NO
+GPOS: features: cpsp, kern, mark, mkmk
+
+Result: likely to render with wrong or missing characters. See the lines above.
+
+### Tamil font
+File: assets/tamil.ttf
+Outlines: TrueType (glyf). Supported.
+Tamil block coverage: 51 of 128 code points mapped (U+0B80-U+0BFF)
+All 47 core Tamil characters are mapped.
+GSUB: Tamil script 'taml' present: yes
+GSUB: features: akhn, cjct, psts
+GPOS: Tamil script 'taml' present: NO
+GPOS: features: abvm, blwm, mark
+
+Result: looks usable for Tamil shaping. Try it in the game.

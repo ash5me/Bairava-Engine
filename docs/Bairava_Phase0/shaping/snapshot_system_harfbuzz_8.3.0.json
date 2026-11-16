@@ -1,0 +1,479 @@
+{
+  "harfbuzz_runtime_version": "8.3.0",
+  "pixel_height": 48.0,
+  "note": "Reference oracle from the system libharfbuzz. Regenerate with the pinned Phase 1 version before use.",
+  "fonts": {
+    "tamil": {
+      "file": "tamil.ttf",
+      "script": "Taml",
+      "language": "ta",
+      "units_per_em": 1000,
+      "cases": [
+        {
+          "id": "tamil_pulli_word",
+          "text": "தமிழ்",
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "cluster": 0,
+              "x_advance_units": 616,
+              "x_advance_px": 29.568,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 77,
+              "cluster": 3,
+              "x_advance_units": 658,
+              "x_advance_px": 31.584,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 169,
+              "cluster": 3,
+              "x_advance_units": 0,
+              "x_advance_px": 0.0,
+              "x_offset_px": -17.424,
+              "y_offset_px": 0.576
+            },
+            {
+              "glyph_id": 83,
+              "cluster": 9,
+              "x_advance_units": 658,
+              "x_advance_px": 31.584,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 171,
+              "cluster": 9,
+              "x_advance_units": 0,
+              "x_advance_px": 0.0,
+              "x_offset_px": -24.24,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "tamil_ksha_conjunct",
+          "text": "க்ஷ",
+          "glyphs": [
+            {
+              "glyph_id": 114,
+              "cluster": 0,
+              "x_advance_units": 1236,
+              "x_advance_px": 59.328,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "tamil_vowel_sign_o",
+          "text": "கொ",
+          "glyphs": [
+            {
+              "glyph_id": 180,
+              "cluster": 0,
+              "x_advance_units": 582,
+              "x_advance_px": 27.936,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 66,
+              "cluster": 0,
+              "x_advance_units": 648,
+              "x_advance_px": 31.104,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 177,
+              "cluster": 0,
+              "x_advance_units": 526,
+              "x_advance_px": 25.248,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "tamil_naan",
+          "text": "நான்",
+          "glyphs": [
+            {
+              "glyph_id": 74,
+              "cluster": 0,
+              "x_advance_units": 621,
+              "x_advance_px": 29.808,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 177,
+              "cluster": 0,
+              "x_advance_units": 526,
+              "x_advance_px": 25.248,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 75,
+              "cluster": 6,
+              "x_advance_units": 882,
+              "x_advance_px": 42.336,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 171,
+              "cluster": 6,
+              "x_advance_units": 0,
+              "x_advance_px": 0.0,
+              "x_offset_px": -24.288,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "tamil_sri",
+          "text": "ஸ்ரீ",
+          "glyphs": [
+            {
+              "glyph_id": 115,
+              "cluster": 0,
+              "x_advance_units": 1247,
+              "x_advance_px": 59.856,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "tamil_jnya",
+          "text": "ஜ்ஞ",
+          "glyphs": [
+            {
+              "glyph_id": 69,
+              "cluster": 0,
+              "x_advance_units": 748,
+              "x_advance_px": 35.904,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 171,
+              "cluster": 0,
+              "x_advance_units": 0,
+              "x_advance_px": 0.0,
+              "x_offset_px": -22.896,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 70,
+              "cluster": 6,
+              "x_advance_units": 986,
+              "x_advance_px": 47.328,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "poc_mixed_line",
+          "text": "தமிழ் Tamil",
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "cluster": 0,
+              "x_advance_units": 616,
+              "x_advance_px": 29.568,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 77,
+              "cluster": 3,
+              "x_advance_units": 658,
+              "x_advance_px": 31.584,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 169,
+              "cluster": 3,
+              "x_advance_units": 0,
+              "x_advance_px": 0.0,
+              "x_offset_px": -17.424,
+              "y_offset_px": 0.576
+            },
+            {
+              "glyph_id": 83,
+              "cluster": 9,
+              "x_advance_units": 658,
+              "x_advance_px": 31.584,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 171,
+              "cluster": 9,
+              "x_advance_units": 0,
+              "x_advance_px": 0.0,
+              "x_offset_px": -24.24,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 1,
+              "cluster": 15,
+              "x_advance_units": 200,
+              "x_advance_px": 9.6,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 21,
+              "cluster": 16,
+              "x_advance_units": 653,
+              "x_advance_px": 31.344,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 28,
+              "cluster": 17,
+              "x_advance_units": 489,
+              "x_advance_px": 23.472,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 40,
+              "cluster": 18,
+              "x_advance_units": 810,
+              "x_advance_px": 38.88,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 36,
+              "cluster": 19,
+              "x_advance_units": 152,
+              "x_advance_px": 7.296,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 39,
+              "cluster": 20,
+              "x_advance_units": 144,
+              "x_advance_px": 6.912,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "tamil_independent_vowels",
+          "text": "ஆ ஔ",
+          "glyphs": [
+            {
+              "glyph_id": 55,
+              "cluster": 0,
+              "x_advance_units": 1015,
+              "x_advance_px": 48.72,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 1,
+              "cluster": 3,
+              "x_advance_units": 200,
+              "x_advance_px": 9.6,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 65,
+              "cluster": 4,
+              "x_advance_units": 1356,
+              "x_advance_px": 65.088,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    "latin": {
+      "file": "font.ttf",
+      "script": "Latn",
+      "language": "en",
+      "units_per_em": 2048,
+      "cases": [
+        {
+          "id": "latin_kern_av",
+          "text": "AV",
+          "glyphs": [
+            {
+              "glyph_id": 36,
+              "cluster": 0,
+              "x_advance_units": 1214,
+              "x_advance_px": 28.4531,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 57,
+              "cluster": 1,
+              "x_advance_units": 1366,
+              "x_advance_px": 32.0156,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "latin_kern_to",
+          "text": "To",
+          "glyphs": [
+            {
+              "glyph_id": 55,
+              "cluster": 0,
+              "x_advance_units": 1024,
+              "x_advance_px": 24.0,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 82,
+              "cluster": 1,
+              "x_advance_units": 1139,
+              "x_advance_px": 26.6953,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "latin_fi_ligature",
+          "text": "fi",
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "cluster": 0,
+              "x_advance_units": 569,
+              "x_advance_px": 13.3359,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 76,
+              "cluster": 1,
+              "x_advance_units": 455,
+              "x_advance_px": 10.6641,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        },
+        {
+          "id": "latin_poc_hello",
+          "text": "Hello, Zig!",
+          "glyphs": [
+            {
+              "glyph_id": 43,
+              "cluster": 0,
+              "x_advance_units": 1479,
+              "x_advance_px": 34.6641,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 72,
+              "cluster": 1,
+              "x_advance_units": 1139,
+              "x_advance_px": 26.6953,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 79,
+              "cluster": 2,
+              "x_advance_units": 455,
+              "x_advance_px": 10.6641,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 79,
+              "cluster": 3,
+              "x_advance_units": 455,
+              "x_advance_px": 10.6641,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 82,
+              "cluster": 4,
+              "x_advance_units": 1139,
+              "x_advance_px": 26.6953,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 15,
+              "cluster": 5,
+              "x_advance_units": 569,
+              "x_advance_px": 13.3359,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 3,
+              "cluster": 6,
+              "x_advance_units": 569,
+              "x_advance_px": 13.3359,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 61,
+              "cluster": 7,
+              "x_advance_units": 1251,
+              "x_advance_px": 29.3203,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 76,
+              "cluster": 8,
+              "x_advance_units": 455,
+              "x_advance_px": 10.6641,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 74,
+              "cluster": 9,
+              "x_advance_units": 1139,
+              "x_advance_px": 26.6953,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            },
+            {
+              "glyph_id": 4,
+              "cluster": 10,
+              "x_advance_units": 569,
+              "x_advance_px": 13.3359,
+              "x_offset_px": 0.0,
+              "y_offset_px": 0.0
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

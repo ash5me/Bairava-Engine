@@ -1,0 +1,79 @@
+Font: /home/claude/work/bairava/assets/font.ttf (149688 bytes), 9 px
+
+== stb_truetype (plan Phase 2 rasterizer, unhinted)
+  stb gray  'l'  3x6 px
+      |   |
+      | #.|
+      | +.|
+      | +.|
+      | +.|
+      |.#*|
+      stb     columns:   0  59  24   (percent of column height)
+  stb gray  'i'  3x6 px
+      |   |
+      | -.|
+      | + |
+      | +.|
+      | +.|
+      |.#*|
+      stb     columns:   0  52  22   (percent of column height)
+  stb gray  'H'  4x6 px
+      |    |
+      |+ =:|
+      |+ =:|
+      |+*#:|
+      |+ =:|
+      |+ =:|
+      stb     columns:  55  19  48  22   (percent of column height)
+
+== FreeType mono, hinted (what the shipped UI rows use)
+  ft_mono  'l'  2x6 px
+      |@ |
+      |@ |
+      |@ |
+      |@ |
+      |@ |
+      |@@|
+      mono    columns: 100  17   (percent of column height)
+  ft_mono  'i'  2x6 px
+      |@ |
+      |  |
+      |@ |
+      |@ |
+      |@ |
+      |@@|
+      mono    columns:  83  17   (percent of column height)
+  ft_mono  'H'  3x6 px
+      |@ @|
+      |@ @|
+      |@ @|
+      |@@@|
+      |@ @|
+      |@ @|
+      mono    columns: 100  17 100   (percent of column height)
+
+== FreeType gray, hinted (comparison only)
+  ft_gray  'l'  3x6 px
+      | %.|
+      | +.|
+      | +.|
+      | +.|
+      | +.|
+      |:%*|
+      ft gray columns:   0  69  27   (percent of column height)
+  ft_gray  'i'  3x6 px
+      | =.|
+      |   |
+      | %.|
+      | +.|
+      | +.|
+      |:%*|
+      ft gray columns:   0  58  24   (percent of column height)
+  ft_gray  'H'  4x6 px
+      |+ =:|
+      |+ =:|
+      |+ =:|
+      |+#%:|
+      |+ =:|
+      |+ =:|
+      ft gray columns:  66  21  57  26   (percent of column height)

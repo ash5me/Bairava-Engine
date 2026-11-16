@@ -1,0 +1,19 @@
+== single printable ASCII characters: 95 identical, 0 differ
+
+== shipped UI strings:
+   'Semkootru'            identical
+   'Click me'             identical
+   'Saves'                identical
+   'Controls'             identical
+   'Back'                 identical
+   'Next'                 identical
+   'Clear slot'           identical
+   'Volume'               identical
+   'Clicks: 12'           identical
+   'Level: 0.50'          identical
+   'Slot 1: F5/F9'        identical
+   'Controls 1/2'         identical
+   'fps 60'               identical
+   'F8 menu  I scale'     identical
+
+0 of 14 UI strings change under shaping
