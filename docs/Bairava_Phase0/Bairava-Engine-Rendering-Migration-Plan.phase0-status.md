@@ -1,6 +1,6 @@
 # Bairava Engine — Rendering Migration Plan
 
-**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated; HarfBuzz lock hash conflict resolved 2026-11-17 against the pinned commit; Windows `zig build test` passes after the Arial test change (user-reported 2026-11-17); the Phase 0 baseline is re-measured against Arial 7.07 with three owner decisions open, see section 15. Phase 2 has not started.)  
+**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated; HarfBuzz lock hash conflict resolved 2026-11-17 against the pinned commit; Windows `zig build test` passes after the Arial test change (user-reported 2026-11-17); the Phase 0 baseline is re-measured against Arial 7.07 with three owner decisions open, see section 15. Phase 0 closed 2026-11-17 (D1 to D3 and Q1 to Q3 recorded); Phase 2 waits on Phase 1 CI on Linux and macOS. Design note: `docs/Bairava_Phase0/design-note.md`.)  
 **Target:** Replace Bairava's prebaked-only text path with a runtime glyph-rasterization and text-shaping pipeline inspired by the uploaded SDL3 GPU proof of concept.  
 **Estimated effort:** **16–25 engineering days** (approximately 3–5 weeks for one developer, allowing for review and integration).  
 **Repository baseline reviewed:** `ash5me/Bairava-Engine`, `main`  
@@ -459,3 +459,36 @@ Decisions the owner needs before Phase 0 can exit. Each one changes the public t
 - Phase 0: the Arial measurements are recorded. The baseline screenshots still need a display. D1 to D3 need owner decisions before Phase 0 can close, because they fix the advance and scale rules that the public API depends on.
 - Phase 1: the Windows criterion is met (user-reported). The Linux criterion is partly met (compile and smoke run in the sandbox; the Zig build did not run here). The macOS criterion has not been run. The CI matrix will supply both.
 - Phase 2: not started. Its gate needs Phase 1 green on all three operating systems and D1 to D3 recorded.
+
+## 16. Phase 0 decisions recorded (2026-11-17)
+
+The owner answered D1 to D3 with the recommended options. Recorded as decided:
+
+- **D1, 9 px mono advances.** Keep the baked whole-pixel advances. The BFNT advance table is authoritative for prebaked fonts. HarfBuzz advances apply only to runtime outline fonts. The shipped UI text does not change.
+- **D2, pixel-height convention for gray TrueType fonts.** Keep the stb ascent-minus-descent scale, documented as a compatibility rule. Mono fonts keep the em convention. Runtime outline faces follow the gray rule.
+- **D3, mono kerning.** Keep dropping kerns that round to zero whole pixels at the baked size.
+
+Effect: under these three rules the shipped UI fonts keep their current advances, kerning, and widths. The migration causes no visible change to shipped text.
+
+Resolved the same day (owner answers):
+
+- **Q1, atlas page policy.** Four 1024² pages, no eviction, with a `glyph_cache_full` diagnostic.
+- **Q2, order of the text and Dear ImGui migrations.** Text first. ImGui's font atlas becomes a client of the glyph cache.
+- **Q3, runtime missing-glyph fallback.** Draw the font's `?` glyph if the font has one, otherwise nothing. Count each missing codepoint in diagnostics.
+
+Still open, none of which blocks Phase 2: the repository has no Tamil test font, so Tamil shaping tests cannot run until Phase 4; the baseline screenshots need a display and must be captured before Phase 5; the 9 px numbers should be rechecked with the pinned FreeType 2.15.0 before Phase 5 acceptance.
+
+Design note: `docs/Bairava_Phase0/design-note.md`. Measured baseline: `docs/Bairava_Phase0/baseline/arial/`.
+
+## 17. Phase 0 exit gate (2026-11-17)
+
+Checked against the rendering plan's Phase 0 exit criteria:
+
+- Every required font source has an agreed import or runtime path: yes (design note, section 1).
+- TrueType and CFF behavior is explicitly decided: yes. Runtime TrueType only; CFF stays prebaked.
+- HarfBuzz and stb choices are explicit and licensable: yes, pinned and recorded in the lock. The HarfBuzz hash matches the commit export. The stb header matches the commit.
+- SDL GPU and SDL3 2D behavior is documented: yes (design note, section 6). Both are acceptance targets.
+- Existing behavior has baseline tests or screenshots: yes, the measured baseline in `baseline/arial/`. Screenshots are still to be captured before Phase 5.
+- No unresolved design question would force a data-format or public-API rewrite: yes. D1 to D3 and Q1 to Q3 are answered.
+
+Phase 0 is closed. Phase 1 is passing on Windows, as reported by the owner. Linux and macOS are pending in CI. Phase 2 starts when that CI is green.
