@@ -1,5 +1,7 @@
 # Bairava Text Migration: Phase 0 Report
 
+> **Note (2026-11-17):** The shipped UI font is Arial 7.07 (`assets/font.ttf`), as the owner confirmed. The VT323 measurements in this report describe a 149,688-byte VT323 build that is not in the current upload. They are kept as historical evidence and must be re-measured against Arial 7.07 before they serve as the baseline. See `Bairava-Engine-Rendering-Migration-Plan.phase0-status.md`, section 14.
+
 **Status:** Phase 0 is partly complete. Phases 1 to 6 have not started, as the plan requires. Phase 0's exit criteria (agreed font formats, scripts, API behavior, and fallback policy) are not met until the decisions in section 6 are made.
 
 **Inputs:** `bairava.zip` (the engine), `tools.zip` (the SDL3 proof of concept, "PoC"), and `Bairava-Engine-Rendering-Migration-Plan.md`. Nothing in the engine was changed. The plan is unchanged; a status copy with the Phase 0 checkboxes updated sits beside this report.

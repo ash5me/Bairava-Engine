@@ -1,5 +1,5 @@
 //! Shaping tests for the vendored HarfBuzz build. `zig build test` runs from the repository root
-//! (see run_tests.setCwd in build.zig), so the shipped VT323 font is read from assets/. These
+//! (see run_tests.setCwd in build.zig), so the shipped UI font (Arial 7.07) is read from assets/. These
 //! calls run HarfBuzz's font and shaper function tables, which the version-only smoke test does not.
 
 const std = @import("std");
@@ -67,12 +67,22 @@ test "the repeated A in AVATAR maps to one glyph id" {
     try std.testing.expectEqual(shaped.gids[0], shaped.gids[4]);
 }
 
-test "VT323 is monospaced: every AVATAR advance is positive and equal" {
+test "shipped Arial kerns the AV pair: the A is narrower before V than alone" {
+    const pair = try shapeWithFont(font_path, "AV", 16);
+    const alone = try shapeWithFont(font_path, "A", 16);
+    try std.testing.expectEqual(@as(usize, 2), pair.count);
+    try std.testing.expectEqual(@as(usize, 1), alone.count);
+    try std.testing.expect(pair.advances[0] < alone.advances[0]);
+}
+
+test "shipped Arial is proportional: AVATAR advances are positive and not all equal" {
     const shaped = try shapeWithFont(font_path, "AVATAR", 16);
+    var all_equal = true;
     for (0..6) |i| {
         try std.testing.expect(shaped.advances[i] > 0);
-        try std.testing.expectEqual(shaped.advances[0], shaped.advances[i]);
+        if (shaped.advances[i] != shaped.advances[0]) all_equal = false;
     }
+    try std.testing.expect(!all_equal);
 }
 
 test "empty text shapes to zero glyphs" {
