@@ -5,9 +5,11 @@
 //!   - every glyph is uploaded before a draw samples it, while new glyphs keep arriving (each new phrase brings glyphs
 //!     the cache has not seen, so uploads keep happening while earlier frames are still in flight);
 //!   - the counters match the picture: misses stop once a phrase is warm, and `sdl2d copies missing` stays 0.
+//!   - the whole-page path runs: on frame 60 a burst of new glyphs overflows the pending list, and the log must report
+//!     one whole-page upload for that flush.
 //!
-//! Off by default. To run it, set `enabled` to true in this file, then run `zig build run -Dgpu-debug=true` and watch
-//! the log for "glyph check" lines and for validation errors.
+//! The shipped engine has it off. `enabled` below is on for the GPU run, so set it to false before you ship. To run it,
+//! run `zig build run -Dgpu-debug=true` and watch the log for "glyph check" lines and for validation errors.
 //!
 //! The text uses the codepoint minus 29 as the glyph ID. That is the Arial layout this project ships: A is 36, V is 57,
 //! T is 55, and R is 53, as checks/hb_linux_RESULTS.txt measured. The check skips shaping, so kerning is not applied.
@@ -17,6 +19,7 @@ const std = @import("std");
 
 const staging = @import("../assets/staging.zig");
 const logging = @import("../logging/log.zig");
+const glyph_cache = @import("../text/glyph_cache.zig");
 const resolver = @import("../text/glyph_resolver.zig");
 const runtime_font = @import("../text/runtime_font.zig");
 const backend = @import("backends/sdl_gpu/backend.zig");
@@ -53,6 +56,22 @@ const report_every: u64 = 240;
 const pen_start_x: f32 = 4;
 const baseline_y: f32 = 24;
 
+/// The burst: on `burst_frame`, the check queues `burst_size` glyphs that have ink, and the frame flushes them all at
+/// once. Each new glyph is one pending region, so more than `glyph_cache.max_pending` of them overflow the list, and
+/// the page takes a whole-page upload. The burst's glyphs are drawn too, so their samples come after that upload in
+/// the same frame.
+const burst_size: usize = 600;
+/// The phrases use glyph IDs 3 to 97, so the burst starts above them and every burst glyph is new to the cache.
+const burst_first_glyph: u32 = 200;
+const burst_frame: u64 = 60;
+const burst_columns: usize = 40;
+
+comptime {
+    if (burst_size <= glyph_cache.max_pending) {
+        @compileError("the burst must queue more glyphs than glyph_cache.max_pending, or it never overflows the pending list");
+    }
+}
+
 pub const State = struct {
     atlas: glyph_atlas.Atlas,
     font: runtime_font.RuntimeFont,
@@ -87,7 +106,12 @@ pub fn destroy(state: *State) void {
 pub fn frame(state: *State, batch: *sprite.SpriteBatch, cmd: *backend.CommandBuffer, sdl2d_active: bool) void {
     const index = (state.frame_count / frames_per_phrase) % phrases.len;
     queuePhrase(state, batch, phrases[index]);
+    const burst_now = state.frame_count == burst_frame;
+    if (burst_now) queueBurst(state, batch);
+    // The whole-page count is read before the flush, so only this flush's whole-page uploads are counted.
+    const full_pages_before = state.atlas.flushStats().gpu_full_pages;
     state.atlas.flush(cmd, sdl2d_active);
+    if (burst_now) reportBurst(state, full_pages_before);
     state.frame_count += 1;
     if (state.frame_count % report_every == 0) report(state);
 }
@@ -116,6 +140,55 @@ fn queuePhrase(state: *State, batch: *sprite.SpriteBatch, phrase: []const u8) vo
             );
         }
         pen_x = @round(pen_x + entry.metrics.advance);
+    }
+}
+
+/// Queues the burst's glyphs. It takes the first `burst_size` glyphs with ink from `burst_first_glyph` on, resolves each
+/// (each one is a new cache entry), and draws it in a grid. The log gives the count found and the count new to the
+/// cache, so a burst that adds nothing new shows up in the log.
+fn queueBurst(state: *State, batch: *sprite.SpriteBatch) void {
+    const misses_before = state.atlas.cache.snapshot().misses;
+    var inked: usize = 0;
+    var glyph: u32 = burst_first_glyph;
+    while (inked < burst_size and glyph < state.font.glyph_count) : (glyph += 1) {
+        const metrics = state.font.glyphMetrics(glyph) catch continue;
+        // A glyph with no ink takes no atlas space and queues no region, so it is not part of the burst.
+        if (metrics.width == 0 or metrics.height == 0) continue;
+        const entry = resolver.resolve(&state.atlas.cache, font_id, &state.font, glyph, .gray) catch |err| {
+            state.failures += 1;
+            elog.err("burst glyph {d} not drawn: {s}", .{ glyph, @errorName(err) });
+            continue;
+        };
+        batch.drawSprite(
+            state.atlas.pageTexture(entry.region.page),
+            glyph_atlas.Atlas.spriteSource(entry.region),
+            .{
+                .x = 4 + @as(f32, @floatFromInt(inked % burst_columns)) * 8,
+                .y = 4 + @as(f32, @floatFromInt(inked / burst_columns)) * 12,
+                .w = @floatFromInt(entry.region.w),
+                .h = @floatFromInt(entry.region.h),
+            },
+            .{},
+        );
+        inked += 1;
+    }
+    const new_glyphs = state.atlas.cache.snapshot().misses - misses_before;
+    if (inked < burst_size) {
+        elog.err("burst: only {d} glyphs with ink from ID {d} on; the burst needs {d}", .{ inked, burst_first_glyph, burst_size });
+    }
+    elog.info("burst: {d} glyphs with ink queued, {d} new to the cache, against a pending limit of {d}", .{
+        inked, new_glyphs, glyph_cache.max_pending,
+    });
+}
+
+/// Reports whether the burst's flush made a whole-page upload. A burst that does not overflow the pending list leaves the
+/// page on incremental uploads, and the check would then miss the path it exists to test.
+fn reportBurst(state: *State, full_pages_before: u64) void {
+    const full_pages = state.atlas.flushStats().gpu_full_pages - full_pages_before;
+    if (full_pages > 0) {
+        elog.info("burst: whole-page upload in the burst's flush, as expected: {d} page(s)", .{full_pages});
+    } else {
+        elog.err("burst: no whole-page upload in the burst's flush, so the overflow path did not run", .{});
     }
 }
 

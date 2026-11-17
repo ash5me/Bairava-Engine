@@ -459,6 +459,7 @@ A runtime outline font can request an unseen glyph, rasterize it once, upload it
 2. The caller supplies the fallback glyph ID. The resolver does not choose a fallback.
 3. A glyph is missing when its ID is at least the font's glyph count. The field is `RuntimeFont.glyph_count`, which holds the face's glyph count from HarfBuzz. Glyph 0 is valid (`.notdef`) and gets no special treatment in the cache or the resolver.
 4. Mapping `?` through the character map, and the fallback policy, are deferred to Phase 7.
+5. The SDL3 2D renderer path is a Phase 5 task (accepted 2026-11-17). Phase 4 does not wait for a device run of the 2D path.
 
 **Phase 7 hand-off.** Phase 7 decides: how `?` is mapped through the character map; what to draw when `?` is unavailable (nothing, or another fallback); and how missing-glyph diagnostics are reported. The `missing_glyphs` counter exists, but no reporting channel does yet. The existing `missing_codepoints` counter counts codepoints the text layer could not map. It stays distinct from `missing_glyphs`, which counts glyph IDs past the font's end.
 
@@ -472,8 +473,8 @@ A runtime outline font can request an unseen glyph, rasterize it once, upload it
 **GPU check (2026-11-17).** `renderer/glyph_check.zig` draws runtime text through the atlas and logs its counters. `lifecycle.zig` creates it when `glyph_check.enabled` is set, and `runtime.zig` calls it after the game and overlay queue sprites, before the sprite upload. The flag is off by default. It has not been compiled or run.
 
 **Still open:**
-- [~] GPU upload and update synchronization under GPU debugging. The check exercises it when enabled. Not yet run; the first run with `-Dgpu-debug=true` is the test.
-- [ ] Both renderer modes on a device. Blocked: `application.sdl2d_available` is `false`, so the SDL3 2D path is reserved and a request for it resolves to SDL_GPU. The 2D frame branch in `runtime.zig` also does not call the atlas flush, so Phase 5 must add that call before this item can run.
+- [~] GPU upload and update synchronization under GPU debugging. A run with `-Dgpu-debug=true` on 2026-11-17 drew 1190 frames with validation on, and the log showed no validation errors. Still open: the whole-page path. The burst in `renderer/glyph_check.zig` exercises it, and its log must report one whole-page upload.
+- [ ] Both renderer modes on a device. Moved to Phase 5 (decision 5 below). The 2D frame branch in `runtime.zig` does not call the atlas flush yet. Phase 5 adds that call, and then the 2D path runs on a device.
 - [~] No queued draw samples a destroyed or repurposed page. This holds by design. Phase 5 must keep `Cache.clear` and `Atlas.deinit` behind a GPU-idle wait.
 - [ ] LRU eviction (optional "Wants"; not started). The warm-up API is done; see the warm-up pass below.
 - [ ] Whole-page uploads rewrite resident texels. A page is marked for a full upload when more than `max_pending` (512) regions change between flushes. That upload rewrites texels that frames in flight may read, with the same bytes. The output does not change, but the no-write-after-read argument in `glyph_cache.zig` and `glyph_atlas.zig` does not cover this path. Check it under GPU sync validation. If validation flags it, upload only the new texels on the overflow path.
@@ -486,7 +487,7 @@ Proposed, not yet accepted: warm-up stops at the first error and returns it, and
 
 Corrected: the frames-in-flight comments in `glyph_cache.zig` and `glyph_atlas.zig` said no later write touches a glyph's texels. That is false for a whole-page upload, which overflow of the pending list forces. The comments now say so, and the path is an open GPU-sync item above.
 
-**Next:** Phase 5 connects `resolve`, `resolveWithFallback`, and `warm` to `Canvas` and the text consumers, and calls `Atlas.flush` before the sprite upload. Phase 4 closes when `zig build test` passes on Windows, Linux, and macOS, and the two GPU items are checked on a device. The GPU-sync item covers the whole-page upload path listed above.
+**Next:** Phase 5 connects `resolve`, `resolveWithFallback`, and `warm` to `Canvas` and the text consumers, calls `Atlas.flush` before the sprite upload, and adds the 2D flush call so the 2D path runs on a device. Phase 4 closes when `zig build test` passes on Windows, Linux, and macOS, and the burst run is clean: one whole-page upload is logged, and validation reports no errors.
 
 ---
 
