@@ -605,6 +605,8 @@ pub fn build(b: *std.Build) void {
     test_module.addCSourceFile(.{ .file = b.path("src/engine/logging/log_file.c") });
     // The image loader and the job and script wrappers need their C code in the test binary as well.
     test_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
+    // The runtime font face (src/engine/text/runtime_font.zig) calls stb_truetype in the test binary.
+    test_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     addJobsAndScript(b, test_module);
     test_module.addImport("ztracy", ztracy.module("root"));
     const tests = b.addTest(.{ .root_module = test_module });

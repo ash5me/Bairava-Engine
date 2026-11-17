@@ -1,6 +1,6 @@
 # Bairava Engine — Rendering Migration Plan
 
-**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated; HarfBuzz lock hash conflict resolved 2026-11-17 against the pinned commit; Windows `zig build test` passes after the Arial test change (user-reported 2026-11-17); the Phase 0 baseline is re-measured against Arial 7.07 with three owner decisions open, see section 15. Phase 0 closed 2026-11-17 (D1 to D3 and Q1 to Q3 recorded); Phase 2 waits on Phase 1 CI on Linux and macOS. Design note: `docs/Bairava_Phase0/design-note.md`.)  
+**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated; HarfBuzz lock hash conflict resolved 2026-11-17 against the pinned commit; Windows `zig build test` passes after the Arial test change (user-reported 2026-11-17); the Phase 0 baseline is re-measured against Arial 7.07 with three owner decisions open, see section 15. Phase 0 closed 2026-11-17; Phase 1 CI green on Linux, Windows, and macOS (owner-reported); Phase 2 code written, including the packaged loader, awaiting `zig build test` on the owner's machine (sections 18, 19, and 20). Design note: `docs/Bairava_Phase0/design-note.md`.)  
 **Target:** Replace Bairava's prebaked-only text path with a runtime glyph-rasterization and text-shaping pipeline inspired by the uploaded SDL3 GPU proof of concept.  
 **Estimated effort:** **16–25 engineering days** (approximately 3–5 weeks for one developer, allowing for review and integration).  
 **Repository baseline reviewed:** `ash5me/Bairava-Engine`, `main`  
@@ -492,3 +492,96 @@ Checked against the rendering plan's Phase 0 exit criteria:
 - No unresolved design question would force a data-format or public-API rewrite: yes. D1 to D3 and Q1 to Q3 are answered.
 
 Phase 0 is closed. Phase 1 is passing on Windows, as reported by the owner. Linux and macOS are pending in CI. Phase 2 starts when that CI is green.
+
+## 18. Phase 2: runtime font object and glyph rasterization (2026-11-17)
+
+Phase 1 CI is green on Linux, Windows, and macOS (owner-reported), and Phase 0 is closed, so Phase 2 has started.
+
+**Written.** `src/engine/text/runtime_font.zig` contains:
+
+- `RuntimeFont.init`: copies the font bytes, validates the container, initializes stb_truetype and a HarfBuzz face and font bound to the copy, and sets the HarfBuzz scale from the gray convention (D2): em = px * upem / (ascent - descent), in 26.6 units.
+- `glyphMetrics(glyph_id)`: advance, bitmap offset from the pen (x) and the baseline (y, down), and bitmap size. Glyphs with no ink report zero size and need no atlas rectangle.
+- `rasterize(allocator, glyph_id)`: an owned coverage bitmap, row 0 at the top. Empty glyphs return an empty slice.
+- `checkFormat`: accepts TrueType glyf only. Rejects 'OTTO' (CFF), 'ttcf' (collections), and any file with a CFF table and no glyf, before any parser runs.
+- Error set: InvalidFont, UnsupportedFontFormat, InvalidPixelHeight, GlyphOutOfRange, and allocator errors.
+
+**Tests (11, in the same file, registered in `src/tests.zig`).** Shipped Arial metrics and glyph count; the HarfBuzz scale (917 in 26.6 units); the A glyph's advance (9.5524 px), bounds (11 by 11, offset -1, -11), and baseline (bottom edge at 0); A's coverage (sum 8030, peak 255); the space; 94 of 95 printable glyphs with ink; the glyph-range check; the font's own copy of its bytes; pixel-height validation (zero, negative, NaN, infinity); container rejection (empty, unrecognized, OTTO, ttcf, CFF-only table, truncated directory); and 20 create and destroy cycles under the testing allocator, which detects leaks.
+
+**Build.** `build.zig` compiles `vendor/stb_truetype_impl.c` into the test module. The engine module is unchanged, so the shipped build does not import the new file.
+
+**Verified here.** The measured values come from a C probe against the same stb_truetype 1.28 build and the shipped Arial file. Every Zig assertion matches a value the probe produced. The container checks match a C mirror on all six cases.
+
+**Not verified here.** The Zig code has not been compiled. Zig is not installed, and the repository's `vendor/` tree is absent from the upload, so `zig build test` cannot run in this sandbox. The owner must run it, and CI runs the same command on all three systems.
+
+**Not done (resolved 2026-11-17, section 19).** Loading through Bairava's packaged-file and asset conventions was not wired here. Section 19 wires it.
+
+**Gate.** Phase 2's exit criteria are the 11 tests above passing on all three systems. If `zig build test` fails, paste the first error and the test name, and the fix will follow from there.
+
+## 19. Phase 2: packaged loader wiring (2026-11-17, second pass)
+
+This pass closes the open Phase 2 item "Load font files through Bairava's existing packaged-file and asset-loading conventions," and the "not wired yet" note in section 18. Phase 2 is not closed. Its exit gate is still the owner's `zig build test` run on all three systems.
+
+**Written.**
+
+- `src/engine/text/runtime_font.zig`:
+  - `RuntimeFont.loadPackaged(allocator, reader: staging.Reader, relative, pixel_height)` reads a packaged name through the same `staging.Reader` seam the texture loader uses. The engine passes `staging.packagedReader()`. Tests pass a fixture reader.
+  - The height is checked before the read, so a bad height never touches the file.
+  - The face keeps the reader's allocation, so the file is copied once.
+  - `fromOwned` builds the face on bytes it takes ownership of, and frees them on every failure. `init` now validates, copies, and calls `fromOwned`, so `init` and `loadPackaged` share one build path.
+  - `LoadError` maps the reader's names onto the engine's: `NotFound` becomes `FileNotFound`, and `ReadFailed`, `PathTooLong`, and `OutOfMemory` pass through.
+  - `max_pixel_height = 4096`. Section 18 accepted any finite height. A height of 1e9 gives a HarfBuzz scale of about 5.7e10, which does not fit a C int. That is a real defect: `@intFromFloat` panics in safe builds and is undefined behaviour in release builds. The bound's scale at 4096 px is exactly 234646, which the test pins.
+  - `readFixture` now checks for a null or empty blob, and converts the C pointer with `@ptrCast` to `[*]const u8` before slicing, the same conversion `audio.zig`'s `bytesOf` uses. The section 18 version sliced the C pointer directly and had never been compiled.
+- Tests: `runtime_font.zig` now has 18 tests. Section 18 had 11. Seven are new: a face built through the reader matches the direct load and the file is read once; a missing name is `FileNotFound` after one read; a bad height is refused before the read; a non-font and a CFF file read through the reader are rejected with their bytes freed; the reader's `ReadFailed` and `PathTooLong` keep their meaning; the engine's packaged reader reports a missing file as `FileNotFound`; and the packaged reader refuses a path that leaves the package folder. The pixel-height test now also covers the bound and its scale. (Section 18's gate of "11 tests" becomes 18.)
+- `assets/asset_manifest.txt`: new row `ui_font_ttf file assets/font.ttf fonts/font.ttf -`. The builder copies a `file` row unchanged, so the TrueType ships at `fonts/font.ttf`. The `font` rows bake the same source to `.bfnt` as before. Cost: 1,045,956 bytes in the release. Remove the row to drop it.
+- `checks/packaged_loader_mirror.c` and `checks/packaged_loader_RESULTS.txt`: a C mirror of the control flow, the validation rules, the error mapping, and the scale conversion. It reads the shipped `assets/font.ttf` directly.
+
+**Verified here (sandbox).**
+
+- The mirror passes, 49 checks and 0 failures, under AddressSanitizer and UBSan with leak detection, built with `-Werror`.
+- From the shipped file's bytes, the mirror confirms the constants the Zig tests pin: unitsPerEm 2048, hhea ascender 1854, descender -434, and 4652 glyphs. The face loaded from those bytes has scale 917 at 16 px. The bound's scale, 234646 at 4096 px, is computed from those same metrics as literals.
+- Mutation check: four planted bugs were each caught. A double free and a leak were caught by the sanitizers. A height check moved after the read, and a missing upper bound, were caught by named checks. The log lists them.
+- A Python mirror of `checkManifest` accepts all 12 manifest rows, including the forward dependency `level1_spawn` → `game_prefabs`. The `file` rows fall through `check_assets.zig`'s prefab, spawn, and animation branches unchecked, as intended for a `.ttf`.
+- Static checks on `runtime_font.zig`: brackets balance; the imports `../assets/staging.zig`, `../platform/platform.zig`, and `../assets/loaders/image.zig` exist; every helper called is defined; test names are unique.
+
+**Not verified.**
+
+- The Zig compile and the test run. The mirror shows the logic, not that the Zig builds. The owner's `zig build test` is the first real check.
+- `build.zig`, `build.zig.zon`, `vendor/`, and the stb and HarfBuzz sources are absent from this upload. The new code adds no C sources and no include paths beyond the ones `runtime_font.zig` already needs. The test root already links SDL and the image loader, because `tests.zig` imports `staging.zig`.
+- `zig build check-assets` and the asset build with the new row. The manifest mirror above covers the rules, not the tool.
+- A file read through `staging.packagedReader()` succeeding. The tests exercise the production reader only for a missing name and an unsafe path. The test binary's base folder is not the repository's `assets/`, so a real packaged read is first exercised in a built game.
+
+**Phase 2 checklist** (Rendering Migration Plan, Phase 2):
+
+- [x] Runtime font object owning data, metrics, rasterizer state, and HarfBuzz state (`RuntimeFont`).
+- [x] Load through the packaged-file conventions. Code and tests written; the manifest row is in. Pending the owner's run.
+- [x] HarfBuzz initialized from the loaded bytes, with the gray pixel-height scale and the new bound.
+- [x] Glyphs rasterized by glyph ID.
+- [x] stb bounds converted to baseline and screen conventions.
+- [x] Empty glyphs keep their advance and allocate no bitmap.
+- [~] Error behaviour. Invalid fonts, unsupported formats, allocation failure, reader failures, and out-of-range glyph IDs all have explicit errors. Rasterization itself has no failure path: `stbtt_MakeGlyphBitmap` returns nothing, so there is no rasterization error to report.
+- [x] Lifecycle tests for creation, reuse, and destruction, including 20 cycles and the error paths.
+
+**Gate.** Phase 2 closes when `zig build test` passes on Windows, Linux, and macOS with the 18 `runtime_font.zig` tests among them, and `zig build check-assets` passes. Phase 3 does not start before then.
+
+**Open items for engine integration** (not part of Phase 2):
+
+- Which allocator a face uses. `docs/ownership.md` puts fonts in the asset arena, which is not freed until the run ends. A face must still be released before shutdown, and an arena's `free` does nothing.
+- Whether `ui_font_ttf` ships in a release before any engine code uses the face.
+- Whether the mirror should run in CI. It is a manual check today, like the other `checks/` harnesses.
+
+## 20. First Zig compile on Windows: result and fix (2026-11-17)
+
+**Owner's run.** `zig build test` on Windows, Debug, Zig 0.16.0-dev.3142+5ccfeb926, with the section 19 changes.
+
+- Passed: the asset importer and converter tests, the job tests, the script tests, the imgui checks, and the text checks. The build summary reports 30 of 33 steps succeeded.
+- Failed: the `test` step did not compile. Four errors, all from one import: `src/engine/text/runtime_font.zig:27`, the `@cImport` of `stb_truetype.h`. Translate-c reports `vendor/stb_truetype.h:1061`, `stbtt_GetFontNameDefault(..., size_t output_buffer_len)`: "expected ')', found an identifier". `size_t` is not defined where the header uses it.
+
+**Effect.** `src/tests.zig` imports `runtime_font.zig`, so one failed import stops the whole Zig unit-test binary. None of its tests ran: not the runtime font tests, not the HarfBuzz shaping tests, not the earlier baseline. This is my regression. Section 19 listed the Zig compile as unverified, and this run confirmed that the change broke the build.
+
+**Cause.** The vendored `stb_truetype.h` uses `size_t` in its declarations and includes nothing that defines it. The file was never compiled before this step. The upload did not contain `vendor/`, so I could not check the header in the earlier passes. `tools/assets/font_bake.h` already includes `<stddef.h>` before the stb header.
+
+**Fix.** `runtime_font.zig`'s `@cImport` now includes `stddef.h` before `stb_truetype.h`. No other code changed. Each stb function the file calls (`stbtt_InitFont`, `stbtt_GetFontVMetrics`, `stbtt_ScaleForPixelHeight`, `stbtt_FindGlyphIndex`, `stbtt_GetGlyphHMetrics`, `stbtt_GetGlyphBitmapBox`, `stbtt_MakeGlyphBitmap`) and each HarfBuzz function is in the stb 1.28 and HarfBuzz 15.1 APIs the repo pins.
+
+**Not verified.** The fix has not been compiled here, because Zig is not installed in this sandbox. Zig analyses the rest of `runtime_font.zig` only after the header translates, so the next run may show further errors in that file. The rest of the file is still unverified.
+
+**Next run.** `zig build test`. Expect the whole unit-test binary to build and run, with the 18 `runtime_font` tests among them. If it fails, paste the first error and the test name.

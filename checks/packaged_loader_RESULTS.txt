@@ -1,0 +1,91 @@
+Packaged-loader mirror results (Phase 2 loader wiring, 2026-11-17)
+Harness: checks/packaged_loader_mirror.c (mirrors src/engine/text/runtime_font.zig; it does NOT compile the Zig)
+Date: 2026-11-17 (sandbox, Ubuntu 24.04, gcc 13.3.0)
+Build (from repository root):
+  gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all checks/packaged_loader_mirror.c -lm -o packaged_loader_mirror
+Run: ASAN_OPTIONS=detect_leaks=1 ./packaged_loader_mirror
+
+=== RUN: clean mirror ===
+Packaged-loader mirror: checks/packaged_loader_mirror.c (mirrors src/engine/text/runtime_font.zig)
+This checks control flow and numeric bounds in C. It does not compile the Zig.
+
+=== 1. pixel-height rules ===
+ok:   16 px is accepted
+ok:   max_pixel_height itself is accepted
+ok:   0 px is refused
+ok:   negative px is refused
+ok:   NaN px is refused
+ok:   infinite px is refused
+ok:   just above the bound is refused
+ok:   1e9 px is refused
+ok:   every accepted height in (0, 4096] converts into the C int scale
+ok:   1e9 px would overflow the scale (the bound refuses it first)
+
+=== 2. HarfBuzz scale ===
+ok:   16 px gives scale 917 (the Zig test expects 917)
+ok:   4096 px gives scale 234646 (the Zig test expects 234646)
+
+=== 3. shipped assets/font.ttf ===
+ok:   assets/font.ttf can be read (run from the repository root)
+ok:   the shipped font is accepted as TrueType glyf
+ok:   the shipped font's head, hhea, and maxp tables parse
+ok:   unitsPerEm is 2048 (the Zig test expects 2048)
+ok:   hhea ascender is 1854 (the Zig test expects 1854)
+ok:   hhea descender is -434 (the Zig test expects -434)
+ok:   maxp numGlyphs is 4652 (the Zig test expects 4652)
+
+=== 4. container rules ===
+ok:   text that is not a font is refused
+ok:   OTTO (CFF) is refused as unsupported
+ok:   ttcf (collection) is refused as unsupported
+ok:   a CFF-only table set is refused as unsupported
+ok:   a header that promises tables it lacks is refused
+ok:   an empty input is refused
+
+=== 5. packaged loader: order, error mapping, and ownership ===
+ok:   a packaged font loads through the reader
+ok:   the file is read exactly once
+ok:   the face holds the reader's bytes, byte for byte
+ok:   the loaded face's scale is 917 at 16 px
+ok:   a loaded face owns its bytes and three objects, and nothing else
+ok:   destroying the face frees everything it owned
+ok:   a name the package lacks gives FileNotFound after one read
+ok:   a missing file leaves nothing allocated
+ok:   a bad height is refused
+ok:   a bad height is refused before the reader is called, both times
+ok:   the reader's ReadFailed comes back as ReadFailed
+ok:   the reader's PathTooLong comes back as PathTooLong
+ok:   the reader's OutOfMemory comes back as OutOfMemory
+ok:   none of the reader failures leaves anything allocated
+ok:   junk read through the reader is rejected, and its bytes are freed once
+ok:   a CFF file read through the reader is rejected, and its bytes are freed once
+      stage 1 fails with InvalidFont, live allocations afterwards: 0
+      stage 2 fails with InvalidFont, live allocations afterwards: 0
+      stage 3 fails with InvalidFont, live allocations afterwards: 0
+      stage 4 fails with InvalidFont, live allocations afterwards: 0
+ok:   a failure at each of the four stages frees every buffer that was taken
+ok:   init copies the bytes and builds the face
+ok:   init's face frees everything on destroy
+ok:   init refuses the overflow height without allocating
+ok:   init refuses junk without allocating
+ok:   init frees its copy when the face build fails
+ok:   20 packaged create and destroy cycles leave nothing allocated
+ok:   the whole run ends with no counted allocation left
+
+PASSED (0 failures)
+exit status: 0
+
+=== MUTATION CHECK: the harness must fail when the code is wrong ===
+Four copies of the mirror were made in a scratch folder, each with one planted bug. Each copy was built with the
+same sanitizer flags (without -Werror) and run. A copy that passes would mean the harness cannot see that bug.
+
+  M1  double free on the packaged error path (the loader frees the bytes again after the face build fails)
+      -> AddressSanitizer: attempting double-free. Caught.
+  M2  pixel height checked after the read (a bad height still calls the reader)
+      -> FAIL: a bad height is refused before the reader is called, both times. Caught (1 check).
+  M3  no upper pixel-height bound (1e9 px accepted)
+      -> FAIL: infinite px, just above the bound, 1e9 px, and the bad-height-before-read check. Caught (4 checks).
+  M4  bytes not freed on the face-build failure path (a leak)
+      -> LeakSanitizer: detected memory leaks. Caught.
+
+What this does not show: that the Zig code compiles, or that its tests pass. Those are the owner's run.
