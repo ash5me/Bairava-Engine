@@ -315,6 +315,12 @@ pub const Cache = struct {
         return self.pending[0..self.pending_count];
     }
 
+    /// True once the page holds the white block or a glyph. A page that is not in use has no sprites and needs no 2D
+    /// copy.
+    pub fn pageInUse(self: *const Cache, page: u32) bool {
+        return self.pages[page].used;
+    }
+
     pub fn pageNeedsFullUpload(self: *const Cache, page: u32) bool {
         return self.pages[page].dirty_all;
     }
@@ -493,6 +499,8 @@ test "a new cache holds the white block at the origin of page 0 and queues it fo
     const stats = cache.snapshot();
     try testing.expectEqual(@as(u32, 1), stats.pages_in_use);
     try testing.expectEqual(@as(u32, 0), stats.entries);
+    try testing.expect(cache.pageInUse(0));
+    try testing.expect(!cache.pageInUse(1));
 }
 
 test "a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry" {

@@ -1,5 +1,6 @@
 /*
- * Mirror of src/engine/text/glyph_cache.zig (Phase 3 of the rendering migration plan, 2026-11-17).
+ * Mirror of src/engine/text/glyph_cache.zig and of plan2d in src/engine/renderer/glyph_atlas.zig
+ * (Phase 3 of the rendering migration plan, 2026-11-17).
  *
  * Each function below follows its Zig counterpart line for line, and each check uses the same
  * numbers as the matching Zig test. This checks the control flow, the packing arithmetic, the table,
@@ -429,6 +430,30 @@ static uint8_t page_byte(const Cache *c, uint32_t page, size_t index) {
     return c->pages[page].pixels[index];
 }
 
+/* ---- plan2d (renderer/glyph_atlas.zig) ------------------------------- */
+
+typedef enum { ACT_NONE, ACT_SYNC_WHOLE_PAGE, ACT_UPDATE_REGIONS, ACT_RELEASE } Action2d;
+
+static Action2d plan_2d(int want_2d, int valid, int in_use, int changed) {
+#ifdef MUT_PLAN_KEEP
+    if (!want_2d) return ACT_NONE;
+#else
+    if (!want_2d) return ACT_RELEASE;
+#endif
+    if (!valid) return in_use ? ACT_SYNC_WHOLE_PAGE : ACT_NONE;
+    return changed ? ACT_UPDATE_REGIONS : ACT_NONE;
+}
+
+static void t_plan_2d(void) {
+    begin("the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D");
+    CHECK_EQ(plan_2d(0, 0, 1, 1), ACT_RELEASE, "GPU mode, no copy: release (a no-op)");
+    CHECK_EQ(plan_2d(0, 1, 1, 0), ACT_RELEASE, "GPU mode, copy present: release");
+    CHECK_EQ(plan_2d(1, 0, 1, 0), ACT_SYNC_WHOLE_PAGE, "2D mode, first use of a used page: make the copy");
+    CHECK_EQ(plan_2d(1, 0, 0, 0), ACT_NONE, "2D mode, unused page: no copy");
+    CHECK_EQ(plan_2d(1, 1, 1, 1), ACT_UPDATE_REGIONS, "2D mode, copy present, changed: update the regions");
+    CHECK_EQ(plan_2d(1, 1, 1, 0), ACT_NONE, "2D mode, copy present, unchanged: nothing");
+}
+
 /* ---- tests (names and numbers match the Zig tests) -------------------- */
 
 static void t_white_block(void) {
@@ -445,6 +470,8 @@ static void t_white_block(void) {
     Stats s = cache_snapshot(&c);
     CHECK_EQ(s.pages_in_use, 1, "one page in use");
     CHECK_EQ(s.entries, 0, "no entries");
+    CHECK(c.pages[0].used, "page 0 is in use");
+    CHECK(!c.pages[1].used, "page 1 is not in use");
     cache_deinit(&c);
 }
 
@@ -752,6 +779,7 @@ int main(void) {
     t_missing();
     t_options();
     t_size_bits();
+    t_plan_2d();
     printf("\n%d checks, %d failures\n", checks, failures);
     if (failures != 0) {
         printf("FAILED\n");

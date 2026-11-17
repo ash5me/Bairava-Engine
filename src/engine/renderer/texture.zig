@@ -105,14 +105,38 @@ fn wrapWithSdl(state: *backend.texture.State, width: u32, height: u32, pixels: [
 /// One rectangle of a coverage texture to overwrite (see backend.texture.CoverageRegion).
 pub const CoverageRegion = backend.texture.CoverageRegion;
 
-/// Writes new coverage into a coverage texture. The GPU copies are recorded into `cmd`, the frame's command buffer, so
-/// SDL runs them before any draw recorded after them. The 2D renderer's copy is updated at once, as white RGBA with the
-/// coverage in alpha, the same layout createCoverage makes. `allocator` supplies one temporary RGBA buffer per region,
-/// freed before this returns. A region must lie inside the texture.
-pub fn updateCoverageRegions(allocator: std.mem.Allocator, texture_ref: *const Texture, cmd: *backend.CommandBuffer, regions: []const CoverageRegion) void {
+/// Creates a coverage texture on the GPU only. A runtime atlas page starts this way and gets its 2D copy from
+/// `syncCoverage2d` when the 2D renderer first draws it. It samples through the coverage pipeline, like `createCoverage`.
+pub fn createCoverageGpuOnly(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, alpha: []const u8) Texture {
+    var result = wrap(backend.texture.uploadCoverage(allocator, device, width, height, alpha), width, height);
+    result.coverage = true;
+    return result;
+}
+
+/// Records the GPU copies of `regions` into `cmd`, the frame's command buffer, so SDL runs them before any draw recorded
+/// after them. Regions must lie inside the texture.
+pub fn recordCoverageGpu(texture_ref: *const Texture, cmd: *backend.CommandBuffer, regions: []const CoverageRegion) void {
     std.debug.assert(texture_ref.coverage);
     backend.texture.recordCoverageRegions(backendState(texture_ref), cmd, regions);
+}
 
+/// Makes the 2D renderer's copy of a coverage texture match `alpha`, which holds width * height coverage bytes, row 0
+/// first. The copy is created on the first call and overwritten after that. With no active 2D renderer no copy is made,
+/// and `sdl2dState` returns null, which the caller can see.
+pub fn syncCoverage2d(allocator: std.mem.Allocator, texture_ref: *Texture, width: u32, height: u32, alpha: []const u8) void {
+    std.debug.assert(texture_ref.coverage);
+    const rgba = expandCoverage(allocator, alpha);
+    defer allocator.free(rgba);
+    if (sdl2dState(texture_ref)) |sdl_texture| {
+        platform.renderer2d.updateTexture(sdl_texture, 0, 0, width, height, rgba);
+    } else {
+        texture_ref.sdl2d_state = if (platform.renderer2d.createTexture(width, height, rgba)) |created| @ptrCast(created) else null;
+    }
+}
+
+/// Overwrites the listed regions of the 2D copy. Does nothing when the copy does not exist.
+pub fn updateCoverage2d(allocator: std.mem.Allocator, texture_ref: *const Texture, regions: []const CoverageRegion) void {
+    std.debug.assert(texture_ref.coverage);
     const sdl_texture = sdl2dState(texture_ref) orelse return;
     for (regions) |region| {
         if (region.w == 0 or region.h == 0) continue;
@@ -132,6 +156,27 @@ pub fn updateCoverageRegions(allocator: std.mem.Allocator, texture_ref: *const T
         }
         platform.renderer2d.updateTexture(sdl_texture, region.x, region.y, region.w, region.h, rgba);
     }
+}
+
+/// Releases the 2D renderer's copy, if there is one. The GPU texture is kept, and the next `syncCoverage2d` makes the
+/// copy again.
+pub fn releaseCoverage2d(texture_ref: *Texture) void {
+    if (texture_ref.sdl2d_state) |state| {
+        platform.renderer2d.destroyTexture(@ptrCast(state));
+        texture_ref.sdl2d_state = null;
+    }
+}
+
+/// Expands alpha-only coverage to white RGBA, the layout the 2D renderer tints. The caller frees the result.
+fn expandCoverage(allocator: std.mem.Allocator, alpha: []const u8) []u8 {
+    const rgba = allocator.alloc(u8, alpha.len * 4) catch @panic("out of memory");
+    for (alpha, 0..) |coverage, index| {
+        rgba[index * 4 + 0] = 255;
+        rgba[index * 4 + 1] = 255;
+        rgba[index * 4 + 2] = 255;
+        rgba[index * 4 + 3] = coverage;
+    }
+    return rgba;
 }
 
 pub fn sdl2dState(texture_ref: *const Texture) ?*platform.Renderer2dTexture {

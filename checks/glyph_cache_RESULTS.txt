@@ -1,5 +1,5 @@
-Glyph cache mirror results (Phase 3 CPU cache, 2026-11-17)
-Harness: checks/glyph_cache_mirror.c (mirrors src/engine/text/glyph_cache.zig; it does NOT compile the Zig)
+Glyph cache mirror results (Phase 3 CPU cache and plan2d, 2026-11-17, revision 2: lazy 2D copies)
+Harness: checks/glyph_cache_mirror.c (mirrors src/engine/text/glyph_cache.zig and plan2d in src/engine/renderer/glyph_atlas.zig; it does NOT compile the Zig)
 Date: 2026-11-17 (sandbox, Ubuntu 24.04, gcc 13.3.0)
 Build (from repository root):
   gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all checks/glyph_cache_mirror.c -lm -o glyph_cache_mirror
@@ -24,22 +24,24 @@ Run: ASAN_OPTIONS=detect_leaks=1 ./glyph_cache_mirror
 --- missing codepoints are counted
 --- invalid options are refused before anything is allocated
 --- the pixel-height key is the float's bit pattern
+--- the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D
 
-1800 checks, 0 failures
+1808 checks, 0 failures
 PASSED
 exit status: 0
 
 === MUTATION CHECK: the harness must fail when the code is wrong
-Each mutant is built from the same file with one MUT_* macro defined and run.
-  MUT_NOPAD: CAUGHT (exit 1) -- FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: first glyph after white starts at x=3: got 2, want 3 (line 481)
-  MUT_NOWRAP: CAUGHT (exit 1) -- FAIL: a glyph that does not fit the shelf starts a new shelf below it: sixth glyph starts a new shelf at x=0: got 28, want 0 (line 539)
-  MUT_NOOVERFLOW: CAUGHT (exit 1) -- FAIL: more changed glyphs than the pending list holds mark their page for a full upload: page 0 needs a full upload (line 668)
-  MUT_TOMBSTONE_EMPTY: CAUGHT (exit 1) -- FAIL: a removed entry does not hide the entries probed past it: second is still found past the tombstone (line 633)
-  MUT_DROP_ON_GROW: CAUGHT (exit 1) -- FAIL: the table grows as entries are added, and every entry is still found afterwards: all 1000 entries found after growth (line 651)
-  MUT_REMOVE_NOOP: CAUGHT (exit 1) -- FAIL: removing a font forgets its glyphs and keeps the others: removed glyph misses (line 608)
-  MUT_NOMISS: CAUGHT (exit 1) -- FAIL: a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry: one miss: got 0, want 1 (line 466)
-  MUT_BAD_STRIDE: CAUGHT (exit 1) -- FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: row 1 col 0: got 0, want 4 (line 485)
-  MUT_NOTOOLARGE_COUNT: CAUGHT (exit 1) -- FAIL: a glyph wider than the page allows is refused and counted: one too_large: got 0, want 1 (line 575)
+Each mutant is built from the same file with one MUT_* macro defined, and run.
+  MUT_NOPAD: CAUGHT (exit 1) -- FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: first glyph after white starts at x=3: got 2, want 3 (line 508)
+  MUT_NOWRAP: CAUGHT (exit 1) -- FAIL: a glyph that does not fit the shelf starts a new shelf below it: sixth glyph starts a new shelf at x=0: got 28, want 0 (line 566)
+  MUT_NOOVERFLOW: CAUGHT (exit 1) -- FAIL: more changed glyphs than the pending list holds mark their page for a full upload: page 0 needs a full upload (line 695)
+  MUT_TOMBSTONE_EMPTY: CAUGHT (exit 1) -- FAIL: a removed entry does not hide the entries probed past it: second is still found past the tombstone (line 660)
+  MUT_DROP_ON_GROW: CAUGHT (exit 1) -- FAIL: the table grows as entries are added, and every entry is still found afterwards: all 1000 entries found after growth (line 678)
+  MUT_REMOVE_NOOP: CAUGHT (exit 1) -- FAIL: removing a font forgets its glyphs and keeps the others: removed glyph misses (line 635)
+  MUT_NOMISS: CAUGHT (exit 1) -- FAIL: a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry: one miss: got 0, want 1 (line 493)
+  MUT_BAD_STRIDE: CAUGHT (exit 1) -- FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: row 1 col 0: got 0, want 4 (line 512)
+  MUT_NOTOOLARGE_COUNT: CAUGHT (exit 1) -- FAIL: a glyph wider than the page allows is refused and counted: one too_large: got 0, want 1 (line 602)
+  MUT_PLAN_KEEP: CAUGHT (exit 1) -- FAIL: the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D: GPU mode, no copy: release (a no-op): got 0, want 3 (line 449)
 
 What this does not show: that the Zig code compiles, or that its tests pass. Those are the owner's run
 (zig build test on Windows, Linux, and macOS). The GPU and SDL2D update paths are not run here.

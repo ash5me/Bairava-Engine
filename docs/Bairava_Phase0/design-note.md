@@ -36,6 +36,14 @@ Status: Phase 0 closed 2026-11-17. Decisions D1 to D3 and Q1 to Q3 are the owner
 
 Four 1024² R8 coverage pages, no eviction. A `glyph_cache_full` diagnostic is raised when the pages fill, and no glyph is dropped silently. Static BFNT atlases are not part of the dynamic cache.
 
+Phase 3 decisions (see `Bairava-Engine-Rendering-Migration-Plan.phase0-status.md`, section 21):
+
+- **P3-1, white block (accepted).** A 2×2 solid block at the origin of page 0, reserved and uploaded first. Filled rectangles sample it through the coverage pipeline.
+- **P3-2, eager GPU pages (accepted provisionally).** All four GPU pages and their CPU mirrors are created with the atlas. Revisit with the first Phase 5 `pages_in_use` data.
+- **P3-10, lazy 2D copies (implemented).** A page's SDL2D copy is made on the first 2D flush that finds the page in use. It is rebuilt from the CPU mirror, kept current while the 2D renderer is active, and released when the renderer leaves 2D. The GPU-only session therefore carries no 2D copies.
+
+Memory: GPU only, 8 MiB. With the 2D renderer and all four pages in use, 24 MiB. Both figures are arithmetic, not measurements.
+
 ## 6. Renderers
 
 Both SDL GPU and the SDL3 2D renderer are acceptance targets. The coverage shader and sprite batching are reused. Phase 0 changes no renderer code.
