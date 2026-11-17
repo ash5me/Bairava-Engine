@@ -288,6 +288,11 @@ pub const renderer2d = struct {
         sdl_renderer2d.destroyTexture(if (texture) |value| @ptrCast(@alignCast(value)) else null);
     }
 
+    /// Overwrites one rectangle of a texture made by createTexture. See the SDL implementation for the rules.
+    pub fn updateTexture(texture: *Renderer2dTexture, x: u32, y: u32, w: u32, h: u32, rgba: []const u8) void {
+        sdl_renderer2d.updateTexture(@ptrCast(@alignCast(texture)), x, y, w, h, rgba);
+    }
+
     pub fn draw(
         texture: *Renderer2dTexture,
         src: anytype,

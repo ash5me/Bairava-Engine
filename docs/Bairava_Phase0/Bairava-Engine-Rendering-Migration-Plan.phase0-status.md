@@ -585,3 +585,74 @@ This pass closes the open Phase 2 item "Load font files through Bairava's existi
 **Not verified.** The fix has not been compiled here, because Zig is not installed in this sandbox. Zig analyses the rest of `runtime_font.zig` only after the header translates, so the next run may show further errors in that file. The rest of the file is still unverified.
 
 **Next run.** `zig build test`. Expect the whole unit-test binary to build and run, with the 18 `runtime_font` tests among them. If it fails, paste the first error and the test name.
+
+## 21. Phase 3: runtime glyph atlas and cache (2026-11-17)
+
+Phase 2 CI is green on all three systems (owner-reported), so Phase 3 has started. This section records what was written, what ran in the sandbox, and what the owner must run. The file `docs/p3-migration-status.md` describes a different, older "P3" (packaging, audio, save/load) and is not this plan's Phase 3.
+
+**Written.**
+
+- `src/engine/text/glyph_cache.zig`: the CPU cache, with no SDL or GPU imports. It holds four 1024² coverage pages (created with the cache), a shelf packer with one texel of padding on the right and bottom, a 2×2 white block at the origin of page 0, and an open-addressing table keyed by font, glyph, and pixel-height bits. It counts hits, misses, inserts, empty glyphs, `cache_full`, `too_large`, missing codepoints, removals, and rehashes. It keeps a bounded list of changed regions (512), and marks a page for a whole-page upload when that list overflows. `Stats` is returned by `snapshot`.
+- `src/engine/text/glyph_cache_font_test.zig`: two tests against the shipped `assets/font.ttf`. The first caches the first 300 glyphs from `RuntimeFont` and checks that every stored texel equals the rasterized coverage. The second caches a glyph far from ASCII, then checks the miss and the hit.
+- `src/engine/renderer/glyph_atlas.zig`: `Atlas` owns the cache and one engine `Texture` per page (created at `init`). `flush(cmd)` writes the changed regions to each page. `pageTexture` and `spriteSource` give sprites the page pointer and the texel rectangle.
+- `src/engine/renderer/texture.zig`: `updateCoverageRegions(allocator, texture, cmd, regions)`. It records the GPU copies into `cmd`, and it updates the 2D copy from RGBA rows built from the coverage.
+- `src/engine/renderer/backends/sdl_gpu/texture.zig`: `CoverageRegion` and `recordCoverageRegions`. It stages each region's rows in one transfer buffer and records one copy per region into the frame command buffer, outside a render pass.
+- `src/engine/platform/sdl/renderer2d.zig` and `platform.zig`: `updateTexture`, which calls `SDL_UpdateTexture` on one rectangle of a texture.
+- `src/tests.zig`: registers the three new test files.
+- `checks/glyph_cache_mirror.c` and `checks/glyph_cache_RESULTS.txt`: a C mirror of the cache logic, with the same test names and numbers as the Zig tests.
+
+**Decisions made in this phase (for owner review).**
+
+- **P3-1, white block.** A 2×2 solid block at the origin of page 0, reserved and uploaded first, following the prebaked font's convention (`text.h`). Filled rectangles keep the coverage pipeline. Please confirm.
+- **P3-2, eager pages.** All four pages are created when the atlas is created, so no page is created mid-frame, and the initial zero upload has finished before text is drawn. Memory cost: CPU mirror 4 MiB, GPU R8 4 MiB, SDL2D RGBA copy 16 MiB. The 2D copy is the largest. Reducing it is a follow-up.
+- **P3-3, padding.** One texel on the right and bottom of each glyph. Sampling is nearest.
+- **P3-4, write-once regions.** A glyph's texels are written once and never move, and there is no eviction. So no later write touches a texel that a frame in flight may read. `Cache.clear` rewrites texels and `Atlas.deinit` frees them, so both require the GPU to be idle.
+- **P3-5, ordering.** Atlas copies are recorded into the frame's command buffer, before the sprite upload, the same way `sprite.upload` records its vertex copy. SDL runs them in order before the draws that sample them. No fence is needed, so an update never makes a page skip its batch (`Texture.isReady` is unaffected).
+- **P3-6, overflow.** When the changed-region list is full, the page is uploaded whole, and its listed regions are skipped.
+- **P3-7, removal.** `removeFont` forgets a font's glyphs at once, but their texels remain until `clear`. Space is not reclaimed without `clear`.
+- **P3-8, table.** A small open-addressing table in `glyph_cache.zig`. The engine's `hash_map.zig` handles only string keys, and the repo has no std hash map precedent on this Zig snapshot, so the new code avoids that API.
+- **P3-9, renderer recreation.** Not present in the engine today. The policy: rebuild the atlas (`deinit`, then `init`) and let glyphs re-rasterize on demand. `markAllDirty` supports a keep-the-cache path later, and it is tested.
+
+**Verified in the sandbox.**
+
+- The mirror runs 1800 checks with 0 failures, under AddressSanitizer, UBSan, and LeakSanitizer, built with `-Werror`. Its 18 checks correspond one-to-one to the 18 tests in `glyph_cache.zig`.
+- Nine planted bugs (padding, shelf wrap, pending overflow, tombstone handling, table growth, removal, miss counting, row stride, too-large counting). The harness fails on each.
+- `scripts/boundary_scan.py --self-test` rejects 3 of 3 fixtures. `--fail` reports 0 reachable violations and exits 0.
+- Static checks on the eight touched Zig files: brackets balance. I re-read the Zig for mixed `usize`/`u32` arithmetic, and for file-level names shadowed by parameters, and fixed three instances of each.
+
+**Not verified here.**
+
+- The Zig compile and the Zig tests. Zig is not installed and `vendor/` is absent from the upload. This is the owner's `zig build test` on all three systems.
+- The GPU path (`recordCoverageRegions`) and the 2D path (`updateTexture`). Both need a window and a device, which the test binary does not create.
+- `glyph_cache_font_test.zig`, which needs Zig.
+- The shipped build (`zig build`). The new code is referenced only from `tests.zig`, so the shipped engine module should be unaffected. Confirm this in the owner's run.
+
+**Phase 3 gate.**
+
+Phase 3 closes when `zig build test` passes on Windows, Linux, and macOS, with the 18 `glyph_cache` tests, the two font tests, and the `glyph_atlas` compile test among them, and when `zig build` passes. Paste the first error and the test name if either fails.
+
+The GPU and 2D paths, and the exit criterion "both renderer paths," are only partly met here. They are written and documented, but they are first exercised when Phase 5 puts the atlas in the frame. The window-level check belongs to that integration.
+
+**Phase 5 insertion point.** Call `atlas.flush(frame.cmd)` in `src/engine/core/runtime.zig` after the frame's text is queued, and before `if (ctx.renderer == .sdl2d) {` (around line 420). That position runs the flush before both the 2D draw and the sprite upload. The atlas must be created once the GPU device and the 2D renderer exist (lifecycle stage `.gpu`).
+
+**Diagnostics.** `Cache.snapshot()` gives the counters that the Phase 3 checklist names. The `glyph_cache_full` diagnostic is `cache_full`. The overlay line that shows them is a Phase 5 item, because the overlay is the consumer.
+
+**Checklist** (rendering migration plan, Phase 3):
+
+- [x] Runtime cache for arbitrary text, replacing the fixed 1024² atlas assumption (`glyph_cache.zig`).
+- [x] Cache key: font identity, glyph ID, and pixel-height bits (`GlyphKey`).
+- [x] Shelf packing with padding, and explicit full-page handling (`AtlasFull`, counted).
+- [x] Page policy: pages in order, no eviction, no silent loss (P3-2, P3-4).
+- [~] Safe GPU upload path for new glyph regions. Written (`recordCoverageRegions`); not run.
+- [~] Both renderer paths. SDL_GPU and SDL2D updates are written; not run.
+- [~] Updates cannot race queued draws or in-flight work. The design holds (P3-4, P3-5). The window-level check belongs to Phase 5.
+- [x] Cache lifetime and cleanup for font removal and teardown (`removeFont`, `clear`, `deinit`). Renderer recreation: P3-9.
+- [x] Counters for hits, misses, pages, and allocations (`Stats`). Overlay wiring is Phase 5.
+- [x] Tests for hits, misses, page-full, repeated requests, texture replacement (the full-page flush path, CPU side), and cleanup, in the mirror and in the Zig tests.
+
+**Open items.**
+
+- Confirm P3-1 (white block) and P3-2 (memory cost of eager pages).
+- The text layer (Phase 5) draws `?` when the font has one, and nothing otherwise (Q3). This file only counts missing codepoints.
+- The copy-then-sample ordering in one command buffer is the same pattern the sprite vertex upload already uses. Confirm it on screen in the first Phase 5 run.
+- Run `scripts/check-dependency-pins.py` on a full checkout. It fails on this upload only because `vendor/` is absent.

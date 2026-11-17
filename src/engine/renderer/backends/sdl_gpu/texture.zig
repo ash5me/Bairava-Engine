@@ -73,6 +73,81 @@ pub fn binding(state: *const State) c.SDL_GPUTextureSamplerBinding {
     return .{ .texture = state.texture, .sampler = state.sampler };
 }
 
+/// One rectangle of a coverage texture to overwrite. Row r of the rectangle is `w` bytes at `coverage[r * stride]`, so a
+/// region of a larger page can be sent without copying it first. `coverage` must reach the last row's `w` bytes.
+pub const CoverageRegion = struct {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    stride: u32,
+    coverage: []const u8,
+};
+
+/// Records copies of `regions` into `cmd` outside a render pass. The copies run before any draw recorded after them in
+/// the same command buffer, which is how a glyph written this frame is sampled this frame. The rows are staged in one
+/// transfer buffer. SDL frees that buffer once the GPU no longer needs it, so it is released before this returns.
+/// Regions must lie inside the texture. An empty region is skipped.
+pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, regions: []const CoverageRegion) void {
+    var total: usize = 0;
+    for (regions) |region| {
+        if (region.w == 0 or region.h == 0) continue;
+        total += @as(usize, region.w) * @as(usize, region.h);
+    }
+    if (total == 0) return;
+
+    var tb_info = std.mem.zeroes(c.SDL_GPUTransferBufferCreateInfo);
+    tb_info.usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    tb_info.size = @intCast(total);
+    const transfer = c.SDL_CreateGPUTransferBuffer(state.device, &tb_info) orelse {
+        std.debug.panic("SDL_CreateGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
+    };
+    defer c.SDL_ReleaseGPUTransferBuffer(state.device, transfer);
+
+    const mapped = c.SDL_MapGPUTransferBuffer(state.device, transfer, false) orelse {
+        std.debug.panic("SDL_MapGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
+    };
+    const staged: [*]u8 = @ptrCast(mapped);
+    var offset: usize = 0;
+    for (regions) |region| {
+        if (region.w == 0 or region.h == 0) continue;
+        var row: u32 = 0;
+        while (row < region.h) : (row += 1) {
+            const dst_row = offset + @as(usize, row) * @as(usize, region.w);
+            const src_row = @as(usize, row) * @as(usize, region.stride);
+            @memcpy(staged[dst_row .. dst_row + @as(usize, region.w)], region.coverage[src_row..][0..region.w]);
+        }
+        offset += @as(usize, region.w) * @as(usize, region.h);
+    }
+    c.SDL_UnmapGPUTransferBuffer(state.device, transfer);
+
+    const copy_pass = c.SDL_BeginGPUCopyPass(cmd);
+    offset = 0;
+    for (regions) |region| {
+        if (region.w == 0 or region.h == 0) continue;
+        const src = c.SDL_GPUTextureTransferInfo{
+            .transfer_buffer = transfer,
+            .offset = @intCast(offset),
+            .pixels_per_row = region.w,
+            .rows_per_layer = region.h,
+        };
+        const dst = c.SDL_GPUTextureRegion{
+            .texture = state.texture,
+            .mip_level = 0,
+            .layer = 0,
+            .x = region.x,
+            .y = region.y,
+            .z = 0,
+            .w = region.w,
+            .h = region.h,
+            .d = 1,
+        };
+        c.SDL_UploadToGPUTexture(copy_pass, &src, &dst, false);
+        offset += @as(usize, region.w) * @as(usize, region.h);
+    }
+    c.SDL_EndGPUCopyPass(copy_pass);
+}
+
 /// Releases the GPU objects, then the state. The device must still exist.
 pub fn destroy(state: *State) void {
     if (state.upload_fence) |fence| c.SDL_ReleaseGPUFence(state.device, fence);

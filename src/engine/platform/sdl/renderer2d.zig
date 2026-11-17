@@ -76,6 +76,13 @@ pub fn draw(
     _ = c.SDL_RenderTextureRotated(r.renderer, texture, &src, &dst, rotation * 180.0 / std.math.pi, &center, flip);
 }
 
+/// Overwrites one rectangle of a static texture with RGBA pixels, `w * 4` bytes per row. The rectangle must lie inside
+/// the texture. SDL does not check the rows, so the caller passes the right number of bytes.
+pub fn updateTexture(texture: *c.SDL_Texture, x: u32, y: u32, w: u32, h: u32, rgba: []const u8) void {
+    const rect = c.SDL_Rect{ .x = @intCast(x), .y = @intCast(y), .w = @intCast(w), .h = @intCast(h) };
+    _ = c.SDL_UpdateTexture(texture, &rect, rgba.ptr, @intCast(w * 4));
+}
+
 pub const Renderer = struct {
     window: *c.SDL_Window,
     renderer: *c.SDL_Renderer,

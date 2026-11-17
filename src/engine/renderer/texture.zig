@@ -102,6 +102,38 @@ fn wrapWithSdl(state: *backend.texture.State, width: u32, height: u32, pixels: [
     return result;
 }
 
+/// One rectangle of a coverage texture to overwrite (see backend.texture.CoverageRegion).
+pub const CoverageRegion = backend.texture.CoverageRegion;
+
+/// Writes new coverage into a coverage texture. The GPU copies are recorded into `cmd`, the frame's command buffer, so
+/// SDL runs them before any draw recorded after them. The 2D renderer's copy is updated at once, as white RGBA with the
+/// coverage in alpha, the same layout createCoverage makes. `allocator` supplies one temporary RGBA buffer per region,
+/// freed before this returns. A region must lie inside the texture.
+pub fn updateCoverageRegions(allocator: std.mem.Allocator, texture_ref: *const Texture, cmd: *backend.CommandBuffer, regions: []const CoverageRegion) void {
+    std.debug.assert(texture_ref.coverage);
+    backend.texture.recordCoverageRegions(backendState(texture_ref), cmd, regions);
+
+    const sdl_texture = sdl2dState(texture_ref) orelse return;
+    for (regions) |region| {
+        if (region.w == 0 or region.h == 0) continue;
+        const texels = @as(usize, region.w) * @as(usize, region.h);
+        const rgba = allocator.alloc(u8, texels * 4) catch @panic("out of memory");
+        defer allocator.free(rgba);
+        var row: u32 = 0;
+        while (row < region.h) : (row += 1) {
+            const src = region.coverage[@as(usize, row) * @as(usize, region.stride) ..][0..region.w];
+            for (src, 0..) |coverage, col| {
+                const out = (@as(usize, row) * @as(usize, region.w) + col) * 4;
+                rgba[out + 0] = 255;
+                rgba[out + 1] = 255;
+                rgba[out + 2] = 255;
+                rgba[out + 3] = coverage;
+            }
+        }
+        platform.renderer2d.updateTexture(sdl_texture, region.x, region.y, region.w, region.h, rgba);
+    }
+}
+
 pub fn sdl2dState(texture_ref: *const Texture) ?*platform.Renderer2dTexture {
     return if (texture_ref.sdl2d_state) |state| @ptrCast(state) else null;
 }
