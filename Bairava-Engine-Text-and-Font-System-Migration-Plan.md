@@ -431,7 +431,8 @@ A CPU-only shaping service and reusable runtime outline-font face. No glyph atla
 ### Wants — useful but not blocking
 
 - [x] Batch multiple glyph misses and upload them together instead of issuing one GPU upload per glyph.
-- [ ] Add a warm-up/preload API for known dialogue/UI strings.
+- [x] Add a warm-up/preload API for known dialogue/UI strings. It takes glyph IDs, as `resolve` does, so warming a string waits for Phase 5 shaping.
+- [ ] Reuse one upload buffer across flushes instead of creating one per changed page (performance; measure first with the glyph check counters).
 - [ ] Add LRU or another measured eviction policy after a stable page-growth implementation exists.
 
 ### Deliverable
@@ -451,7 +452,7 @@ A runtime outline font can request an unseen glyph, rasterize it once, upload it
 
 **Legend:** `[x]` means the code exists and a CPU test covers it. `[~]` means the code exists, but it is verified only by reading, or it needs a GPU or window run. `[ ]` means not done. The numbering in this plan is authoritative. The source comments that say "Phase 3" are legacy.
 
-**Caveat.** The sandbox has no Zig toolchain, no vendored HarfBuzz, and no network. The Zig changes were desk-checked but not compiled, so the owner must run `zig build test`. The C mirror (`checks/glyph_cache_mirror.c`) models the resolver, the raster modes, and the fallback. It runs 2159 checks with 0 failures. The original 1828 still pass unchanged, and 19 planted mutants are caught. Its parity with the Zig code is at the level of logic, against a synthetic glyph source. Of 45 Zig tests in the cache, font-test, and atlas files, 42 have a mirror check of the same logic (`checks/glyph_cache_parity.txt`). Parity is not claimed for real-font values, for the GPU, or for Zig compilation.
+**Caveat.** The sandbox has no Zig toolchain, no vendored HarfBuzz, and no network. The Zig changes were desk-checked but not compiled, so the owner must run `zig build test`. The C mirror (`checks/glyph_cache_mirror.c`) models the resolver, the raster modes, and the fallback. It runs 2191 checks with 0 failures. The original 1828 still pass unchanged, and 21 planted mutants are caught. Its parity with the Zig code is at the level of logic, against a synthetic glyph source. Of 49 Zig tests in the cache, font-test, and atlas files, 46 have a mirror check of the same logic (`checks/glyph_cache_parity.txt`). Parity is not claimed for real-font values, for the GPU, or for Zig compilation.
 
 **Decisions accepted (2026-11-17).**
 1. The raster mode is explicit in `resolve`. Gray is the only mode produced. Mono returns `UnsupportedRasterMode`. The mono variant stays in the cache key, so gray and mono entries cannot collide. An unsupported mode fails; it never falls back to gray.
@@ -468,15 +469,24 @@ A runtime outline font can request an unseen glyph, rasterize it once, upload it
 
 **Mirror and checks in this pass:** 21 new test functions, 331 new checks. The synthetic glyph 0 has ink, like `.notdef`. Two new mutants (`MUT_ZERO_IS_MISSING` and `MUT_MISSING_OFF_BY_ONE`) break the missing-glyph rule and are caught. `checks/glyph_cache_parity.py` regenerates the Zig-to-mirror map. `checks/glyph_cache_RESULTS.txt` records the runs.
 
+**GPU check (2026-11-17).** `renderer/glyph_check.zig` draws runtime text through the atlas and logs its counters. `lifecycle.zig` creates it when `glyph_check.enabled` is set, and `runtime.zig` calls it after the game and overlay queue sprites, before the sprite upload. The flag is off by default. It has not been compiled or run.
+
 **Still open:**
-- [ ] GPU upload and update synchronization under GPU debugging (needs the owner's device).
-- [~] Both renderer modes on a device. The plan2d and flush logic is tested on the CPU only.
+- [~] GPU upload and update synchronization under GPU debugging. The check exercises it when enabled. Not yet run; the first run with `-Dgpu-debug=true` is the test.
+- [ ] Both renderer modes on a device. Blocked: `application.sdl2d_available` is `false`, so the SDL3 2D path is reserved and a request for it resolves to SDL_GPU. The 2D frame branch in `runtime.zig` also does not call the atlas flush, so Phase 5 must add that call before this item can run.
 - [~] No queued draw samples a destroyed or repurposed page. This holds by design. Phase 5 must keep `Cache.clear` and `Atlas.deinit` behind a GPU-idle wait.
-- [ ] Warm-up API and LRU eviction (optional "Wants"; not started).
+- [ ] LRU eviction (optional "Wants"; not started). The warm-up API is done; see the warm-up pass below.
+- [ ] Whole-page uploads rewrite resident texels. A page is marked for a full upload when more than `max_pending` (512) regions change between flushes. That upload rewrites texels that frames in flight may read, with the same bytes. The output does not change, but the no-write-after-read argument in `glyph_cache.zig` and `glyph_atlas.zig` does not cover this path. Check it under GPU sync validation. If validation flags it, upload only the new texels on the overflow path.
 
 **Numbering.** The source comments in `glyph_cache.zig` and `glyph_atlas.zig` still say "Phase 3 of the rendering migration plan". They are legacy and were left as they are. `glyph_resolver.zig` uses this plan's numbering.
 
-**Next:** Phase 5 connects `resolve` and `resolveWithFallback` to `Canvas` and the text consumers, and calls `Atlas.flush` before the sprite upload. Phase 4 closes when `zig build test` passes on Windows, Linux, and macOS, and the two GPU items are checked on a device.
+**Warm-up pass (2026-11-17, second pass).** `glyph_resolver.warm` caches a list of glyph IDs before their first draw. Each glyph goes through `resolveWithFallback`, so the mode, fallback, and counter rules match a single draw. `WarmStats` reports the glyphs rasterized, already cached, and substituted. The C mirror runs 32 new checks (2191 in all, 0 failures, under ASan and UBSan, built with `-std=c99 -Werror`). All 21 planted mutants are caught, including two new ones that break the warm-up checks. The parity map lists 49 Zig tests, 46 of them mirrored. The Zig is not compiled.
+
+Proposed, not yet accepted: warm-up stops at the first error and returns it, and the glyphs before that one stay cached. It does not skip the failed glyph. When the atlas is full, later glyphs would be refused too, so going on would only add rasterization work. The owner should accept or reject this rule.
+
+Corrected: the frames-in-flight comments in `glyph_cache.zig` and `glyph_atlas.zig` said no later write touches a glyph's texels. That is false for a whole-page upload, which overflow of the pending list forces. The comments now say so, and the path is an open GPU-sync item above.
+
+**Next:** Phase 5 connects `resolve`, `resolveWithFallback`, and `warm` to `Canvas` and the text consumers, and calls `Atlas.flush` before the sprite upload. Phase 4 closes when `zig build test` passes on Windows, Linux, and macOS, and the two GPU items are checked on a device. The GPU-sync item covers the whole-page upload path listed above.
 
 ---
 

@@ -29,6 +29,7 @@ const view = @import("../renderer/view.zig");
 const sprite = @import("../renderer/sprite.zig");
 const Rect = sprite.Rect;
 const texture = @import("../renderer/texture.zig");
+const glyph_check = @import("../renderer/glyph_check.zig");
 const ui = @import("../ui/ui.zig");
 
 const Config = application.Config;
@@ -417,6 +418,9 @@ pub fn run(comptime Game: type, config: Config) !void {
             defer overlay_zone.End();
             overlay.draw(&session.world_batch, view_wf, view_hf, collector, &dev_console);
         }
+        // The glyph atlas check, when it is on. It queues its text and flushes the atlas here: after the game and the
+        // overlay have queued their sprites, and before the sprite upload, outside any render pass.
+        if (session.glyph_check_state) |*check| glyph_check.frame(check, &session.world_batch, frame.cmd, ctx.renderer == .sdl2d);
         if (ctx.renderer == .sdl2d) {
             session.renderer2d.clear(
                 @intFromFloat(black.r * 255),

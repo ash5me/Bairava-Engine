@@ -443,3 +443,98 @@ test "the last glyph is valid, and the glyph after it is missing, at the font's 
     try testing.expect(past.substituted);
     try testing.expectEqual(@as(u64, 1), cache.snapshot().missing_glyphs);
 }
+
+test "warming a run of glyphs caches each one, so a later resolve of any of them is a hit and rasterizes nothing" {
+    const bytes = try readShippedFont(testing.allocator);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
+    defer cache.deinit();
+
+    // 'A' is 36, 'V' is 57, and 'T' is 55 in the shipped font. The repeated 'A' is already cached when it comes round.
+    const run = [_]u32{ 36, 57, 55, 36 };
+    var warmed: resolver.WarmStats = .{};
+    try resolver.warm(&cache, 1, &font, &run, 36, .gray, &warmed);
+    try testing.expectEqual(@as(u32, 3), warmed.rasterized);
+    try testing.expectEqual(@as(u32, 1), warmed.already_cached);
+    try testing.expectEqual(@as(u32, 0), warmed.substituted);
+
+    for (run[0..3]) |glyph| {
+        _ = try resolver.resolve(&cache, 1, &font, glyph, .gray);
+    }
+    const stats = cache.snapshot();
+    try testing.expectEqual(@as(u64, 3), stats.rasterized);
+    try testing.expectEqual(@as(u64, 3), stats.misses);
+    try testing.expectEqual(@as(u64, 4), stats.hits);
+}
+
+test "warming stops at the first refused glyph and reports how far it got" {
+    const bytes = try readShippedFont(testing.allocator);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    // A page of 8 texels takes no glyph wider or taller than 7, so 'A' (11 by 11 at 16 px) is refused.
+    var cache = try glyph_cache.Cache.init(testing.allocator, .{ .page_size = 8, .page_count = 1 });
+    defer cache.deinit();
+
+    // The first glyph with an advance and no ink is a space. It takes no page space, so it is cached before 'A'.
+    var space: u32 = 0;
+    while (space < font.glyph_count) : (space += 1) {
+        const m = try font.glyphMetrics(space);
+        if (m.width == 0 and m.advance > 0) break;
+    }
+    const run = [_]u32{ space, 36, 57 };
+    var warmed: resolver.WarmStats = .{};
+    try testing.expectError(error.GlyphTooLarge, resolver.warm(&cache, 1, &font, &run, 36, .gray, &warmed));
+    try testing.expectEqual(@as(u32, 1), warmed.rasterized);
+    try testing.expectEqual(@as(u32, 0), warmed.already_cached);
+
+    const stats = cache.snapshot();
+    // 'A' was rasterized, then the insert refused it, so the rasterization is counted and nothing is stored for it.
+    try testing.expectEqual(@as(u64, 2), stats.rasterized);
+    try testing.expectEqual(@as(u32, 1), stats.entries);
+    try testing.expectEqual(@as(u64, 1), stats.too_large);
+    // 'V' was never looked up, so only the space and 'A' missed.
+    try testing.expectEqual(@as(u64, 2), stats.misses);
+}
+
+test "warming refuses an unsupported mode before anything is cached" {
+    const bytes = try readShippedFont(testing.allocator);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
+    defer cache.deinit();
+
+    const run = [_]u32{ 36, 57 };
+    var warmed: resolver.WarmStats = .{};
+    try testing.expectError(error.UnsupportedRasterMode, resolver.warm(&cache, 1, &font, &run, 36, .mono, &warmed));
+    try testing.expectEqual(@as(u32, 0), warmed.rasterized);
+    const stats = cache.snapshot();
+    try testing.expectEqual(@as(u64, 0), stats.misses);
+    try testing.expectEqual(@as(u64, 0), stats.rasterized);
+    try testing.expectEqual(@as(u32, 0), stats.entries);
+}
+
+test "warming substitutes the fallback for glyphs past the end, counts each, and stores nothing for them" {
+    const bytes = try readShippedFont(testing.allocator);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
+    defer cache.deinit();
+
+    const past_end = font.glyph_count;
+    const run = [_]u32{ past_end, 36, past_end + 5 };
+    var warmed: resolver.WarmStats = .{};
+    try resolver.warm(&cache, 1, &font, &run, 36, .gray, &warmed);
+    // The first request rasterizes the fallback. The second asks for 'A' directly, and the third draws the fallback.
+    // Both of those find 'A' already cached.
+    try testing.expectEqual(@as(u32, 1), warmed.rasterized);
+    try testing.expectEqual(@as(u32, 2), warmed.already_cached);
+    try testing.expectEqual(@as(u32, 2), warmed.substituted);
+    const stats = cache.snapshot();
+    try testing.expectEqual(@as(u64, 2), stats.missing_glyphs);
+    try testing.expectEqual(@as(u32, 1), stats.entries);
+}

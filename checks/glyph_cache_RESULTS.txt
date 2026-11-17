@@ -1,4 +1,4 @@
-Glyph cache mirror results (Phase 4 of the text and font system migration plan, revision 5, 2026-11-17)
+Glyph cache mirror results (Phase 4 of the text and font system migration plan, revision 6, 2026-11-17)
 Mirror: checks/glyph_cache_mirror.c. It models the cache, the resolver (mode, lookup, rasterize, insert),
 the fallback, and plan2d, against a synthetic glyph source. It does NOT compile the Zig, and it does NOT run
 RuntimeFont, stb_truetype, or HarfBuzz.
@@ -11,7 +11,7 @@ Build and run (from the repository root):
 Environment: gcc 13.3.0, Ubuntu 24.04. ASan, UBSan, and LeakSanitizer enabled.
 
 === CLEAN RUN
-2159 checks, 0 failures, exit 0.
+2191 checks, 0 failures, exit 0 (revision 6, after the warm-up pass; revision 5 ran 2159).
 
 === PRESERVATION OF THE ORIGINAL 1828 CHECKS
 1. With the 21 new test calls removed from main, the file runs 1828 checks, 0 failures, exit 0.
@@ -33,27 +33,42 @@ buffer, unsupported modes (refused before counting), missing-glyph fallback (sub
 missing, unsupported mode), glyph 0 as a valid glyph, the glyph-count boundary, and consistency between
 resolved metrics, the cache entry, the pending upload rectangle, and the stored coverage.
 
+=== WARM-UP PASS (revision 6, 2026-11-17)
+32 new checks in 4 test functions: warm-up run (3 rasterized, 1 already cached, then 4 hits and 3 misses in total),
+warm-up stopping at the first refused glyph (GlyphTooLarge, 1 stored, 2 rasterizations counted including the refused
+one), warm-up refusing an unsupported mode before any lookup, and warm-up with glyphs past the font's end (substituted,
+not stored). Each has a Zig test of the same name in src/engine/text/glyph_cache_font_test.zig.
+Build: the same strict command as above, with -std=c99 -Wall -Wextra -Werror. It passes.
+Two new mutants, MUT_WARM_CONTINUES (skip the error and go on) and MUT_WARM_NO_SUBST_COUNT (drop the substituted count),
+are both caught at the warm-up checks.
+Comments corrected in glyph_cache.zig and renderer/glyph_atlas.zig: they said no later write touches a glyph's texels.
+That is false for a whole-page upload, which overflow of the pending list forces. The text plan lists it as an open
+GPU-sync item. No code changed for that path.
+Parity: 49 Zig tests, 46 mirrored, 3 Zig only (checks/glyph_cache_parity.txt, regenerated).
+
 === MUTANTS (each built with -DMUT_X; every one must fail the run)
-19 of 19 caught. First failing message for each:
-  MUT_BAD_STRIDE: CAUGHT (exit 1) -- ==153==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7fd69114aad0 at pc 0x7fd693afb42e bp 0x7ffdbd2ec280 sp 0x7ffdbd2eba28
-  MUT_DROP_ON_GROW: CAUGHT (exit 1) -- FAIL: the table grows as entries are added, and every entry is still found afterwards: all 1000 entries found after growth (line 808)
-  MUT_FALLBACK_NO_COUNT: CAUGHT (exit 1) -- FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: one missing glyph: got 0, want 1
-  MUT_FLUSH_GATED: CAUGHT (exit 1) -- FAIL: the GPU step records the same regions whichever renderer is active (flush model): GPU mode: white block and the glyph are both recorded: got 0,
-  MUT_LEAK_COVERAGE: CAUGHT (exit 1) -- ==196==ERROR: LeakSanitizer: detected memory leaks
-  MUT_MISSING_OFF_BY_ONE: CAUGHT (exit 1) -- FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: fallback resolves: got error 6,
-  MUT_MODE_NOT_IN_EQ: CAUGHT (exit 1) -- FAIL: a gray and a mono key that share a probe chain stay apart: mono misses in the gray key's probe chain (line 1027)
-  MUT_NOMISS: CAUGHT (exit 1) -- FAIL: a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry: one miss: got 0, want 1 (line 623)
-  MUT_NOOVERFLOW: CAUGHT (exit 1) -- FAIL: more changed glyphs than the pending list holds mark their page for a full upload: page 0 needs a full upload (line 825)
-  MUT_NOPAD: CAUGHT (exit 1) -- FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: first glyph after white starts at x=3: got 2,
-  MUT_NOTOOLARGE_COUNT: CAUGHT (exit 1) -- FAIL: a glyph wider than the page allows is refused and counted: one too_large: got 0, want 1 (line 732)
-  MUT_NOWRAP: CAUGHT (exit 1) -- FAIL: a glyph that does not fit the shelf starts a new shelf below it: sixth glyph starts a new shelf at x=0: got 28, want 0 (line 696)
-  MUT_PLAN_KEEP: CAUGHT (exit 1) -- FAIL: the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D: GPU mode, no copy: release
-  MUT_REMOVE_NOOP: CAUGHT (exit 1) -- FAIL: removing a font forgets its glyphs and keeps the others: removed glyph misses (line 765)
-  MUT_RESOLVE_IGNORES_CACHE: CAUGHT (exit 1) -- FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 2, want 1 (line 1081)
-  MUT_RESOLVE_NO_RASTER_COUNT: CAUGHT (exit 1) -- FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 0, want 1 (line 1081)
-  MUT_TOMBSTONE_EMPTY: CAUGHT (exit 1) -- FAIL: a removed entry does not hide the entries probed past it: second is still found past the tombstone (line 790)
-  MUT_UNSUPPORTED_AS_GRAY: CAUGHT (exit 1) -- FAIL: an unsupported raster mode is refused before the cache is consulted: mono is refused: got error 0, want 7 (line 1171)
-  MUT_ZERO_IS_MISSING: CAUGHT (exit 1) -- FAIL: glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing: glyph 0 is not a substitute: got 1, want 0 (
+21 of 21 caught. First failing message for each:
+  MUT_BAD_STRIDE: CAUGHT (exit 1) -- ==306==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7f86f214aad0 at pc 0x7f86f4afb42e bp 0x7ffd91debea0 sp 0x7ffd91deb648
+  MUT_DROP_ON_GROW: CAUGHT (exit 1) -- FAIL: the table grows as entries are added, and every entry is still found afterwards: all 1000 entries found after growth (line 843)
+  MUT_FALLBACK_NO_COUNT: CAUGHT (exit 1) -- FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: one missing glyph: got 0, want 1 (line 1257)
+  MUT_FLUSH_GATED: CAUGHT (exit 1) -- FAIL: the GPU step records the same regions whichever renderer is active (flush model): GPU mode: white block and the glyph are both recorded: got 0, want 2 (line 965)
+  MUT_LEAK_COVERAGE: CAUGHT (exit 1) -- ==333==ERROR: LeakSanitizer: detected memory leaks
+  MUT_MISSING_OFF_BY_ONE: CAUGHT (exit 1) -- FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: fallback resolves: got error 6, want 0 (line 1250)
+  MUT_MODE_NOT_IN_EQ: CAUGHT (exit 1) -- FAIL: a gray and a mono key that share a probe chain stay apart: mono misses in the gray key's probe chain (line 1062)
+  MUT_NOMISS: CAUGHT (exit 1) -- FAIL: a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry: one miss: got 0, want 1 (line 658)
+  MUT_NOOVERFLOW: CAUGHT (exit 1) -- FAIL: more changed glyphs than the pending list holds mark their page for a full upload: page 0 needs a full upload (line 860)
+  MUT_NOPAD: CAUGHT (exit 1) -- FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: first glyph after white starts at x=3: got 2, want 3 (line 673)
+  MUT_NOTOOLARGE_COUNT: CAUGHT (exit 1) -- FAIL: a glyph wider than the page allows is refused and counted: one too_large: got 0, want 1 (line 767)
+  MUT_NOWRAP: CAUGHT (exit 1) -- FAIL: a glyph that does not fit the shelf starts a new shelf below it: sixth glyph starts a new shelf at x=0: got 28, want 0 (line 731)
+  MUT_PLAN_KEEP: CAUGHT (exit 1) -- FAIL: the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D: GPU mode, no copy: release (a no-op): got 0, want 3 (line 482)
+  MUT_REMOVE_NOOP: CAUGHT (exit 1) -- FAIL: removing a font forgets its glyphs and keeps the others: removed glyph misses (line 800)
+  MUT_RESOLVE_IGNORES_CACHE: CAUGHT (exit 1) -- FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 2, want 1 (line 1116)
+  MUT_RESOLVE_NO_RASTER_COUNT: CAUGHT (exit 1) -- FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 0, want 1 (line 1116)
+  MUT_TOMBSTONE_EMPTY: CAUGHT (exit 1) -- FAIL: a removed entry does not hide the entries probed past it: second is still found past the tombstone (line 825)
+  MUT_UNSUPPORTED_AS_GRAY: CAUGHT (exit 1) -- FAIL: an unsupported raster mode is refused before the cache is consulted: mono is refused: got error 0, want 7 (line 1206)
+  MUT_WARM_CONTINUES: CAUGHT (exit 1) -- FAIL: warming stops at the first refused glyph and reports how far it got: the warm-up stops at A: got error 0, want 1 (line 1415)
+  MUT_WARM_NO_SUBST_COUNT: CAUGHT (exit 1) -- FAIL: warming substitutes the fallback for glyphs past the end, counts each, and stores nothing for them: two requests drew the fallback: got 0, want 2 (line 1452)
+  MUT_ZERO_IS_MISSING: CAUGHT (exit 1) -- FAIL: glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing: glyph 0 is not a substitute: got 1, want 0 (line 1355)
 
 === WHAT THIS DOES NOT SHOW
 - That the Zig code compiles, or that its tests pass. The owner's zig build test does that.

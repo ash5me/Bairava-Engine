@@ -7,7 +7,7 @@ failures, the upload rectangle, and the fallback. It does NOT check values from 
 Zig compiler. A mirrored test passing shows the logic is the same as the Zig test's. The Zig test still has to
 pass in Zig before it counts.
 
-Zig tests: 45. Mirrored (logic checked in C): 42. Zig only: 3.
+Zig tests: 49. Mirrored (logic checked in C): 46. Zig only: 3.
 Mirror blocks with no Zig test of the same name: 1.
 
 Zig file                       | status | Zig test
@@ -56,6 +56,10 @@ glyph_cache_font_test.zig      | mirror | an unsupported mode is refused by the 
 glyph_cache_font_test.zig      | mirror | the resolved metrics match the font, and the cache entry and its pending upload agree with them
 glyph_cache_font_test.zig      | mirror | glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing
 glyph_cache_font_test.zig      | mirror | the last glyph is valid, and the glyph after it is missing, at the font's glyph count
+glyph_cache_font_test.zig      | mirror | warming a run of glyphs caches each one, so a later resolve of any of them is a hit and rasterizes nothing
+glyph_cache_font_test.zig      | mirror | warming stops at the first refused glyph and reports how far it got
+glyph_cache_font_test.zig      | mirror | warming refuses an unsupported mode before anything is cached
+glyph_cache_font_test.zig      | mirror | warming substitutes the fallback for glyphs past the end, counts each, and stores nothing for them
 glyph_atlas.zig                | mirror | a page's changed regions are gathered once, and an unchanged page gathers nothing
 glyph_atlas.zig                | mirror | a glyph's region is gathered with the page stride, and a whole-page upload is one region
 glyph_atlas.zig                | mirror | the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D

@@ -495,6 +495,8 @@ static void t_plan_2d(void) {
 #define FAKE_GLYPH_COUNT 4652u
 #define FAKE_A 36u
 #define FAKE_EMPTY 7u
+#define FAKE_V 57u
+#define FAKE_T 55u
 
 typedef struct { uint32_t glyph_count; uint32_t pixel_height; } FakeFont;
 
@@ -582,6 +584,39 @@ static Err resolve_with_fallback(Cache *c, uint32_t font_id, const FakeFont *f, 
 #endif
     *substituted = 1;
     return resolve(c, font_id, f, fallback, mode, out);
+}
+
+/* Mirrors WarmStats in glyph_resolver.zig. */
+typedef struct { uint32_t rasterized, already_cached, substituted; } WarmStats;
+
+/* Mirrors warm() in glyph_resolver.zig: refuse the mode, then resolve each glyph with its fallback, counting it as
+ * rasterized when the rasterization counter moved and as already cached when it did not. The first error stops the
+ * run and is returned. MUT_WARM_CONTINUES plants a skip-and-go-on bug. MUT_WARM_NO_SUBST_COUNT plants a bug that
+ * drops the substituted count. */
+static Err warm(Cache *c, uint32_t font_id, const FakeFont *f, const uint32_t *ids, size_t count, uint32_t fallback,
+                RasterMode mode, WarmStats *out) {
+    memset(out, 0, sizeof *out);
+    if (mode != RASTER_GRAY) return ERR_UNSUPPORTED_MODE;
+    for (size_t i = 0; i < count; i++) {
+        uint64_t before = c->stats.rasterized;
+        Entry e;
+        int substituted = 0;
+        Err err = resolve_with_fallback(c, font_id, f, ids[i], fallback, mode, &e, &substituted);
+#ifdef MUT_WARM_CONTINUES
+        if (err != ERR_NONE) continue;
+#else
+        if (err != ERR_NONE) return err;
+#endif
+#ifndef MUT_WARM_NO_SUBST_COUNT
+        if (substituted) out->substituted++;
+#endif
+        if (c->stats.rasterized != before) {
+            out->rasterized++;
+        } else {
+            out->already_cached++;
+        }
+    }
+    return ERR_NONE;
 }
 
 /* ---- tests (names and numbers match the Zig tests) -------------------- */
@@ -1347,6 +1382,80 @@ static void t_glyph_boundary(void) {
     cache_deinit(&c);
 }
 
+static void t_warm_run(void) {
+    begin("warming a run of glyphs caches each one, so a later resolve of any of them is a hit and rasterizes nothing");
+    Cache c;
+    CHECK_ERR(cache_init(&c, 1024, 4), ERR_NONE, "init");
+    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
+    const uint32_t run[] = { FAKE_A, FAKE_V, FAKE_T, FAKE_A };
+    WarmStats w;
+    CHECK_ERR(warm(&c, 1, &f, run, 4, FAKE_A, RASTER_GRAY, &w), ERR_NONE, "warm the run");
+    CHECK_EQ(w.rasterized, 3, "three glyphs rasterized");
+    CHECK_EQ(w.already_cached, 1, "the repeated A is already cached");
+    CHECK_EQ(w.substituted, 0, "no fallback used");
+    Entry e;
+    for (size_t i = 0; i < 3; i++) {
+        CHECK_ERR(resolve(&c, 1, &f, run[i], RASTER_GRAY, &e), ERR_NONE, "resolve after warm-up");
+    }
+    Stats s = cache_snapshot(&c);
+    CHECK_EQ(s.rasterized, 3, "no rasterization after warm-up");
+    CHECK_EQ(s.misses, 3, "three misses, all in warm-up");
+    CHECK_EQ(s.hits, 4, "one hit in warm-up, three after");
+    cache_deinit(&c);
+}
+
+static void t_warm_stops(void) {
+    begin("warming stops at the first refused glyph and reports how far it got");
+    Cache c;
+    /* A page of 8 texels takes no glyph wider or taller than 7, so glyph 36 (11 by 11) is refused. */
+    CHECK_ERR(cache_init(&c, 8, 1), ERR_NONE, "init");
+    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
+    const uint32_t run[] = { FAKE_EMPTY, FAKE_A, FAKE_V };
+    WarmStats w;
+    CHECK_ERR(warm(&c, 1, &f, run, 3, FAKE_A, RASTER_GRAY, &w), ERR_GLYPH_TOO_LARGE, "the warm-up stops at A");
+    CHECK_EQ(w.rasterized, 1, "only the empty glyph was cached");
+    CHECK_EQ(w.already_cached, 0, "none was already cached");
+    Stats s = cache_snapshot(&c);
+    CHECK_EQ(s.rasterized, 2, "A was rasterized, then refused by the insert");
+    CHECK_EQ(s.entries, 1, "one entry stored");
+    CHECK_EQ(s.too_large, 1, "one glyph too large");
+    CHECK_EQ(s.misses, 2, "V was never looked up");
+    cache_deinit(&c);
+}
+
+static void t_warm_mode(void) {
+    begin("warming refuses an unsupported mode before anything is cached");
+    Cache c;
+    CHECK_ERR(cache_init(&c, 1024, 4), ERR_NONE, "init");
+    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
+    const uint32_t run[] = { FAKE_A, FAKE_V };
+    WarmStats w;
+    CHECK_ERR(warm(&c, 1, &f, run, 2, FAKE_A, RASTER_MONO, &w), ERR_UNSUPPORTED_MODE, "mono is refused");
+    CHECK_EQ(w.rasterized, 0, "nothing rasterized");
+    Stats s = cache_snapshot(&c);
+    CHECK_EQ(s.misses, 0, "no lookup was counted");
+    CHECK_EQ(s.rasterized, 0, "no rasterization");
+    CHECK_EQ(s.entries, 0, "nothing stored");
+    cache_deinit(&c);
+}
+
+static void t_warm_fallback(void) {
+    begin("warming substitutes the fallback for glyphs past the end, counts each, and stores nothing for them");
+    Cache c;
+    CHECK_ERR(cache_init(&c, 1024, 4), ERR_NONE, "init");
+    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
+    const uint32_t run[] = { FAKE_GLYPH_COUNT, FAKE_A, FAKE_GLYPH_COUNT + 5 };
+    WarmStats w;
+    CHECK_ERR(warm(&c, 1, &f, run, 3, FAKE_A, RASTER_GRAY, &w), ERR_NONE, "warm-up with missing glyphs");
+    CHECK_EQ(w.rasterized, 1, "the fallback was rasterized once");
+    CHECK_EQ(w.already_cached, 2, "the direct A and the third fallback were already cached");
+    CHECK_EQ(w.substituted, 2, "two requests drew the fallback");
+    Stats s = cache_snapshot(&c);
+    CHECK_EQ(s.missing_glyphs, 2, "two missing glyphs counted");
+    CHECK_EQ(s.entries, 1, "the missing glyphs were not stored");
+    cache_deinit(&c);
+}
+
 int main(void) {
     t_white_block();
     t_hit_miss();
@@ -1391,6 +1500,10 @@ int main(void) {
     t_consistency();
     t_glyph_zero();
     t_glyph_boundary();
+    t_warm_run();
+    t_warm_stops();
+    t_warm_mode();
+    t_warm_fallback();
     printf("\n%d checks, %d failures\n", checks, failures);
     if (failures != 0) {
         printf("FAILED\n");

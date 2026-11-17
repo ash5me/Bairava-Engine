@@ -9,8 +9,9 @@
 //!   3. Sprites draw from `pageTexture(region.page)`, with the texel rectangle from `spriteSource`.
 //!
 //! Why this is safe with frames in flight:
-//!   - A glyph's texels are written once and never move (see glyph_cache.zig). A frame still in flight may read them, and
-//!     no later write touches them.
+//!   - A glyph's texels are written once and never move (see glyph_cache.zig). A frame still in flight may read
+//!     them. Region uploads never touch them again. A whole-page upload, forced when the pending list overflows,
+//!     rewrites them with the same bytes. The GPU-sync argument for that path is still open (Phase 4 status).
 //!   - The GPU copies are recorded into the same command buffer as the sprite draws that sample them, before those draws,
 //!     which is the same order the sprite vertex upload relies on.
 //!   - A 2D copy is only made, updated, or released in `flush`, which runs before any 2D draw of the frame. Queued sprites

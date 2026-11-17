@@ -28,6 +28,7 @@ const game_events = @import("game_events.zig");
 const jobs = @import("../jobs/jobs.zig");
 const staging = @import("../assets/staging.zig");
 const texture_stream = @import("texture_stream.zig");
+const glyph_check = @import("../renderer/glyph_check.zig");
 
 /// The most jobs the pool queues before a submit runs its job on the calling thread instead.
 const job_queue_capacity: u32 = 256;
@@ -65,6 +66,8 @@ pub const Session = struct {
     target: Texture = undefined,
     world_batch: SpriteBatch = undefined,
     screen_batch: SpriteBatch = undefined,
+    /// The glyph atlas check. Null unless `glyph_check.enabled` is set (renderer/glyph_check.zig).
+    glyph_check_state: ?glyph_check.State = null,
     /// The effects that run between the world pass and the present pass. Empty unless the config names effects.
     post_chain: post.Chain = undefined,
     input: Input = .{},
@@ -158,6 +161,8 @@ pub const Session = struct {
         self.world_batch_created = true;
         self.screen_batch = sprite.create(self.engine_allocator, self.gpu.device, self.format);
         self.screen_batch_created = true;
+        // The glyph check is off unless its flag is set. When off, this branch is not compiled into a call.
+        self.glyph_check_state = if (glyph_check.enabled) try glyph_check.create(self.engine_allocator, self.gpu.device) else null;
         // Effects are sized like the world target, and an empty list makes no GPU objects.
         self.post_chain = post.Chain.init(self.engine_allocator, self.gpu.device, self.format, config.post_effects, config.post_params, config.native_w, config.native_h);
         self.post_chain_created = true;
@@ -226,6 +231,12 @@ pub const Session = struct {
         if (self.post_chain_created) {
             self.post_chain.deinit();
             self.post_chain_created = false;
+        }
+        if (self.glyph_check_state) |*check| {
+            // The atlas owns GPU textures, so the GPU must be idle before they are released.
+            platform.gpu.waitIdle(self.gpu.device);
+            glyph_check.destroy(check);
+            self.glyph_check_state = null;
         }
         if (self.screen_batch_created) {
             self.screen_batch.deinit();

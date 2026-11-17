@@ -12,7 +12,9 @@
 //!   right and bottom edges. Sampling is nearest, so the padding keeps a sampled texel from ever
 //!   reaching the neighbouring glyph.
 //! - No eviction. A glyph's texels are written once and never move. A frame still in flight may read
-//!   them, and no later write touches them, so there is no write-after-read hazard on those texels.
+//!   them. Region uploads never touch them again. A whole-page upload, forced when the pending list
+//!   overflows, rewrites them with the same bytes. That path is not covered by this argument, and the
+//!   Phase 4 status in the text plan lists it as an open GPU-sync item.
 //!   When every page is full, insert returns AtlasFull and counts it in `cache_full`. The caller
 //!   draws the fallback glyph, so no glyph is dropped silently.
 //! - Page 0 starts with a solid 2 by 2 white block at its origin. Filled rectangles sample it, as the

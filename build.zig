@@ -201,6 +201,8 @@ fn configureEngineModule(
     module.addIncludePath(b.path("src/engine/text"));
     module.addIncludePath(b.path("src/engine/logging"));
     addCglm(b, module);
+    addHarfBuzz(b, module);
+    module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     addJobsAndScript(b, module);
     module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
     module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });

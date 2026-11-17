@@ -84,6 +84,48 @@ pub fn resolveWithFallback(
     return .{ .entry = try resolve(cache, font_id, font, fallback_glyph_id, mode), .substituted = true };
 }
 
+/// What `warm` did. It is filled in as the warm-up runs, so after an error it still says how far the warm-up got.
+pub const WarmStats = struct {
+    /// Glyphs that were not cached and are cached now.
+    rasterized: u32 = 0,
+    /// Glyphs that were already cached, or that a repeat earlier in the list had just cached. They cost no rasterization.
+    already_cached: u32 = 0,
+    /// Requests for a glyph past the font's last glyph. Each drew the fallback.
+    substituted: u32 = 0,
+};
+
+/// Caches the glyphs in `glyph_ids` before their first draw, so a line known in advance (a menu, a line of dialogue)
+/// costs no rasterization when it is drawn. Each glyph goes through `resolveWithFallback`, so the mode, fallback, and
+/// counter rules are the same. Like `resolve`, it takes glyph IDs, the ones shaping returns. A string can be warmed
+/// once Phase 5 shapes it. Nothing is uploaded here: the next flush uploads the new regions, and the caller must flush
+/// before a draw samples them.
+///
+/// The warm-up stops at the first error and returns it, and the glyphs before that one stay cached. The failed glyph is
+/// not skipped. When the atlas is full, later glyphs are refused too, so going on would only add rasterization work.
+/// An unsupported mode is refused before anything is cached.
+pub fn warm(
+    cache: *glyph_cache.Cache,
+    font_id: u32,
+    font: *const runtime_font.RuntimeFont,
+    glyph_ids: []const u32,
+    fallback_glyph_id: u32,
+    mode: glyph_cache.RasterMode,
+    out: *WarmStats,
+) Error!void {
+    out.* = .{};
+    if (!supports(mode)) return error.UnsupportedRasterMode;
+    for (glyph_ids) |glyph_id| {
+        const rasterized_before = cache.stats.rasterized;
+        const resolved = try resolveWithFallback(cache, font_id, font, glyph_id, fallback_glyph_id, mode);
+        if (resolved.substituted) out.substituted += 1;
+        if (cache.stats.rasterized != rasterized_before) {
+            out.rasterized += 1;
+        } else {
+            out.already_cached += 1;
+        }
+    }
+}
+
 fn metricsOf(m: runtime_font.GlyphMetrics) glyph_cache.Metrics {
     return .{
         .advance = m.advance,
