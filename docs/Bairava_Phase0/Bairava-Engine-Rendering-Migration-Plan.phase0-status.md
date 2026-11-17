@@ -1,6 +1,6 @@
 # Bairava Engine — Rendering Migration Plan
 
-**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated; HarfBuzz lock hash conflict resolved 2026-11-17 against the pinned commit; shipped UI font is Arial 7.07 by owner decision (2026-11-17); VT323-based evidence to re-measure, see sections 12 and 14)  
+**Status:** Phase 0 awaiting two confirmations; Phase 1 in progress (HarfBuzz builds and tests on Windows; stb_truetype 1.28 integrated; HarfBuzz lock hash conflict resolved 2026-11-17 against the pinned commit; Windows `zig build test` passes after the Arial test change (user-reported 2026-11-17); the Phase 0 baseline is re-measured against Arial 7.07 with three owner decisions open, see section 15. Phase 2 has not started.)  
 **Target:** Replace Bairava's prebaked-only text path with a runtime glyph-rasterization and text-shaping pipeline inspired by the uploaded SDL3 GPU proof of concept.  
 **Estimated effort:** **16–25 engineering days** (approximately 3–5 weeks for one developer, allowing for review and integration).  
 **Repository baseline reviewed:** `ash5me/Bairava-Engine`, `main`  
@@ -433,3 +433,29 @@ This run was executed in the sandbox from the uploaded `bairava.zip`. Nothing he
   - *Phase gate:* Phase 1's Windows criterion is open until `zig build test` passes on Windows with this change. Linux and macOS have still not been run.
 - **Font asset `font2.ttf`.** Matches the 2026-11-16 description: "November", TrueType `glyf`, 247 glyphs, no GSUB or GPOS.
 - **Phase gates.** Phase 1's exit criteria (builds and links on Linux, Windows, and macOS) are not met, so Phase 2 has not started. Phase 0's two owner confirmations are unchanged. The Phase 0 baseline-screenshot item remains blocked and now also depends on the font identity question above.
+
+## 15. Phase 0 re-measurement against Arial 7.07 (2026-11-17)
+
+**Windows gate (user-reported).** After the Arial change in section 14, `zig build test` passes on Windows. This closes the Windows part of the Phase 1 exit criterion. Linux and macOS are still open. The CI matrix (`.github/workflows/ci.yml`: ubuntu, macos, windows) will give that evidence on the next push.
+
+**What was measured (sandbox).** The real bake (`tools/assets/build.c` and `font_bake.c`) was built in a scratch copy and run on the two shipped UI rows of `assets/asset_manifest.txt`. The current runtime loader (`src/engine/text/text.c`) measured the 14 UI strings and the glyph advances. HarfBuzz 15.1.0 shaped the same strings. Everything is in `docs/Bairava_Phase0/baseline/arial/` (README, scripts, measurements, and the two baked BFNT files with SHA-256). The bake used system FreeType 2.13 rather than the pinned 2.15.0, so the 9 px numbers should be rechecked with the pinned FreeType.
+
+Findings:
+
+- **Kerning sources agree.** Over printable ASCII, HarfBuzz's GPOS kern path and the classic `kern` table give the same 96 pairs with the same values. Nothing in the kerning source changes with the migration.
+- **9 px mono (`ui_font_9px`).** The baked atlas has 0 kerning pairs. FreeType grid-fits every Arial kern below half a pixel to zero. Its glyph advances are whole pixels, and 17 of 95 printable glyphs differ from the unhinted advance by more than 0.5 px (max 1.5 px). Routing this font through HarfBuzz changes all 14 UI strings: the baked widths are 1.0 to 4.5 px wider. Only "Volume" has a kerning difference, the V–o pair at 0.5 px.
+- **10 px gray (`default_font_10px`).** The bake sizes TrueType glyphs with stb's `stbtt_ScaleForPixelHeight`, which divides by hhea ascent minus descent (2288 units for Arial), not by units per em. A "10 px" gray font therefore has an effective em of 8.951 px. HarfBuzz at that em reproduces the baked widths of the 14 UI strings to 0.0003 px, kerning included. At a plain 10 px em, the widths would grow by 2 to 8 px.
+- **The owner's `shipped_ui_shaping_check.py` is not the baseline for the shipped sizes.** It reports 13 of 14 UI strings identical, but it runs at 48 px and compares against unhinted advances, not against what the bake stores. It stays as it is. The baseline for the shipped sizes is `baseline/arial/`.
+- **Doc correction.** `docs/text.md` said the shipped font has no kerning pairs. That was true of VT323 and is false of Arial. The text now states the 96 pairs and the 9 px rounding.
+
+Decisions the owner needs before Phase 0 can exit. Each one changes the public text API or the visible UI, so none can be settled by the sandbox:
+
+- **D1. 9 px mono glyph advances.** Keep the baked whole-pixel advances, which the BFNT format already stores, or switch to HarfBuzz's unhinted fractional advances and accept UI strings 1 to 4.5 px narrower. Recommendation: keep the baked advances for bitmap-atlas fonts and make that an explicit rule.
+- **D2. Pixel-height convention for TrueType gray fonts.** Keep stb's ascent-minus-descent convention, written as an explicit compatibility scale in the new font face, or switch to em and accept that a "10 px" gray font grows by about 12%. Recommendation: keep the existing convention and document it. The plan requires one definition of pixel height, and both paths must follow it.
+- **D3. Kerning in mono fonts.** The bake drops every Arial kern at 9 px. Keep that rule, which matches whole-pixel placement, or apply the fractional HarfBuzz value. Recommendation: keep the rule for mono and apply GPOS kerning for gray, which already matches the baked values under D2.
+
+**Gate status.**
+
+- Phase 0: the Arial measurements are recorded. The baseline screenshots still need a display. D1 to D3 need owner decisions before Phase 0 can close, because they fix the advance and scale rules that the public API depends on.
+- Phase 1: the Windows criterion is met (user-reported). The Linux criterion is partly met (compile and smoke run in the sandbox; the Zig build did not run here). The macOS criterion has not been run. The CI matrix will supply both.
+- Phase 2: not started. Its gate needs Phase 1 green on all three operating systems and D1 to D3 recorded.

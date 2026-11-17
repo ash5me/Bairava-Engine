@@ -45,8 +45,7 @@ parentheses and some letters still blur together. The game UI and the debug over
 a new small size by reading it on screen before shipping it.
 
 Mono uses FreeType's kerning table, which is the classic `kern` table. The gray path also reads GPOS pairs, so a
-font that kerns only through GPOS loses those pairs when it is baked in mono. The shipped font has no kerning
-pairs in either table.
+font that kerns only through GPOS loses those pairs when it is baked in mono. The shipped Arial font has 96 kerning pairs for printable ASCII, in both the classic `kern` table and GPOS, with the same values. FreeType's grid-fitted mono kerning rounds every one of them to zero at 9 px, so the 9 px mono atlas has none. The 10 px gray atlas keeps all 96. See docs/Bairava_Phase0/baseline/arial/README.txt.
 
 ## Runtime
 

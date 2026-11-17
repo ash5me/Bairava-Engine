@@ -1,0 +1,14 @@
+Semkootru
+Click me
+Saves
+Controls
+Back
+Next
+Clear slot
+Volume
+Clicks: 12
+Level: 0.50
+Slot 1: F5/F9
+Controls 1/2
+fps 60
+F8 menu  I scale
