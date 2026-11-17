@@ -50,12 +50,18 @@ pub const Options = struct {
     page_count: u32 = default_page_count,
 };
 
+/// How a glyph's coverage was rasterized. The same glyph at the same size has a different bitmap in each mode, so each
+/// mode is a different key. The runtime path makes gray only. `mono` is listed so that a hinted rasterizer can add its
+/// glyphs without sharing keys with gray ones; nothing produces it yet.
+pub const RasterMode = enum(u8) { gray = 0, mono = 1 };
+
 /// Identifies one rasterized glyph. `font` is chosen by the caller and must differ between live fonts. `size_bits` is
-/// the pixel height's bit pattern, so two heights that differ at all are different keys.
+/// the pixel height's bit pattern, so two heights that differ at all are different keys. `mode` defaults to gray.
 pub const GlyphKey = struct {
     font: u32,
     glyph: u32,
     size_bits: u32,
+    mode: RasterMode = .gray,
 };
 
 pub fn sizeBits(pixel_height: f32) u32 {
@@ -94,8 +100,12 @@ pub const Stats = struct {
     hits: u64 = 0,
     /// Lookups that did not. Each is normally followed by one insert.
     misses: u64 = 0,
-    /// Glyphs that took space in a page.
+    /// Glyphs stored, with or without page space. `empty_glyphs` counts the ones without.
     inserts: u64 = 0,
+    /// Glyphs rasterized on a miss. Counted by glyph_resolver.resolve, including a glyph whose insert was then refused.
+    rasterized: u64 = 0,
+    /// Requests for a glyph past the font's last glyph. Counted by glyph_resolver.resolveWithFallback, once per request.
+    missing_glyphs: u64 = 0,
     /// Glyphs with no ink, stored with no page space.
     empty_glyphs: u64 = 0,
     /// Inserts refused because every page was full.
@@ -112,6 +122,8 @@ pub const Stats = struct {
     pages_in_use: u32 = 0,
     /// Glyphs currently found by lookup. Computed by snapshot.
     entries: u32 = 0,
+    /// CPU bytes held by the coverage pages and the lookup table. GPU page memory is not counted here. Computed by snapshot.
+    allocated_bytes: u64 = 0,
 };
 
 const SlotState = enum(u8) { empty, used, tombstone };
@@ -297,6 +309,16 @@ pub const Cache = struct {
         self.stats.missing_codepoints += 1;
     }
 
+    /// Counts one request for a glyph the font does not have. The resolver calls it before it uses the fallback.
+    pub fn noteMissingGlyph(self: *Cache) void {
+        self.stats.missing_glyphs += 1;
+    }
+
+    /// Counts one glyph rasterized on a miss. The resolver calls it right after the rasterizer succeeds.
+    pub fn noteRasterized(self: *Cache) void {
+        self.stats.rasterized += 1;
+    }
+
     /// The counters, with the computed fields filled in.
     pub fn snapshot(self: *const Cache) Stats {
         var result = self.stats;
@@ -306,6 +328,8 @@ pub const Cache = struct {
             if (page.used) in_use += 1;
         }
         result.pages_in_use = in_use;
+        const texels = @as(u64, self.page_size) * @as(u64, self.page_size);
+        result.allocated_bytes = texels * @as(u64, self.pages.len) + @as(u64, self.slots.len) * @sizeOf(Slot);
         return result;
     }
 
@@ -458,11 +482,12 @@ fn hashKey(key: GlyphKey) usize {
     var h = mix(key.font);
     h = mix(h ^ key.glyph);
     h = mix(h ^ key.size_bits);
+    h = mix(h ^ @as(u32, @intFromEnum(key.mode)));
     return h;
 }
 
 fn sameKey(a: GlyphKey, b: GlyphKey) bool {
-    return a.font == b.font and a.glyph == b.glyph and a.size_bits == b.size_bits;
+    return a.font == b.font and a.glyph == b.glyph and a.size_bits == b.size_bits and a.mode == b.mode;
 }
 
 // ---- tests -----------------------------------------------------------------
@@ -731,4 +756,86 @@ test "invalid options are refused before anything is allocated" {
 test "the pixel-height key is the float's bit pattern" {
     try testing.expectEqual(@as(u32, @bitCast(@as(f32, 16.0))), sizeBits(16.0));
     try testing.expect(sizeBits(16.0) != sizeBits(16.5));
+}
+
+test "keys differ by rasterization mode, so gray and mono coverage of one glyph are two entries" {
+    var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 1 });
+    defer cache.deinit();
+    const gray = GlyphKey{ .font = 1, .glyph = 5, .size_bits = sizeBits(16) };
+    var mono = gray;
+    mono.mode = .mono;
+
+    _ = try cache.insert(gray, testMetrics(2, 2), &[_]u8{ 1, 2, 3, 4 });
+    try testing.expect(cache.lookup(mono) == null);
+    _ = try cache.insert(mono, testMetrics(2, 2), &[_]u8{ 5, 6, 7, 8 });
+
+    try testing.expectEqual(@as(u32, 2), cache.snapshot().entries);
+    const gray_entry = cache.lookup(gray) orelse return error.TestUnexpectedResult;
+    const mono_entry = cache.lookup(mono) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u8, 1), cache.regionCoverage(gray_entry.region)[0]);
+    try testing.expectEqual(@as(u8, 5), cache.regionCoverage(mono_entry.region)[0]);
+}
+
+test "allocated bytes count the coverage pages and the lookup table" {
+    var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 2 });
+    defer cache.deinit();
+    const expected: u64 = 2 * 32 * 32 + initial_slots * @sizeOf(Slot);
+    try testing.expectEqual(expected, cache.snapshot().allocated_bytes);
+}
+
+test "a failed allocation in init is reported, and init frees what it had already made" {
+    // With one page, init makes three allocations: the page list, the page's bytes, and the lookup table. Failing any
+    // one of them must return OutOfMemory. testing.allocator fails the test if the earlier ones are left allocated.
+    var fail_at: usize = 0;
+    while (fail_at < 3) : (fail_at += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_at });
+        try testing.expectError(error.OutOfMemory, Cache.init(failing.allocator(), .{ .page_size = 32, .page_count = 1 }));
+    }
+}
+
+test "a lookup table that cannot grow refuses the insert and keeps the entries it has" {
+    // The fourth allocation with one page is the first growth of the lookup table. Growth starts when one more entry
+    // would pass three quarters full, so the first `room` entries fit and the next insert needs the allocation.
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 3 });
+    var cache = try Cache.init(failing.allocator(), .{ .page_size = 1024, .page_count = 1 });
+    defer cache.deinit();
+
+    const room: u32 = initial_slots * 3 / 4;
+    var glyph: u32 = 1;
+    while (glyph <= room) : (glyph += 1) _ = try cache.insert(keyOf(1, glyph), testMetrics(1, 1), &.{7});
+    try testing.expectError(error.OutOfMemory, cache.insert(keyOf(1, room + 1), testMetrics(1, 1), &.{7}));
+
+    try testing.expectEqual(room, cache.snapshot().entries);
+    try testing.expectEqual(@as(u64, 0), cache.snapshot().rehashes);
+    try testing.expect(cache.lookup(keyOf(1, room)) != null);
+    try testing.expect(cache.lookup(keyOf(1, room + 1)) == null);
+}
+
+test "a key without a mode is gray, and gray is the zero value, so a zeroed mode is gray" {
+    const key = GlyphKey{ .font = 1, .glyph = 1, .size_bits = sizeBits(16) };
+    try testing.expectEqual(RasterMode.gray, key.mode);
+    try testing.expectEqual(@as(u8, 0), @intFromEnum(RasterMode.gray));
+}
+
+test "a gray and a mono key that share a probe chain stay apart" {
+    var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 1 });
+    defer cache.deinit();
+    const mask = cache.slots.len - 1;
+    var gray = GlyphKey{ .font = 1, .glyph = 1, .size_bits = sizeBits(16) };
+    var mono = gray;
+    mono.mode = .mono;
+
+    // Hashing includes the mode, so the two keys usually start in different buckets. Search for a glyph whose gray
+    // and mono keys share a bucket. Only then does an equality check that ignores the mode show up.
+    var glyph: u32 = 1;
+    while (glyph < 100000) : (glyph += 1) {
+        gray.glyph = glyph;
+        mono.glyph = glyph;
+        if ((hashKey(gray) & mask) == (hashKey(mono) & mask)) break;
+    }
+    try testing.expect(glyph < 100000);
+
+    _ = try cache.insert(gray, testMetrics(2, 2), &[_]u8{ 1, 2, 3, 4 });
+    try testing.expect(cache.lookup(mono) == null);
+    try testing.expect(cache.lookup(gray) != null);
 }

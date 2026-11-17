@@ -1,3 +1,71 @@
+Glyph cache mirror results (Phase 4 of the text and font system migration plan, revision 5, 2026-11-17)
+Mirror: checks/glyph_cache_mirror.c. It models the cache, the resolver (mode, lookup, rasterize, insert),
+the fallback, and plan2d, against a synthetic glyph source. It does NOT compile the Zig, and it does NOT run
+RuntimeFont, stb_truetype, or HarfBuzz.
+Parity map: checks/glyph_cache_parity.txt (regenerate with python3 checks/glyph_cache_parity.py).
+Zig side: not compiled or run in the assistant's sandbox. The owner's `zig build test` is the first real check.
+
+Build and run (from the repository root):
+  gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all checks/glyph_cache_mirror.c -lm -o glyph_cache_mirror
+  ASAN_OPTIONS=detect_leaks=1 ./glyph_cache_mirror
+Environment: gcc 13.3.0, Ubuntu 24.04. ASan, UBSan, and LeakSanitizer enabled.
+
+=== CLEAN RUN
+2159 checks, 0 failures, exit 0.
+
+=== PRESERVATION OF THE ORIGINAL 1828 CHECKS
+1. With the 21 new test calls removed from main, the file runs 1828 checks, 0 failures, exit 0.
+2. The new run's output begins with the revision 3 output, line for line: the same 22 test blocks, the same
+   check messages, and no FAIL lines. The new tests follow them.
+3. No original check expression or message changed. Edits to existing code are infrastructure only:
+   - GlyphKey gained a mode field that defaults to gray (zero). The two literal key initializers (key_of and
+     other_size) gained the gray value, which -Wmissing-field-initializers would otherwise reject under -Werror.
+   - The cache's calloc calls go through cache_alloc, which fails only when a test plans a failure.
+   - Stats gained rasterized, missing_glyphs, and allocated_bytes.
+   - hash_key mixes the mode; same_key compares it (guarded by MUT_MODE_NOT_IN_EQ for the mutation run).
+
+=== NEW CHECKS
+331 new checks in 21 test functions (named after the Zig tests they mirror; see the parity file).
+Covered: mode defaults and key separation, a same-bucket probe-chain collision between gray and mono keys,
+allocated bytes, a failing allocator in init and in table growth, resolver hits and misses, empty glyphs,
+size and font-id separation, AtlasFull through the resolver, out-of-range glyph IDs, a failing rasterizer
+buffer, unsupported modes (refused before counting), missing-glyph fallback (substituted, in range, both
+missing, unsupported mode), glyph 0 as a valid glyph, the glyph-count boundary, and consistency between
+resolved metrics, the cache entry, the pending upload rectangle, and the stored coverage.
+
+=== MUTANTS (each built with -DMUT_X; every one must fail the run)
+19 of 19 caught. First failing message for each:
+  MUT_BAD_STRIDE: CAUGHT (exit 1) -- ==153==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7fd69114aad0 at pc 0x7fd693afb42e bp 0x7ffdbd2ec280 sp 0x7ffdbd2eba28
+  MUT_DROP_ON_GROW: CAUGHT (exit 1) -- FAIL: the table grows as entries are added, and every entry is still found afterwards: all 1000 entries found after growth (line 808)
+  MUT_FALLBACK_NO_COUNT: CAUGHT (exit 1) -- FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: one missing glyph: got 0, want 1
+  MUT_FLUSH_GATED: CAUGHT (exit 1) -- FAIL: the GPU step records the same regions whichever renderer is active (flush model): GPU mode: white block and the glyph are both recorded: got 0,
+  MUT_LEAK_COVERAGE: CAUGHT (exit 1) -- ==196==ERROR: LeakSanitizer: detected memory leaks
+  MUT_MISSING_OFF_BY_ONE: CAUGHT (exit 1) -- FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: fallback resolves: got error 6,
+  MUT_MODE_NOT_IN_EQ: CAUGHT (exit 1) -- FAIL: a gray and a mono key that share a probe chain stay apart: mono misses in the gray key's probe chain (line 1027)
+  MUT_NOMISS: CAUGHT (exit 1) -- FAIL: a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry: one miss: got 0, want 1 (line 623)
+  MUT_NOOVERFLOW: CAUGHT (exit 1) -- FAIL: more changed glyphs than the pending list holds mark their page for a full upload: page 0 needs a full upload (line 825)
+  MUT_NOPAD: CAUGHT (exit 1) -- FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: first glyph after white starts at x=3: got 2,
+  MUT_NOTOOLARGE_COUNT: CAUGHT (exit 1) -- FAIL: a glyph wider than the page allows is refused and counted: one too_large: got 0, want 1 (line 732)
+  MUT_NOWRAP: CAUGHT (exit 1) -- FAIL: a glyph that does not fit the shelf starts a new shelf below it: sixth glyph starts a new shelf at x=0: got 28, want 0 (line 696)
+  MUT_PLAN_KEEP: CAUGHT (exit 1) -- FAIL: the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D: GPU mode, no copy: release
+  MUT_REMOVE_NOOP: CAUGHT (exit 1) -- FAIL: removing a font forgets its glyphs and keeps the others: removed glyph misses (line 765)
+  MUT_RESOLVE_IGNORES_CACHE: CAUGHT (exit 1) -- FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 2, want 1 (line 1081)
+  MUT_RESOLVE_NO_RASTER_COUNT: CAUGHT (exit 1) -- FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 0, want 1 (line 1081)
+  MUT_TOMBSTONE_EMPTY: CAUGHT (exit 1) -- FAIL: a removed entry does not hide the entries probed past it: second is still found past the tombstone (line 790)
+  MUT_UNSUPPORTED_AS_GRAY: CAUGHT (exit 1) -- FAIL: an unsupported raster mode is refused before the cache is consulted: mono is refused: got error 0, want 7 (line 1171)
+  MUT_ZERO_IS_MISSING: CAUGHT (exit 1) -- FAIL: glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing: glyph 0 is not a substitute: got 1, want 0 (
+
+=== WHAT THIS DOES NOT SHOW
+- That the Zig code compiles, or that its tests pass. The owner's zig build test does that.
+- Any metric value from the shipped font. The mirror's glyphs are synthetic; the Zig tests read assets/font.ttf.
+- The GPU upload, the GPU synchronization, and both renderer modes on a device (the plan2d and flush models
+  are checked only as logic).
+- Parity beyond the logic modeled here. The parity file marks the 3 Zig-only tests and the reason for each.
+
+====================================================================================================
+
+REVISION 3 (before the resolver pass), kept as history. Its check count is 1828, which revision 4 preserves.
+
 Glyph cache mirror results (Phase 3, 2026-11-17, revision 3: renderer gate and flush model)
 Harness: checks/glyph_cache_mirror.c (mirrors src/engine/text/glyph_cache.zig, plan2d and gatherPage in src/engine/renderer/glyph_atlas.zig, and a model of the flush's GPU step; it does NOT compile the Zig)
 Date: 2026-11-17 (sandbox, Ubuntu 24.04, gcc 13.3.0)

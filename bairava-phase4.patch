@@ -1,0 +1,1591 @@
+diff -ruN -x '*.zip' orig/bairava/Bairava-Engine-Text-and-Font-System-Migration-Plan.md bairava/Bairava-Engine-Text-and-Font-System-Migration-Plan.md
+--- a/Bairava-Engine-Text-and-Font-System-Migration-Plan.md	2026-11-17 12:02:21.538292601 +0000
++++ b/Bairava-Engine-Text-and-Font-System-Migration-Plan.md	2026-11-17 12:23:55.555363866 +0000
+@@ -415,22 +415,22 @@
+ 
+ ### Needs — must implement
+ 
+-- [ ] Implement a rasterizer interface that consumes a font face and glyph ID and returns a coverage bitmap plus bitmap bounds/bearing information.
+-- [ ] Implement the initial `stb_truetype` rasterizer for the approved TrueType outline subset. Add runtime FreeType only if Phase 0 selected it for broader format support.
+-- [ ] Do not rasterize by Unicode codepoint after shaping; rasterize the glyph IDs returned by the shaper.
+-- [ ] Treat spaces and other empty glyph images correctly: they keep their advances but do not consume atlas rectangles.
+-- [ ] Define the glyph-cache key using font identity, glyph ID, pixel size, and rasterization settings.
+-- [ ] Add atlas pages with packing padding, page-full behavior, growth limits, and clear allocation failure behavior.
+-- [ ] Add a GPU upload/update path for atlas pages. The current texture API creates sampled textures but does not provide a dynamic glyph-region update contract.
+-- [ ] Ensure uploads occur on the renderer-permitted thread and before a draw samples the changed region.
+-- [ ] Ensure a queued SpriteBatch run cannot outlive or refer to a replaced atlas page. Retire pages only after the relevant GPU work is safe.
+-- [ ] Define an initial eviction policy. It is acceptable to use bounded page growth first, provided memory limits and failure behavior are explicit; eviction can be a later enhancement.
+-- [ ] Preserve the existing static `.bfnt` provider. It should not need to use the dynamic atlas.
+-- [ ] Add cache hit/miss, rasterization count, page count, and allocated-byte counters.
++- [x] Implement a rasterizer interface that consumes a font face and glyph ID and returns a coverage bitmap plus bitmap bounds/bearing information.
++- [x] Implement the initial `stb_truetype` rasterizer for the approved TrueType outline subset. Add runtime FreeType only if Phase 0 selected it for broader format support.
++- [x] Do not rasterize by Unicode codepoint after shaping; rasterize the glyph IDs returned by the shaper.
++- [x] Treat spaces and other empty glyph images correctly: they keep their advances but do not consume atlas rectangles.
++- [x] Define the glyph-cache key using font identity, glyph ID, pixel size, and rasterization settings.
++- [x] Add atlas pages with packing padding, page-full behavior, growth limits, and clear allocation failure behavior.
++- [~] Add a GPU upload/update path for atlas pages. The current texture API creates sampled textures but does not provide a dynamic glyph-region update contract.
++- [~] Ensure uploads occur on the renderer-permitted thread and before a draw samples the changed region.
++- [~] Ensure a queued SpriteBatch run cannot outlive or refer to a replaced atlas page. Retire pages only after the relevant GPU work is safe.
++- [x] Define an initial eviction policy. It is acceptable to use bounded page growth first, provided memory limits and failure behavior are explicit; eviction can be a later enhancement.
++- [x] Preserve the existing static `.bfnt` provider. It should not need to use the dynamic atlas.
++- [x] Add cache hit/miss, rasterization count, page count, and allocated-byte counters.
+ 
+ ### Wants — useful but not blocking
+ 
+-- [ ] Batch multiple glyph misses and upload them together instead of issuing one GPU upload per glyph.
++- [x] Batch multiple glyph misses and upload them together instead of issuing one GPU upload per glyph.
+ - [ ] Add a warm-up/preload API for known dialogue/UI strings.
+ - [ ] Add LRU or another measured eviction policy after a stable page-growth implementation exists.
+ 
+@@ -440,12 +440,43 @@
+ 
+ ### Exit gate — Phase 4 is complete only when
+ 
+-- [ ] Repeated requests for the same font/glyph/size produce cache hits and do not rasterize again.
+-- [ ] Cache keys distinguish different fonts, sizes, and rasterization modes.
+-- [ ] Atlas-full, allocation-failure, and resource-destruction tests pass.
++- [x] Repeated requests for the same font/glyph/size produce cache hits and do not rasterize again.
++- [x] Cache keys distinguish different fonts, sizes, and rasterization modes.
++- [x] Atlas-full, allocation-failure, and resource-destruction tests pass.
+ - [ ] GPU upload/update synchronization is validated under GPU debugging.
+-- [ ] Both renderer modes have defined and tested coverage-font behavior.
+-- [ ] No queued draw can sample a destroyed or repurposed atlas page.
++- [~] Both renderer modes have defined and tested coverage-font behavior.
++- [~] No queued draw can sample a destroyed or repurposed atlas page.
++
++### Status (2026-11-17): resolver, modes, fallback, decisions, and mirror parity
++
++**Legend:** `[x]` means the code exists and a CPU test covers it. `[~]` means the code exists, but it is verified only by reading, or it needs a GPU or window run. `[ ]` means not done. The numbering in this plan is authoritative. The source comments that say "Phase 3" are legacy.
++
++**Caveat.** The sandbox has no Zig toolchain, no vendored HarfBuzz, and no network. The Zig changes were desk-checked but not compiled, so the owner must run `zig build test`. The C mirror (`checks/glyph_cache_mirror.c`) models the resolver, the raster modes, and the fallback. It runs 2159 checks with 0 failures. The original 1828 still pass unchanged, and 19 planted mutants are caught. Its parity with the Zig code is at the level of logic, against a synthetic glyph source. Of 45 Zig tests in the cache, font-test, and atlas files, 42 have a mirror check of the same logic (`checks/glyph_cache_parity.txt`). Parity is not claimed for real-font values, for the GPU, or for Zig compilation.
++
++**Decisions accepted (2026-11-17).**
++1. The raster mode is explicit in `resolve`. Gray is the only mode produced. Mono returns `UnsupportedRasterMode`. The mono variant stays in the cache key, so gray and mono entries cannot collide. An unsupported mode fails; it never falls back to gray.
++2. The caller supplies the fallback glyph ID. The resolver does not choose a fallback.
++3. A glyph is missing when its ID is at least the font's glyph count. The field is `RuntimeFont.glyph_count`, which holds the face's glyph count from HarfBuzz. Glyph 0 is valid (`.notdef`) and gets no special treatment in the cache or the resolver.
++4. Mapping `?` through the character map, and the fallback policy, are deferred to Phase 7.
++
++**Phase 7 hand-off.** Phase 7 decides: how `?` is mapped through the character map; what to draw when `?` is unavailable (nothing, or another fallback); and how missing-glyph diagnostics are reported. The `missing_glyphs` counter exists, but no reporting channel does yet. The existing `missing_codepoints` counter counts codepoints the text layer could not map. It stays distinct from `missing_glyphs`, which counts glyph IDs past the font's end.
++
++**Zig changes in this pass:**
++- `glyph_cache.zig`: a `missing_glyphs` counter and `noteMissingGlyph()`, a test that a zeroed key is gray, and a test that a gray and a mono key sharing a probe chain stay apart.
++- `glyph_resolver.zig`: `resolve` takes a raster mode. Only gray is supported. Other modes fail with `UnsupportedRasterMode` before the cache is consulted. `resolveWithFallback` handles glyph IDs at or past the font's glyph count. The caller supplies the fallback, each missing request is counted once, and the missing glyph is never stored.
++- `glyph_cache_font_test.zig`: tests for mode refusal, gray and mono separation, the fallback cases, glyph 0, the glyph-count boundary, and consistency between the resolved metrics, the cache entry, the pending upload rectangle, and the stored coverage.
++
++**Mirror and checks in this pass:** 21 new test functions, 331 new checks. The synthetic glyph 0 has ink, like `.notdef`. Two new mutants (`MUT_ZERO_IS_MISSING` and `MUT_MISSING_OFF_BY_ONE`) break the missing-glyph rule and are caught. `checks/glyph_cache_parity.py` regenerates the Zig-to-mirror map. `checks/glyph_cache_RESULTS.txt` records the runs.
++
++**Still open:**
++- [ ] GPU upload and update synchronization under GPU debugging (needs the owner's device).
++- [~] Both renderer modes on a device. The plan2d and flush logic is tested on the CPU only.
++- [~] No queued draw samples a destroyed or repurposed page. This holds by design. Phase 5 must keep `Cache.clear` and `Atlas.deinit` behind a GPU-idle wait.
++- [ ] Warm-up API and LRU eviction (optional "Wants"; not started).
++
++**Numbering.** The source comments in `glyph_cache.zig` and `glyph_atlas.zig` still say "Phase 3 of the rendering migration plan". They are legacy and were left as they are. `glyph_resolver.zig` uses this plan's numbering.
++
++**Next:** Phase 5 connects `resolve` and `resolveWithFallback` to `Canvas` and the text consumers, and calls `Atlas.flush` before the sprite upload. Phase 4 closes when `zig build test` passes on Windows, Linux, and macOS, and the two GPU items are checked on a device.
+ 
+ ---
+ 
+diff -ruN -x '*.zip' orig/bairava/checks/glyph_cache_RESULTS.txt bairava/checks/glyph_cache_RESULTS.txt
+--- a/checks/glyph_cache_RESULTS.txt	2026-11-17 12:02:21.543132500 +0000
++++ b/checks/glyph_cache_RESULTS.txt	2026-11-17 12:23:55.554573101 +0000
+@@ -1,3 +1,71 @@
++Glyph cache mirror results (Phase 4 of the text and font system migration plan, revision 5, 2026-11-17)
++Mirror: checks/glyph_cache_mirror.c. It models the cache, the resolver (mode, lookup, rasterize, insert),
++the fallback, and plan2d, against a synthetic glyph source. It does NOT compile the Zig, and it does NOT run
++RuntimeFont, stb_truetype, or HarfBuzz.
++Parity map: checks/glyph_cache_parity.txt (regenerate with python3 checks/glyph_cache_parity.py).
++Zig side: not compiled or run in the assistant's sandbox. The owner's `zig build test` is the first real check.
++
++Build and run (from the repository root):
++  gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all checks/glyph_cache_mirror.c -lm -o glyph_cache_mirror
++  ASAN_OPTIONS=detect_leaks=1 ./glyph_cache_mirror
++Environment: gcc 13.3.0, Ubuntu 24.04. ASan, UBSan, and LeakSanitizer enabled.
++
++=== CLEAN RUN
++2159 checks, 0 failures, exit 0.
++
++=== PRESERVATION OF THE ORIGINAL 1828 CHECKS
++1. With the 21 new test calls removed from main, the file runs 1828 checks, 0 failures, exit 0.
++2. The new run's output begins with the revision 3 output, line for line: the same 22 test blocks, the same
++   check messages, and no FAIL lines. The new tests follow them.
++3. No original check expression or message changed. Edits to existing code are infrastructure only:
++   - GlyphKey gained a mode field that defaults to gray (zero). The two literal key initializers (key_of and
++     other_size) gained the gray value, which -Wmissing-field-initializers would otherwise reject under -Werror.
++   - The cache's calloc calls go through cache_alloc, which fails only when a test plans a failure.
++   - Stats gained rasterized, missing_glyphs, and allocated_bytes.
++   - hash_key mixes the mode; same_key compares it (guarded by MUT_MODE_NOT_IN_EQ for the mutation run).
++
++=== NEW CHECKS
++331 new checks in 21 test functions (named after the Zig tests they mirror; see the parity file).
++Covered: mode defaults and key separation, a same-bucket probe-chain collision between gray and mono keys,
++allocated bytes, a failing allocator in init and in table growth, resolver hits and misses, empty glyphs,
++size and font-id separation, AtlasFull through the resolver, out-of-range glyph IDs, a failing rasterizer
++buffer, unsupported modes (refused before counting), missing-glyph fallback (substituted, in range, both
++missing, unsupported mode), glyph 0 as a valid glyph, the glyph-count boundary, and consistency between
++resolved metrics, the cache entry, the pending upload rectangle, and the stored coverage.
++
++=== MUTANTS (each built with -DMUT_X; every one must fail the run)
++19 of 19 caught. First failing message for each:
++  MUT_BAD_STRIDE: CAUGHT (exit 1) -- ==153==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7fd69114aad0 at pc 0x7fd693afb42e bp 0x7ffdbd2ec280 sp 0x7ffdbd2eba28
++  MUT_DROP_ON_GROW: CAUGHT (exit 1) -- FAIL: the table grows as entries are added, and every entry is still found afterwards: all 1000 entries found after growth (line 808)
++  MUT_FALLBACK_NO_COUNT: CAUGHT (exit 1) -- FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: one missing glyph: got 0, want 1
++  MUT_FLUSH_GATED: CAUGHT (exit 1) -- FAIL: the GPU step records the same regions whichever renderer is active (flush model): GPU mode: white block and the glyph are both recorded: got 0,
++  MUT_LEAK_COVERAGE: CAUGHT (exit 1) -- ==196==ERROR: LeakSanitizer: detected memory leaks
++  MUT_MISSING_OFF_BY_ONE: CAUGHT (exit 1) -- FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: fallback resolves: got error 6,
++  MUT_MODE_NOT_IN_EQ: CAUGHT (exit 1) -- FAIL: a gray and a mono key that share a probe chain stay apart: mono misses in the gray key's probe chain (line 1027)
++  MUT_NOMISS: CAUGHT (exit 1) -- FAIL: a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry: one miss: got 0, want 1 (line 623)
++  MUT_NOOVERFLOW: CAUGHT (exit 1) -- FAIL: more changed glyphs than the pending list holds mark their page for a full upload: page 0 needs a full upload (line 825)
++  MUT_NOPAD: CAUGHT (exit 1) -- FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: first glyph after white starts at x=3: got 2,
++  MUT_NOTOOLARGE_COUNT: CAUGHT (exit 1) -- FAIL: a glyph wider than the page allows is refused and counted: one too_large: got 0, want 1 (line 732)
++  MUT_NOWRAP: CAUGHT (exit 1) -- FAIL: a glyph that does not fit the shelf starts a new shelf below it: sixth glyph starts a new shelf at x=0: got 28, want 0 (line 696)
++  MUT_PLAN_KEEP: CAUGHT (exit 1) -- FAIL: the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D: GPU mode, no copy: release
++  MUT_REMOVE_NOOP: CAUGHT (exit 1) -- FAIL: removing a font forgets its glyphs and keeps the others: removed glyph misses (line 765)
++  MUT_RESOLVE_IGNORES_CACHE: CAUGHT (exit 1) -- FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 2, want 1 (line 1081)
++  MUT_RESOLVE_NO_RASTER_COUNT: CAUGHT (exit 1) -- FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 0, want 1 (line 1081)
++  MUT_TOMBSTONE_EMPTY: CAUGHT (exit 1) -- FAIL: a removed entry does not hide the entries probed past it: second is still found past the tombstone (line 790)
++  MUT_UNSUPPORTED_AS_GRAY: CAUGHT (exit 1) -- FAIL: an unsupported raster mode is refused before the cache is consulted: mono is refused: got error 0, want 7 (line 1171)
++  MUT_ZERO_IS_MISSING: CAUGHT (exit 1) -- FAIL: glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing: glyph 0 is not a substitute: got 1, want 0 (
++
++=== WHAT THIS DOES NOT SHOW
++- That the Zig code compiles, or that its tests pass. The owner's zig build test does that.
++- Any metric value from the shipped font. The mirror's glyphs are synthetic; the Zig tests read assets/font.ttf.
++- The GPU upload, the GPU synchronization, and both renderer modes on a device (the plan2d and flush models
++  are checked only as logic).
++- Parity beyond the logic modeled here. The parity file marks the 3 Zig-only tests and the reason for each.
++
++====================================================================================================
++
++REVISION 3 (before the resolver pass), kept as history. Its check count is 1828, which revision 4 preserves.
++
+ Glyph cache mirror results (Phase 3, 2026-11-17, revision 3: renderer gate and flush model)
+ Harness: checks/glyph_cache_mirror.c (mirrors src/engine/text/glyph_cache.zig, plan2d and gatherPage in src/engine/renderer/glyph_atlas.zig, and a model of the flush's GPU step; it does NOT compile the Zig)
+ Date: 2026-11-17 (sandbox, Ubuntu 24.04, gcc 13.3.0)
+diff -ruN -x '*.zip' orig/bairava/checks/glyph_cache_mirror.c bairava/checks/glyph_cache_mirror.c
+--- a/checks/glyph_cache_mirror.c	2026-11-17 12:02:21.543104120 +0000
++++ b/checks/glyph_cache_mirror.c	2026-11-17 12:23:19.768979562 +0000
+@@ -1,6 +1,10 @@
+ /*
+- * Mirror of src/engine/text/glyph_cache.zig and of plan2d in src/engine/renderer/glyph_atlas.zig
+- * (Phase 3 of the rendering migration plan, 2026-11-17).
++ * Mirror of src/engine/text/glyph_cache.zig, src/engine/text/glyph_resolver.zig, and plan2d in
++ * src/engine/renderer/glyph_atlas.zig. It belongs to Phase 4 of the text and font system migration plan.
++ * The Zig source comments call this "Phase 3 of the rendering migration plan". That label is legacy.
++ * The resolver's glyph source is synthetic (fake_metrics, fake_coverage). RuntimeFont, stb_truetype, and
++ * HarfBuzz are not modeled, so the real font's metric values are checked only by the Zig tests.
++ * checks/glyph_cache_parity.txt maps each Zig test to its check here.
+  *
+  * Each function below follows its Zig counterpart line for line, and each check uses the same
+  * numbers as the matching Zig test. This checks the control flow, the packing arithmetic, the table,
+@@ -27,15 +31,17 @@
+ 
+ typedef struct { uint32_t page, x, y, w, h; } Region;
+ typedef struct { float advance, xoff, yoff; uint32_t width, height; } Metrics;
+-typedef struct { uint32_t font, glyph, size_bits; } GlyphKey;
++typedef enum { RASTER_GRAY = 0, RASTER_MONO = 1 } RasterMode;
++typedef struct { uint32_t font, glyph, size_bits; RasterMode mode; } GlyphKey;
+ typedef struct { Metrics metrics; Region region; } Entry;
+ typedef struct {
+     uint64_t hits, misses, inserts, empty_glyphs, cache_full, too_large;
+     uint64_t missing_codepoints, removed, rehashes;
+     uint32_t pages_in_use, entries;
++    uint64_t rasterized, missing_glyphs, allocated_bytes;
+ } Stats;
+ 
+-typedef enum { ERR_NONE = 0, ERR_GLYPH_TOO_LARGE, ERR_ATLAS_FULL, ERR_INVALID_BITMAP, ERR_INVALID_OPTIONS, ERR_OOM } Err;
++typedef enum { ERR_NONE = 0, ERR_GLYPH_TOO_LARGE, ERR_ATLAS_FULL, ERR_INVALID_BITMAP, ERR_INVALID_OPTIONS, ERR_OOM, ERR_GLYPH_OUT_OF_RANGE, ERR_UNSUPPORTED_MODE } Err;
+ typedef enum { SLOT_EMPTY, SLOT_USED, SLOT_TOMBSTONE } SlotState;
+ typedef struct { SlotState state; GlyphKey key; Entry entry; } Slot;
+ 
+@@ -108,7 +114,7 @@
+ }
+ 
+ static GlyphKey key_of(uint32_t font, uint32_t glyph) {
+-    GlyphKey k = { font, glyph, size_bits_of(16.0f) };
++    GlyphKey k = { font, glyph, size_bits_of(16.0f), RASTER_GRAY };
+     return k;
+ }
+ 
+@@ -145,11 +151,36 @@
+     uint32_t h = mix(key.font);
+     h = mix(h ^ key.glyph);
+     h = mix(h ^ key.size_bits);
++    h = mix(h ^ (uint32_t)key.mode);
+     return (size_t)h;
+ }
+ 
+ static int same_key(GlyphKey a, GlyphKey b) {
++#ifdef MUT_MODE_NOT_IN_EQ
+     return a.font == b.font && a.glyph == b.glyph && a.size_bits == b.size_bits;
++#else
++    return a.font == b.font && a.glyph == b.glyph && a.size_bits == b.size_bits && a.mode == b.mode;
++#endif
++}
++
++/* ---- allocation hook (the std.testing.FailingAllocator model) ---------- */
++
++/* Every allocation the cache makes goes through cache_alloc. It counts successful allocations and fails
++ * once that count reaches alloc_fail_at, as FailingAllocator does, so the Nth allocation of a test fails
++ * in both languages. Zero-size allocations are not counted: Zig's alloc(T, 0) makes no allocator call. */
++static size_t alloc_count = 0;
++static size_t alloc_fail_at = SIZE_MAX;
++
++static void alloc_plan(size_t fail_at) {
++    alloc_count = 0;
++    alloc_fail_at = fail_at;
++}
++
++static void *cache_alloc(size_t count, size_t size) {
++    if (alloc_count == alloc_fail_at) return NULL;
++    void *p = calloc(count, size);
++    if (p) alloc_count++;
++    return p;
+ }
+ 
+ /* ---- page packer (Page.place) ----------------------------------------- */
+@@ -212,11 +243,11 @@
+     if (page_count == 0 || page_count > MAX_PAGE_COUNT) return ERR_INVALID_OPTIONS;
+     c->page_size = page_size;
+     c->page_count = page_count;
+-    c->pages = calloc(page_count, sizeof(Page));
++    c->pages = cache_alloc(page_count, sizeof(Page));
+     if (!c->pages) return ERR_OOM;
+     size_t texels = (size_t)page_size * page_size;
+     for (size_t i = 0; i < page_count; i++) {
+-        c->pages[i].pixels = calloc(texels, 1);
++        c->pages[i].pixels = cache_alloc(texels, 1);
+         if (!c->pages[i].pixels) {
+             for (size_t j = 0; j < i; j++) free(c->pages[j].pixels);
+             free(c->pages);
+@@ -224,7 +255,7 @@
+         }
+     }
+     c->slot_len = INITIAL_SLOTS;
+-    c->slots = calloc(c->slot_len, sizeof(Slot));
++    c->slots = cache_alloc(c->slot_len, sizeof(Slot));
+     if (!c->slots) {
+         for (size_t j = 0; j < page_count; j++) free(c->pages[j].pixels);
+         free(c->pages);
+@@ -286,7 +317,7 @@
+     if ((c->live + c->tombstones + 1) * 4 <= c->slot_len * 3) return ERR_NONE;
+     size_t new_len = c->slot_len;
+     while ((c->live + 1) * 2 > new_len) new_len *= 2;
+-    Slot *fresh = calloc(new_len, sizeof(Slot));
++    Slot *fresh = cache_alloc(new_len, sizeof(Slot));
+     if (!fresh) return ERR_OOM;
+     Slot *old = c->slots;
+     size_t old_len = c->slot_len;
+@@ -418,6 +449,8 @@
+         if (c->pages[i].used) in_use++;
+     }
+     s.pages_in_use = in_use;
++    size_t texels = (size_t)c->page_size * c->page_size;
++    s.allocated_bytes = (uint64_t)texels * c->page_count + (uint64_t)c->slot_len * sizeof(Slot);
+     return s;
+ }
+ 
+@@ -454,6 +487,103 @@
+     CHECK_EQ(plan_2d(1, 1, 1, 0), ACT_NONE, "2D mode, copy present, unchanged: nothing");
+ }
+ 
++/* ---- on-demand resolver (text/glyph_resolver.zig) -------------------- */
++
++/* Glyph 0 has ink, like a .notdef box. A synthetic glyph source standing in for RuntimeFont. It checks the resolver's logic: the key, the counters,
++ * the upload rectangle, and the fallback. It does not check metric values from a real font. Glyph 36 is 11 by
++ * 11 at 16 px, the size of 'A' in the shipped font. Glyph 7 has no ink, like a space. */
++#define FAKE_GLYPH_COUNT 4652u
++#define FAKE_A 36u
++#define FAKE_EMPTY 7u
++
++typedef struct { uint32_t glyph_count; uint32_t pixel_height; } FakeFont;
++
++static Err fake_metrics(const FakeFont *f, uint32_t gid, Metrics *m) {
++    if (gid >= f->glyph_count) return ERR_GLYPH_OUT_OF_RANGE;
++    uint32_t w, h;
++    if (gid == FAKE_A) {
++        w = 11;
++        h = 11;
++    } else if (gid != 0 && gid % 7 == 0) {
++        w = 0;
++        h = 0;
++    } else {
++        w = 2 + gid % 5;
++        h = 2 + gid % 4;
++    }
++    w = w * f->pixel_height / 16;
++    h = h * f->pixel_height / 16;
++    m->advance = (float)(w + 1);
++    m->xoff = 0;
++    m->yoff = -(float)h;
++    m->width = w;
++    m->height = h;
++    return ERR_NONE;
++}
++
++static void fake_coverage(uint32_t gid, uint32_t w, uint32_t h, uint8_t *out) {
++    for (uint32_t r = 0; r < h; r++) {
++        for (uint32_t c = 0; c < w; c++) out[r * w + c] = (uint8_t)(gid * 13u + r * 7u + c * 3u + 1u);
++    }
++}
++
++/* Mirrors resolve() in glyph_resolver.zig: refuse the mode, look up, rasterize on a miss, count, insert. */
++static Err resolve(Cache *c, uint32_t font_id, const FakeFont *f, uint32_t gid, RasterMode mode, Entry *out) {
++#ifndef MUT_UNSUPPORTED_AS_GRAY
++    if (mode != RASTER_GRAY) return ERR_UNSUPPORTED_MODE;
++#endif
++    GlyphKey key = { font_id, gid, size_bits_of((float)f->pixel_height), mode };
++#ifndef MUT_RESOLVE_IGNORES_CACHE
++    if (lookup(c, key, out)) return ERR_NONE;
++#endif
++    Metrics m;
++    Err e = fake_metrics(f, gid, &m);
++    if (e != ERR_NONE) return e;
++    size_t size = (size_t)m.width * (size_t)m.height;
++    uint8_t *coverage = NULL;
++    if (size > 0) {
++        coverage = cache_alloc(size, 1);
++        if (!coverage) return ERR_OOM;
++        fake_coverage(gid, m.width, m.height, coverage);
++    }
++#ifndef MUT_RESOLVE_NO_RASTER_COUNT
++    c->stats.rasterized++;
++#endif
++    Err ins = cache_insert(c, key, m, coverage, size, out);
++#ifndef MUT_LEAK_COVERAGE
++    free(coverage);
++#endif
++    return ins;
++}
++
++/* Mirrors resolveWithFallback() in glyph_resolver.zig. */
++static Err resolve_with_fallback(Cache *c, uint32_t font_id, const FakeFont *f, uint32_t gid, uint32_t fallback,
++                                 RasterMode mode, Entry *out, int *substituted) {
++#ifndef MUT_UNSUPPORTED_AS_GRAY
++    if (mode != RASTER_GRAY) {
++        *substituted = 0;
++        return ERR_UNSUPPORTED_MODE;
++    }
++#endif
++    /* A glyph is missing when its ID is at least the glyph count. Glyph 0 is valid (.notdef). */
++#if defined(MUT_ZERO_IS_MISSING)
++    int in_font = gid != 0 && gid < f->glyph_count;
++#elif defined(MUT_MISSING_OFF_BY_ONE)
++    int in_font = gid <= f->glyph_count;
++#else
++    int in_font = gid < f->glyph_count;
++#endif
++    if (in_font) {
++        *substituted = 0;
++        return resolve(c, font_id, f, gid, mode, out);
++    }
++#ifndef MUT_FALLBACK_NO_COUNT
++    c->stats.missing_glyphs++;
++#endif
++    *substituted = 1;
++    return resolve(c, font_id, f, fallback, mode, out);
++}
++
+ /* ---- tests (names and numbers match the Zig tests) -------------------- */
+ 
+ static void t_white_block(void) {
+@@ -545,7 +675,7 @@
+     CHECK_ERR(cache_insert(&c, key_of(1, 1), metrics_of(1, 1), &one, 1, &e), ERR_NONE, "insert");
+     CHECK(!lookup(&c, key_of(2, 1), &e), "other font misses");
+     CHECK(!lookup(&c, key_of(1, 2), &e), "other glyph misses");
+-    GlyphKey other_size = { 1, 1, size_bits_of(17.0f) };
++    GlyphKey other_size = { 1, 1, size_bits_of(17.0f), RASTER_GRAY };
+     CHECK(!lookup(&c, other_size, &e), "other size misses");
+     CHECK(lookup(&c, key_of(1, 1), &e), "original key hits");
+     cache_deinit(&c);
+@@ -840,6 +970,383 @@
+     cache_deinit(&c);
+ }
+ 
++/* ---- tests for the new behavior (names match the Zig tests; see checks/glyph_cache_parity.txt) -- */
++
++static void t_mode_default(void) {
++    begin("a key without a mode is gray, and gray is the zero value, so a zeroed mode is gray");
++    GlyphKey k = { 1, 1, size_bits_of(16.0f), RASTER_GRAY };
++    CHECK_EQ(k.mode, RASTER_GRAY, "the explicit default is gray");
++    CHECK_EQ(RASTER_GRAY, 0, "gray is zero");
++    GlyphKey z;
++    memset(&z, 0, sizeof z);
++    CHECK_EQ(z.mode, RASTER_GRAY, "a zeroed key is gray");
++    CHECK_EQ(key_of(1, 1).mode, RASTER_GRAY, "key_of is gray");
++}
++
++static void t_mode_keys(void) {
++    begin("keys differ by rasterization mode, so gray and mono coverage of one glyph are two entries");
++    Cache c;
++    CHECK_ERR(cache_init(&c, 32, 1), ERR_NONE, "init");
++    GlyphKey gray = { 1, 5, size_bits_of(16.0f), RASTER_GRAY };
++    GlyphKey mono = gray;
++    mono.mode = RASTER_MONO;
++    uint8_t gray_cov[4] = { 1, 2, 3, 4 };
++    uint8_t mono_cov[4] = { 5, 6, 7, 8 };
++    Entry e, g, m;
++    CHECK_ERR(cache_insert(&c, gray, metrics_of(2, 2), gray_cov, 4, &e), ERR_NONE, "gray insert");
++    CHECK(!lookup(&c, mono, &e), "mono lookup misses before its insert");
++    CHECK_ERR(cache_insert(&c, mono, metrics_of(2, 2), mono_cov, 4, &e), ERR_NONE, "mono insert");
++    CHECK_EQ(cache_snapshot(&c).entries, 2, "two entries");
++    CHECK(lookup(&c, gray, &g), "gray hits");
++    CHECK(lookup(&c, mono, &m), "mono hits");
++    CHECK_EQ(region_coverage(&c, g.region)[0], 1, "gray coverage");
++    CHECK_EQ(region_coverage(&c, m.region)[0], 5, "mono coverage");
++    cache_deinit(&c);
++}
++
++static void t_mode_collision(void) {
++    begin("a gray and a mono key that share a probe chain stay apart");
++    Cache c;
++    CHECK_ERR(cache_init(&c, 32, 1), ERR_NONE, "init");
++    size_t mask = cache_mask(&c);
++    GlyphKey gray = { 1, 1, size_bits_of(16.0f), RASTER_GRAY };
++    GlyphKey mono = gray;
++    mono.mode = RASTER_MONO;
++    /* Hashing includes the mode, so the two keys usually start in different buckets. Search for a glyph whose gray
++     * and mono keys share a bucket. Only then does an equality check that ignores the mode show up. */
++    uint32_t glyph = 1;
++    for (; glyph < 100000u; glyph++) {
++        gray.glyph = glyph;
++        mono.glyph = glyph;
++        if ((hash_key(gray) & mask) == (hash_key(mono) & mask)) break;
++    }
++    CHECK(glyph < 100000u, "a same-bucket pair exists");
++    uint8_t cov[4] = { 1, 2, 3, 4 };
++    Entry e, g;
++    CHECK_ERR(cache_insert(&c, gray, metrics_of(2, 2), cov, 4, &e), ERR_NONE, "gray insert");
++    CHECK(!lookup(&c, mono, &e), "mono misses in the gray key's probe chain");
++    CHECK(lookup(&c, gray, &g), "gray still hits");
++    cache_deinit(&c);
++}
++
++static void t_allocated_bytes(void) {
++    begin("allocated bytes count the coverage pages and the lookup table");
++    Cache c;
++    CHECK_ERR(cache_init(&c, 32, 2), ERR_NONE, "init");
++    size_t expected = 2 * 32 * 32 + INITIAL_SLOTS * sizeof(Slot);
++    CHECK_EQ(cache_snapshot(&c).allocated_bytes, expected, "pages plus table, in this language's Slot size");
++    cache_deinit(&c);
++}
++
++static void t_alloc_init(void) {
++    begin("a failed allocation in init is reported, and init frees what it had already made");
++    for (size_t fail_at = 0; fail_at < 3; fail_at++) {
++        Cache c;
++        alloc_plan(fail_at);
++        CHECK_ERR(cache_init(&c, 32, 1), ERR_OOM, "a failing allocation is reported as OOM");
++    }
++    alloc_plan(SIZE_MAX);
++}
++
++static void t_alloc_growth(void) {
++    begin("a lookup table that cannot grow refuses the insert and keeps the entries it has");
++    Cache c;
++    alloc_plan(3);
++    CHECK_ERR(cache_init(&c, 1024, 1), ERR_NONE, "init makes three allocations");
++    const uint32_t room = INITIAL_SLOTS * 3 / 4;
++    uint8_t one[1] = { 7 };
++    Entry e;
++    for (uint32_t glyph = 1; glyph <= room; glyph++) {
++        CHECK_ERR(cache_insert(&c, key_of(1, glyph), metrics_of(1, 1), one, 1, &e), ERR_NONE, "fill");
++    }
++    CHECK_ERR(cache_insert(&c, key_of(1, room + 1), metrics_of(1, 1), one, 1, &e), ERR_OOM, "growth refused");
++    alloc_plan(SIZE_MAX);
++    CHECK_EQ(cache_snapshot(&c).entries, room, "entries kept");
++    CHECK_EQ(cache_snapshot(&c).rehashes, 0, "no rehash happened");
++    CHECK(lookup(&c, key_of(1, room), &e), "last kept entry is found");
++    CHECK(!lookup(&c, key_of(1, room + 1), &e), "refused entry is not stored");
++    cache_deinit(&c);
++}
++
++static void t_resolve_repeat(void) {
++    begin("a repeated request for a glyph finds it, and rasterizes it only once");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry first, second;
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_GRAY, &first), ERR_NONE, "first request");
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_GRAY, &second), ERR_NONE, "second request");
++    CHECK(region_eq(first.region, second.region), "same region both times");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.rasterized, 1, "one rasterization");
++    CHECK_EQ(s.misses, 1, "one miss");
++    CHECK_EQ(s.hits, 1, "one hit");
++    CHECK_EQ(s.inserts, 1, "one insert");
++    cache_deinit(&c);
++}
++
++static void t_resolve_empty(void) {
++    begin("a glyph with an advance and no ink keeps its advance and takes no page space");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    size_t pending_before = c.pending_count;
++    Entry e;
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_EMPTY, RASTER_GRAY, &e), ERR_NONE, "empty glyph resolves");
++    Metrics want;
++    CHECK_ERR(fake_metrics(&f, FAKE_EMPTY, &want), ERR_NONE, "font metrics");
++    CHECK_EQ(e.region.w, 0, "no width in the atlas");
++    CHECK_EQ(e.region.h, 0, "no height in the atlas");
++    CHECK(e.metrics.advance == want.advance, "advance kept");
++    CHECK_EQ(c.pending_count, pending_before, "nothing queued for upload");
++    CHECK_EQ(cache_snapshot(&c).empty_glyphs, 1, "one empty glyph");
++    cache_deinit(&c);
++}
++
++static void t_resolve_size_id(void) {
++    begin("another size or another font id is a different entry and a separate rasterization");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f16 = { FAKE_GLYPH_COUNT, 16 };
++    FakeFont f24 = { FAKE_GLYPH_COUNT, 24 };
++    Entry e;
++    CHECK_ERR(resolve(&c, 1, &f16, FAKE_A, RASTER_GRAY, &e), ERR_NONE, "font 1 at 16 px");
++    CHECK_ERR(resolve(&c, 1, &f24, FAKE_A, RASTER_GRAY, &e), ERR_NONE, "font 1 at 24 px");
++    CHECK_ERR(resolve(&c, 2, &f16, FAKE_A, RASTER_GRAY, &e), ERR_NONE, "font 2 at 16 px");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.rasterized, 3, "three rasterizations");
++    CHECK_EQ(s.entries, 3, "three entries");
++    cache_deinit(&c);
++}
++
++static void t_resolve_atlas_full(void) {
++    begin("a glyph that does not fit the page is refused with AtlasFull, counted, and not stored");
++    Cache c;
++    CHECK_ERR(cache_init(&c, 12, 1), ERR_NONE, "a page 12 texels wide");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_GRAY, &e), ERR_ATLAS_FULL, "A does not fit");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.rasterized, 1, "rasterized once");
++    CHECK_EQ(s.cache_full, 1, "one cache_full");
++    CHECK_EQ(s.entries, 0, "nothing stored");
++    CHECK(!lookup(&c, key_of(1, FAKE_A), &e), "A is not cached");
++    cache_deinit(&c);
++}
++
++static void t_resolve_out_of_range(void) {
++    begin("a glyph ID past the last glyph of the font is refused before anything is stored");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    CHECK_ERR(resolve(&c, 1, &f, f.glyph_count, RASTER_GRAY, &e), ERR_GLYPH_OUT_OF_RANGE, "past the end");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.rasterized, 0, "no rasterization");
++    CHECK_EQ(s.entries, 0, "nothing stored");
++    cache_deinit(&c);
++}
++
++static void t_resolve_alloc_fail(void) {
++    begin("a failed allocation while rasterizing stores nothing and counts no rasterization");
++    Cache c;
++    alloc_plan(3);
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, 1), ERR_NONE, "init with one page makes three allocations");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_GRAY, &e), ERR_OOM, "the coverage buffer is refused");
++    alloc_plan(SIZE_MAX);
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.rasterized, 0, "no rasterization counted");
++    CHECK_EQ(s.entries, 0, "nothing stored");
++    cache_deinit(&c);
++}
++
++static void t_resolve_unsupported(void) {
++    begin("an unsupported raster mode is refused before the cache is consulted");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_MONO, &e), ERR_UNSUPPORTED_MODE, "mono is refused");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.hits, 0, "no hit counted");
++    CHECK_EQ(s.misses, 0, "no miss counted");
++    CHECK_EQ(s.rasterized, 0, "no rasterization");
++    CHECK_EQ(s.entries, 0, "nothing stored");
++    cache_deinit(&c);
++}
++
++static void t_mode_hits_misses(void) {
++    begin("a mono entry of a glyph does not serve a gray request, and a gray entry does not serve mono");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry gray, mono_entry, gray_again;
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_GRAY, &gray), ERR_NONE, "gray request");
++    GlyphKey mono_key = key_of(1, FAKE_A);
++    mono_key.mode = RASTER_MONO;
++    CHECK(!lookup(&c, mono_key, &mono_entry), "mono lookup misses");
++    /* No mono rasterizer exists, so the mono entry is inserted by hand, as a future rasterizer would. */
++    Metrics mm;
++    CHECK_ERR(fake_metrics(&f, FAKE_A, &mm), ERR_NONE, "font metrics");
++    uint8_t cov[121];
++    fake_coverage(FAKE_A, mm.width, mm.height, cov);
++    CHECK_ERR(cache_insert(&c, mono_key, mm, cov, 121, &mono_entry), ERR_NONE, "mono insert");
++    CHECK(lookup(&c, mono_key, &mono_entry), "mono lookup hits");
++    CHECK(!(mono_entry.region.x == gray.region.x && mono_entry.region.y == gray.region.y), "mono sits elsewhere");
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_GRAY, &gray_again), ERR_NONE, "gray again");
++    CHECK(region_eq(gray_again.region, gray.region), "gray again is the gray entry");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.misses, 2, "misses: first gray, first mono lookup");
++    CHECK_EQ(s.hits, 2, "hits: mono lookup, second gray");
++    CHECK_EQ(s.rasterized, 1, "one rasterization");
++    CHECK_EQ(s.entries, 2, "two entries");
++    cache_deinit(&c);
++}
++
++static void t_fallback_missing(void) {
++    begin("a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    int sub = -1;
++    CHECK_ERR(resolve_with_fallback(&c, 1, &f, f.glyph_count, FAKE_A, RASTER_GRAY, &e, &sub), ERR_NONE, "fallback resolves");
++    CHECK_EQ(sub, 1, "the entry is a substitute");
++    Entry direct;
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_GRAY, &direct), ERR_NONE, "direct request");
++    CHECK(region_eq(e.region, direct.region), "the fallback entry is the A entry");
++    CHECK(e.metrics.advance == direct.metrics.advance, "same advance");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.missing_glyphs, 1, "one missing glyph");
++    CHECK_EQ(s.rasterized, 1, "only the fallback is rasterized");
++    CHECK_EQ(s.entries, 1, "only the fallback is stored");
++    cache_deinit(&c);
++}
++
++static void t_fallback_in_range(void) {
++    begin("a glyph inside the font is drawn as itself, and is not counted as missing");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    int sub = -1;
++    CHECK_ERR(resolve_with_fallback(&c, 1, &f, FAKE_A, 0, RASTER_GRAY, &e, &sub), ERR_NONE, "in-range resolves");
++    CHECK_EQ(sub, 0, "not a substitute");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.missing_glyphs, 0, "no missing glyph");
++    CHECK_EQ(s.rasterized, 1, "one rasterization");
++    CHECK_EQ(s.entries, 1, "one entry");
++    cache_deinit(&c);
++}
++
++static void t_fallback_both_missing(void) {
++    begin("a missing glyph whose fallback is also missing fails, counts the miss, and stores nothing");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    int sub = -1;
++    CHECK_ERR(resolve_with_fallback(&c, 1, &f, f.glyph_count, f.glyph_count, RASTER_GRAY, &e, &sub),
++              ERR_GLYPH_OUT_OF_RANGE, "both missing");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.missing_glyphs, 1, "the miss is counted");
++    CHECK_EQ(s.rasterized, 0, "no rasterization");
++    CHECK_EQ(s.entries, 0, "nothing stored");
++    cache_deinit(&c);
++}
++
++static void t_fallback_unsupported(void) {
++    begin("an unsupported mode is refused by the fallback path before any miss is counted");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    int sub = -1;
++    CHECK_ERR(resolve_with_fallback(&c, 1, &f, f.glyph_count, FAKE_A, RASTER_MONO, &e, &sub), ERR_UNSUPPORTED_MODE,
++              "mono refused");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.missing_glyphs, 0, "no missing glyph counted");
++    CHECK_EQ(s.misses, 0, "no miss counted");
++    CHECK_EQ(s.rasterized, 0, "no rasterization");
++    cache_deinit(&c);
++}
++
++static void t_consistency(void) {
++    begin("the resolved metrics match the font, and the cache entry and its pending upload agree with them");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    CHECK_ERR(resolve(&c, 1, &f, FAKE_A, RASTER_GRAY, &e), ERR_NONE, "resolve A");
++    Metrics m;
++    CHECK_ERR(fake_metrics(&f, FAKE_A, &m), ERR_NONE, "font metrics");
++    CHECK(e.metrics.advance == m.advance, "advance matches the font");
++    CHECK(e.metrics.xoff == m.xoff, "xoff matches the font");
++    CHECK(e.metrics.yoff == m.yoff, "yoff matches the font");
++    CHECK_EQ(e.metrics.width, m.width, "width matches the font");
++    CHECK_EQ(e.metrics.height, m.height, "height matches the font");
++    CHECK_EQ(e.region.w, m.width, "the region is the ink width");
++    CHECK_EQ(e.region.h, m.height, "the region is the ink height");
++    Entry found;
++    CHECK(lookup(&c, key_of(1, FAKE_A), &found), "a later lookup finds the entry");
++    CHECK(region_eq(found.region, e.region), "the lookup returns the same region");
++    int queued = 0;
++    for (size_t i = 0; i < c.pending_count; i++) {
++        if (region_eq(c.pending[i], e.region)) queued = 1;
++    }
++    CHECK(queued, "the next flush uploads that rectangle");
++    uint8_t want[121];
++    fake_coverage(FAKE_A, m.width, m.height, want);
++    int same = 1;
++    for (uint32_t row = 0; row < e.region.h; row++) {
++        for (uint32_t col = 0; col < e.region.w; col++) {
++            if (region_coverage(&c, e.region)[row * c.page_size + col] != want[row * e.region.w + col]) same = 0;
++        }
++    }
++    CHECK(same, "stored texels equal the rasterized coverage, row by row");
++    cache_deinit(&c);
++}
++
++static void t_glyph_zero(void) {
++    begin("glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    int sub = -1;
++    CHECK_ERR(resolve_with_fallback(&c, 1, &f, 0, FAKE_A, RASTER_GRAY, &e, &sub), ERR_NONE, "glyph 0 resolves");
++    CHECK_EQ(sub, 0, "glyph 0 is not a substitute");
++    Metrics m;
++    CHECK_ERR(fake_metrics(&f, 0, &m), ERR_NONE, "font metrics for glyph 0");
++    CHECK(e.metrics.advance == m.advance, "glyph 0 keeps its own advance");
++    CHECK_ERR(resolve(&c, 1, &f, 0, RASTER_GRAY, &e), ERR_NONE, "second request for glyph 0");
++    Stats s = cache_snapshot(&c);
++    CHECK_EQ(s.missing_glyphs, 0, "glyph 0 is never counted as missing");
++    CHECK_EQ(s.rasterized, 1, "glyph 0 is rasterized once");
++    CHECK_EQ(s.misses, 1, "one miss");
++    CHECK_EQ(s.hits, 1, "the second request hits");
++    cache_deinit(&c);
++}
++
++static void t_glyph_boundary(void) {
++    begin("the last glyph is valid, and the glyph after it is missing, at the font's glyph count");
++    Cache c;
++    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_COUNT), ERR_NONE, "init");
++    FakeFont f = { FAKE_GLYPH_COUNT, 16 };
++    Entry e;
++    int sub = -1;
++    uint32_t last = f.glyph_count - 1;
++    CHECK_ERR(resolve_with_fallback(&c, 1, &f, last, FAKE_A, RASTER_GRAY, &e, &sub), ERR_NONE, "last glyph resolves");
++    CHECK_EQ(sub, 0, "the last glyph is not a substitute");
++    CHECK_ERR(resolve_with_fallback(&c, 1, &f, f.glyph_count, FAKE_A, RASTER_GRAY, &e, &sub), ERR_NONE,
++              "the glyph after it resolves to the fallback");
++    CHECK_EQ(sub, 1, "the glyph after the last is a substitute");
++    CHECK_EQ(cache_snapshot(&c).missing_glyphs, 1, "exactly one missing glyph");
++    cache_deinit(&c);
++}
++
+ int main(void) {
+     t_white_block();
+     t_hit_miss();
+@@ -863,6 +1370,27 @@
+     t_gather();
+     t_gather_stride();
+     t_flush_gpu_independent();
++    t_mode_default();
++    t_mode_keys();
++    t_mode_collision();
++    t_allocated_bytes();
++    t_alloc_init();
++    t_alloc_growth();
++    t_resolve_repeat();
++    t_resolve_empty();
++    t_resolve_size_id();
++    t_resolve_atlas_full();
++    t_resolve_out_of_range();
++    t_resolve_alloc_fail();
++    t_resolve_unsupported();
++    t_mode_hits_misses();
++    t_fallback_missing();
++    t_fallback_in_range();
++    t_fallback_both_missing();
++    t_fallback_unsupported();
++    t_consistency();
++    t_glyph_zero();
++    t_glyph_boundary();
+     printf("\n%d checks, %d failures\n", checks, failures);
+     if (failures != 0) {
+         printf("FAILED\n");
+diff -ruN -x '*.zip' orig/bairava/checks/glyph_cache_parity.py bairava/checks/glyph_cache_parity.py
+--- /dev/null
++++ b/checks/glyph_cache_parity.py	2026-11-17 12:19:06.711528815 +0000
+@@ -0,0 +1,89 @@
++#!/usr/bin/env python3
++"""Regenerates checks/glyph_cache_parity.txt by matching each Zig test name to a mirror check name.
++
++Run from the repository root:  python3 checks/glyph_cache_parity.py
++A Zig test counts as mirrored when a `begin("...")` block in checks/glyph_cache_mirror.c has the same name.
++Names that differ only by spelling are listed in ALIAS. Zig tests that cannot be mirrored are listed in ZIG_ONLY
++with the reason. Re-run this after changing either side, and commit the regenerated file with the change.
++"""
++import re
++import sys
++
++ZIG_FILES = {
++    "src/engine/text/glyph_cache.zig": "glyph_cache.zig",
++    "src/engine/text/glyph_cache_font_test.zig": "glyph_cache_font_test.zig",
++    "src/engine/renderer/glyph_atlas.zig": "glyph_atlas.zig",
++}
++MIRROR = "checks/glyph_cache_mirror.c"
++OUT = "checks/glyph_cache_parity.txt"
++
++# Zig spells regionCoverage in camelCase; the mirror spells the same test "region coverage".
++ALIAS = {
++    "glyph rows are copied to the region the cache reports, and regionCoverage keeps the page stride":
++        "glyph rows are copied to the region the cache reports, and region coverage keeps the page stride",
++}
++ZIG_ONLY = {
++    "the first glyphs of the shipped font enter one cache page, and each region holds its rasterized coverage":
++        "reads the shipped font through HarfBuzz and rasterizes it with stb; the mirror has no font",
++    "a glyph the cache has not seen before is rasterized and stored on demand":
++        "rasterizes the shipped font with stb; the mirror has no font",
++    "the atlas and its flush compile against the backend":
++        "a compile check of the Zig renderer; the mirror cannot compile Zig",
++}
++
++
++def main():
++    zig = []
++    for path, short in ZIG_FILES.items():
++        with open(path, encoding="utf-8") as f:
++            for name in re.findall(r'^test "(.*)" \{', f.read(), re.M):
++                zig.append((short, name))
++    with open(MIRROR, encoding="utf-8") as f:
++        mirror_names = re.findall(r'begin\("(.*)"\);', f.read())
++    mirror_set = set(mirror_names)
++
++    rows = []
++    for short, name in zig:
++        mapped = ALIAS.get(name, name)
++        if mapped in mirror_set:
++            rows.append((short, name, True, mapped if mapped != name else None))
++        else:
++            rows.append((short, name, False, ZIG_ONLY.get(name, "not mapped")))
++
++    zig_mapped = {ALIAS.get(n, n) for _, n in zig}
++    mirror_only = [n for n in mirror_names if n not in zig_mapped]
++    mirrored = sum(1 for r in rows if r[2])
++    unmapped = [r for r in rows if not r[2] and r[3] == "not mapped"]
++
++    out = [
++        "Parity map: Zig tests to mirror checks (checks/glyph_cache_mirror.c)",
++        "Regenerate with: python3 checks/glyph_cache_parity.py",
++        "",
++        "What parity means here. The mirror re-implements the cache, the resolver, and the fallback in C, and runs them",
++        "against a synthetic glyph source (fake_metrics, fake_coverage). It checks the logic: keys, counters, allocation",
++        "failures, the upload rectangle, and the fallback. It does NOT check values from a real font, the GPU, or the",
++        "Zig compiler. A mirrored test passing shows the logic is the same as the Zig test's. The Zig test still has to",
++        "pass in Zig before it counts.",
++        "",
++        "Zig tests: %d. Mirrored (logic checked in C): %d. Zig only: %d." % (len(rows), mirrored, len(rows) - mirrored),
++        "Mirror blocks with no Zig test of the same name: %d." % len(mirror_only),
++        "",
++        "%-30s | %-6s | %s" % ("Zig file", "status", "Zig test"),
++        "-" * 130,
++    ]
++    for short, name, ok, note in rows:
++        out.append("%-30s | %-6s | %s" % (short, "mirror" if ok else "ZIG", name))
++        if not ok:
++            out.append("%-30s | %-6s |   reason: %s" % ("", "", note))
++        elif note:
++            out.append("%-30s | %-6s |   mirror check: %s" % ("", "", note))
++    out += ["", "Mirror blocks with no Zig counterpart by name:"]
++    out += ["  - " + n for n in mirror_only]
++    with open(OUT, "w", encoding="utf-8") as f:
++        f.write("\n".join(out) + "\n")
++    print("zig tests %d, mirrored %d, zig only %d, unmapped %d" % (len(rows), mirrored, len(rows) - mirrored, len(unmapped)))
++    return 1 if unmapped else 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff -ruN -x '*.zip' orig/bairava/checks/glyph_cache_parity.txt bairava/checks/glyph_cache_parity.txt
+--- /dev/null
++++ b/checks/glyph_cache_parity.txt	2026-11-17 12:23:35.403772530 +0000
+@@ -0,0 +1,66 @@
++Parity map: Zig tests to mirror checks (checks/glyph_cache_mirror.c)
++Regenerate with: python3 checks/glyph_cache_parity.py
++
++What parity means here. The mirror re-implements the cache, the resolver, and the fallback in C, and runs them
++against a synthetic glyph source (fake_metrics, fake_coverage). It checks the logic: keys, counters, allocation
++failures, the upload rectangle, and the fallback. It does NOT check values from a real font, the GPU, or the
++Zig compiler. A mirrored test passing shows the logic is the same as the Zig test's. The Zig test still has to
++pass in Zig before it counts.
++
++Zig tests: 45. Mirrored (logic checked in C): 42. Zig only: 3.
++Mirror blocks with no Zig test of the same name: 1.
++
++Zig file                       | status | Zig test
++----------------------------------------------------------------------------------------------------------------------------------
++glyph_cache.zig                | mirror | a new cache holds the white block at the origin of page 0 and queues it for upload
++glyph_cache.zig                | mirror | a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry
++glyph_cache.zig                | mirror | glyph rows are copied to the region the cache reports, and regionCoverage keeps the page stride
++                               |        |   mirror check: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride
++glyph_cache.zig                | mirror | glyphs with no ink take no page space and queue nothing
++glyph_cache.zig                | mirror | keys differ by font, glyph, and pixel height
++glyph_cache.zig                | mirror | a glyph that does not fit the shelf starts a new shelf below it
++glyph_cache.zig                | mirror | a full page sends the next glyph to the next page, and a full cache refuses it and counts it
++glyph_cache.zig                | mirror | a glyph wider than the page allows is refused and counted
++glyph_cache.zig                | mirror | a coverage buffer of the wrong length is refused and leaves the cache unchanged
++glyph_cache.zig                | mirror | removing a font forgets its glyphs and keeps the others
++glyph_cache.zig                | mirror | a removed entry does not hide the entries probed past it
++glyph_cache.zig                | mirror | the table grows as entries are added, and every entry is still found afterwards
++glyph_cache.zig                | mirror | more changed glyphs than the pending list holds mark their page for a full upload
++glyph_cache.zig                | mirror | clear empties the pages and marks every page for a full upload
++glyph_cache.zig                | mirror | markAllDirty queues every page and keeps the glyphs
++glyph_cache.zig                | mirror | missing codepoints are counted
++glyph_cache.zig                | mirror | invalid options are refused before anything is allocated
++glyph_cache.zig                | mirror | the pixel-height key is the float's bit pattern
++glyph_cache.zig                | mirror | keys differ by rasterization mode, so gray and mono coverage of one glyph are two entries
++glyph_cache.zig                | mirror | allocated bytes count the coverage pages and the lookup table
++glyph_cache.zig                | mirror | a failed allocation in init is reported, and init frees what it had already made
++glyph_cache.zig                | mirror | a lookup table that cannot grow refuses the insert and keeps the entries it has
++glyph_cache.zig                | mirror | a key without a mode is gray, and gray is the zero value, so a zeroed mode is gray
++glyph_cache.zig                | mirror | a gray and a mono key that share a probe chain stay apart
++glyph_cache_font_test.zig      | ZIG    | the first glyphs of the shipped font enter one cache page, and each region holds its rasterized coverage
++                               |        |   reason: reads the shipped font through HarfBuzz and rasterizes it with stb; the mirror has no font
++glyph_cache_font_test.zig      | ZIG    | a glyph the cache has not seen before is rasterized and stored on demand
++                               |        |   reason: rasterizes the shipped font with stb; the mirror has no font
++glyph_cache_font_test.zig      | mirror | a repeated request for a glyph finds it, and rasterizes it only once
++glyph_cache_font_test.zig      | mirror | a glyph with an advance and no ink keeps its advance and takes no page space
++glyph_cache_font_test.zig      | mirror | another size or another font id is a different entry and a separate rasterization
++glyph_cache_font_test.zig      | mirror | a glyph that does not fit the page is refused with AtlasFull, counted, and not stored
++glyph_cache_font_test.zig      | mirror | a glyph ID past the last glyph of the font is refused before anything is stored
++glyph_cache_font_test.zig      | mirror | a failed allocation while rasterizing stores nothing and counts no rasterization
++glyph_cache_font_test.zig      | mirror | an unsupported raster mode is refused before the cache is consulted
++glyph_cache_font_test.zig      | mirror | a mono entry of a glyph does not serve a gray request, and a gray entry does not serve mono
++glyph_cache_font_test.zig      | mirror | a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it
++glyph_cache_font_test.zig      | mirror | a glyph inside the font is drawn as itself, and is not counted as missing
++glyph_cache_font_test.zig      | mirror | a missing glyph whose fallback is also missing fails, counts the miss, and stores nothing
++glyph_cache_font_test.zig      | mirror | an unsupported mode is refused by the fallback path before any miss is counted
++glyph_cache_font_test.zig      | mirror | the resolved metrics match the font, and the cache entry and its pending upload agree with them
++glyph_cache_font_test.zig      | mirror | glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing
++glyph_cache_font_test.zig      | mirror | the last glyph is valid, and the glyph after it is missing, at the font's glyph count
++glyph_atlas.zig                | mirror | a page's changed regions are gathered once, and an unchanged page gathers nothing
++glyph_atlas.zig                | mirror | a glyph's region is gathered with the page stride, and a whole-page upload is one region
++glyph_atlas.zig                | mirror | the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D
++glyph_atlas.zig                | ZIG    | the atlas and its flush compile against the backend
++                               |        |   reason: a compile check of the Zig renderer; the mirror cannot compile Zig
++
++Mirror blocks with no Zig counterpart by name:
++  - the GPU step records the same regions whichever renderer is active (flush model)
+diff -ruN -x '*.zip' orig/bairava/src/engine/text/glyph_cache.zig bairava/src/engine/text/glyph_cache.zig
+--- a/src/engine/text/glyph_cache.zig	2026-11-17 12:02:21.537645647 +0000
++++ b/src/engine/text/glyph_cache.zig	2026-11-17 12:17:56.376562077 +0000
+@@ -50,12 +50,18 @@
+     page_count: u32 = default_page_count,
+ };
+ 
++/// How a glyph's coverage was rasterized. The same glyph at the same size has a different bitmap in each mode, so each
++/// mode is a different key. The runtime path makes gray only. `mono` is listed so that a hinted rasterizer can add its
++/// glyphs without sharing keys with gray ones; nothing produces it yet.
++pub const RasterMode = enum(u8) { gray = 0, mono = 1 };
++
+ /// Identifies one rasterized glyph. `font` is chosen by the caller and must differ between live fonts. `size_bits` is
+-/// the pixel height's bit pattern, so two heights that differ at all are different keys.
++/// the pixel height's bit pattern, so two heights that differ at all are different keys. `mode` defaults to gray.
+ pub const GlyphKey = struct {
+     font: u32,
+     glyph: u32,
+     size_bits: u32,
++    mode: RasterMode = .gray,
+ };
+ 
+ pub fn sizeBits(pixel_height: f32) u32 {
+@@ -94,8 +100,12 @@
+     hits: u64 = 0,
+     /// Lookups that did not. Each is normally followed by one insert.
+     misses: u64 = 0,
+-    /// Glyphs that took space in a page.
++    /// Glyphs stored, with or without page space. `empty_glyphs` counts the ones without.
+     inserts: u64 = 0,
++    /// Glyphs rasterized on a miss. Counted by glyph_resolver.resolve, including a glyph whose insert was then refused.
++    rasterized: u64 = 0,
++    /// Requests for a glyph past the font's last glyph. Counted by glyph_resolver.resolveWithFallback, once per request.
++    missing_glyphs: u64 = 0,
+     /// Glyphs with no ink, stored with no page space.
+     empty_glyphs: u64 = 0,
+     /// Inserts refused because every page was full.
+@@ -112,6 +122,8 @@
+     pages_in_use: u32 = 0,
+     /// Glyphs currently found by lookup. Computed by snapshot.
+     entries: u32 = 0,
++    /// CPU bytes held by the coverage pages and the lookup table. GPU page memory is not counted here. Computed by snapshot.
++    allocated_bytes: u64 = 0,
+ };
+ 
+ const SlotState = enum(u8) { empty, used, tombstone };
+@@ -297,6 +309,16 @@
+         self.stats.missing_codepoints += 1;
+     }
+ 
++    /// Counts one request for a glyph the font does not have. The resolver calls it before it uses the fallback.
++    pub fn noteMissingGlyph(self: *Cache) void {
++        self.stats.missing_glyphs += 1;
++    }
++
++    /// Counts one glyph rasterized on a miss. The resolver calls it right after the rasterizer succeeds.
++    pub fn noteRasterized(self: *Cache) void {
++        self.stats.rasterized += 1;
++    }
++
+     /// The counters, with the computed fields filled in.
+     pub fn snapshot(self: *const Cache) Stats {
+         var result = self.stats;
+@@ -306,6 +328,8 @@
+             if (page.used) in_use += 1;
+         }
+         result.pages_in_use = in_use;
++        const texels = @as(u64, self.page_size) * @as(u64, self.page_size);
++        result.allocated_bytes = texels * @as(u64, self.pages.len) + @as(u64, self.slots.len) * @sizeOf(Slot);
+         return result;
+     }
+ 
+@@ -458,11 +482,12 @@
+     var h = mix(key.font);
+     h = mix(h ^ key.glyph);
+     h = mix(h ^ key.size_bits);
++    h = mix(h ^ @as(u32, @intFromEnum(key.mode)));
+     return h;
+ }
+ 
+ fn sameKey(a: GlyphKey, b: GlyphKey) bool {
+-    return a.font == b.font and a.glyph == b.glyph and a.size_bits == b.size_bits;
++    return a.font == b.font and a.glyph == b.glyph and a.size_bits == b.size_bits and a.mode == b.mode;
+ }
+ 
+ // ---- tests -----------------------------------------------------------------
+@@ -732,3 +757,85 @@
+     try testing.expectEqual(@as(u32, @bitCast(@as(f32, 16.0))), sizeBits(16.0));
+     try testing.expect(sizeBits(16.0) != sizeBits(16.5));
+ }
++
++test "keys differ by rasterization mode, so gray and mono coverage of one glyph are two entries" {
++    var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 1 });
++    defer cache.deinit();
++    const gray = GlyphKey{ .font = 1, .glyph = 5, .size_bits = sizeBits(16) };
++    var mono = gray;
++    mono.mode = .mono;
++
++    _ = try cache.insert(gray, testMetrics(2, 2), &[_]u8{ 1, 2, 3, 4 });
++    try testing.expect(cache.lookup(mono) == null);
++    _ = try cache.insert(mono, testMetrics(2, 2), &[_]u8{ 5, 6, 7, 8 });
++
++    try testing.expectEqual(@as(u32, 2), cache.snapshot().entries);
++    const gray_entry = cache.lookup(gray) orelse return error.TestUnexpectedResult;
++    const mono_entry = cache.lookup(mono) orelse return error.TestUnexpectedResult;
++    try testing.expectEqual(@as(u8, 1), cache.regionCoverage(gray_entry.region)[0]);
++    try testing.expectEqual(@as(u8, 5), cache.regionCoverage(mono_entry.region)[0]);
++}
++
++test "allocated bytes count the coverage pages and the lookup table" {
++    var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 2 });
++    defer cache.deinit();
++    const expected: u64 = 2 * 32 * 32 + initial_slots * @sizeOf(Slot);
++    try testing.expectEqual(expected, cache.snapshot().allocated_bytes);
++}
++
++test "a failed allocation in init is reported, and init frees what it had already made" {
++    // With one page, init makes three allocations: the page list, the page's bytes, and the lookup table. Failing any
++    // one of them must return OutOfMemory. testing.allocator fails the test if the earlier ones are left allocated.
++    var fail_at: usize = 0;
++    while (fail_at < 3) : (fail_at += 1) {
++        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_at });
++        try testing.expectError(error.OutOfMemory, Cache.init(failing.allocator(), .{ .page_size = 32, .page_count = 1 }));
++    }
++}
++
++test "a lookup table that cannot grow refuses the insert and keeps the entries it has" {
++    // The fourth allocation with one page is the first growth of the lookup table. Growth starts when one more entry
++    // would pass three quarters full, so the first `room` entries fit and the next insert needs the allocation.
++    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 3 });
++    var cache = try Cache.init(failing.allocator(), .{ .page_size = 1024, .page_count = 1 });
++    defer cache.deinit();
++
++    const room: u32 = initial_slots * 3 / 4;
++    var glyph: u32 = 1;
++    while (glyph <= room) : (glyph += 1) _ = try cache.insert(keyOf(1, glyph), testMetrics(1, 1), &.{7});
++    try testing.expectError(error.OutOfMemory, cache.insert(keyOf(1, room + 1), testMetrics(1, 1), &.{7}));
++
++    try testing.expectEqual(room, cache.snapshot().entries);
++    try testing.expectEqual(@as(u64, 0), cache.snapshot().rehashes);
++    try testing.expect(cache.lookup(keyOf(1, room)) != null);
++    try testing.expect(cache.lookup(keyOf(1, room + 1)) == null);
++}
++
++test "a key without a mode is gray, and gray is the zero value, so a zeroed mode is gray" {
++    const key = GlyphKey{ .font = 1, .glyph = 1, .size_bits = sizeBits(16) };
++    try testing.expectEqual(RasterMode.gray, key.mode);
++    try testing.expectEqual(@as(u8, 0), @intFromEnum(RasterMode.gray));
++}
++
++test "a gray and a mono key that share a probe chain stay apart" {
++    var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 1 });
++    defer cache.deinit();
++    const mask = cache.slots.len - 1;
++    var gray = GlyphKey{ .font = 1, .glyph = 1, .size_bits = sizeBits(16) };
++    var mono = gray;
++    mono.mode = .mono;
++
++    // Hashing includes the mode, so the two keys usually start in different buckets. Search for a glyph whose gray
++    // and mono keys share a bucket. Only then does an equality check that ignores the mode show up.
++    var glyph: u32 = 1;
++    while (glyph < 100000) : (glyph += 1) {
++        gray.glyph = glyph;
++        mono.glyph = glyph;
++        if ((hashKey(gray) & mask) == (hashKey(mono) & mask)) break;
++    }
++    try testing.expect(glyph < 100000);
++
++    _ = try cache.insert(gray, testMetrics(2, 2), &[_]u8{ 1, 2, 3, 4 });
++    try testing.expect(cache.lookup(mono) == null);
++    try testing.expect(cache.lookup(gray) != null);
++}
+diff -ruN -x '*.zip' orig/bairava/src/engine/text/glyph_cache_font_test.zig bairava/src/engine/text/glyph_cache_font_test.zig
+--- a/src/engine/text/glyph_cache_font_test.zig	2026-11-17 12:02:21.537661400 +0000
++++ b/src/engine/text/glyph_cache_font_test.zig	2026-11-17 12:23:19.767998568 +0000
+@@ -7,6 +7,7 @@
+ const std = @import("std");
+ const glyph_cache = @import("glyph_cache.zig");
+ const runtime_font = @import("runtime_font.zig");
++const resolver = @import("glyph_resolver.zig");
+ 
+ const hb = @cImport({
+     @cInclude("hb.h");
+@@ -111,3 +112,334 @@
+     try testing.expectEqual(@as(u64, 1), stats.misses);
+     try testing.expectEqual(@as(u64, 1), stats.hits);
+ }
++
++test "a repeated request for a glyph finds it, and rasterizes it only once" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    // Glyph 36 is 'A' in the shipped font, as checks/hb_linux_smoke.c measured.
++    const first = try resolver.resolve(&cache, 1, &font, 36, .gray);
++    const second = try resolver.resolve(&cache, 1, &font, 36, .gray);
++    try testing.expectEqual(first.region.x, second.region.x);
++    try testing.expectEqual(first.region.y, second.region.y);
++    try testing.expectEqual(first.metrics.advance, second.metrics.advance);
++
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 1), stats.rasterized);
++    try testing.expectEqual(@as(u64, 1), stats.misses);
++    try testing.expectEqual(@as(u64, 1), stats.hits);
++    try testing.expectEqual(@as(u64, 1), stats.inserts);
++}
++
++test "a glyph with an advance and no ink keeps its advance and takes no page space" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    // The first glyph with an advance and no ink is a space in the shipped font.
++    var space: u32 = 0;
++    while (space < font.glyph_count) : (space += 1) {
++        const m = try font.glyphMetrics(space);
++        if (m.width == 0 and m.advance > 0) break;
++    }
++    try testing.expect(space < font.glyph_count);
++
++    const pending_before = cache.pendingRegions().len;
++    const entry = try resolver.resolve(&cache, 1, &font, space, .gray);
++    try testing.expectEqual(@as(u32, 0), entry.region.w);
++    try testing.expectEqual(@as(u32, 0), entry.region.h);
++    try testing.expectEqual((try font.glyphMetrics(space)).advance, entry.metrics.advance);
++    // No texel changed, so nothing is queued for upload.
++    try testing.expectEqual(pending_before, cache.pendingRegions().len);
++    try testing.expectEqual(@as(u64, 1), cache.snapshot().empty_glyphs);
++}
++
++test "another size or another font id is a different entry and a separate rasterization" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font16 = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font16.deinit();
++    var font24 = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 24);
++    defer font24.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    _ = try resolver.resolve(&cache, 1, &font16, 36, .gray);
++    _ = try resolver.resolve(&cache, 1, &font24, 36, .gray); // same id, other size
++    _ = try resolver.resolve(&cache, 2, &font16, 36, .gray); // other id, same size
++
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 3), stats.rasterized);
++    try testing.expectEqual(@as(u32, 3), stats.entries);
++}
++
++test "a glyph that does not fit the page is refused with AtlasFull, counted, and not stored" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    // The white block uses the first 3 texels of the first shelf. 'A' is 11 by 11 plus one texel of padding, which
++    // fits neither the rest of that shelf nor a second shelf in a page 12 texels wide.
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{ .page_size = 12, .page_count = 1 });
++    defer cache.deinit();
++
++    try testing.expectError(error.AtlasFull, resolver.resolve(&cache, 1, &font, 36, .gray));
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 1), stats.rasterized);
++    try testing.expectEqual(@as(u64, 1), stats.cache_full);
++    try testing.expectEqual(@as(u32, 0), stats.entries);
++    try testing.expect(cache.lookup(.{ .font = 1, .glyph = 36, .size_bits = glyph_cache.sizeBits(16) }) == null);
++}
++
++test "a glyph ID past the last glyph of the font is refused before anything is stored" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    try testing.expectError(error.GlyphOutOfRange, resolver.resolve(&cache, 1, &font, font.glyph_count, .gray));
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 0), stats.rasterized);
++    try testing.expectEqual(@as(u32, 0), stats.entries);
++}
++
++test "a failed allocation while rasterizing stores nothing and counts no rasterization" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    // With one page, the cache's init makes three allocations. The fourth is the rasterizer's coverage buffer.
++    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 3 });
++    var cache = try glyph_cache.Cache.init(failing.allocator(), .{ .page_count = 1 });
++    defer cache.deinit();
++
++    try testing.expectError(error.OutOfMemory, resolver.resolve(&cache, 1, &font, 36, .gray));
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 0), stats.rasterized);
++    try testing.expectEqual(@as(u32, 0), stats.entries);
++}
++
++test "an unsupported raster mode is refused before the cache is consulted" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    try testing.expectError(error.UnsupportedRasterMode, resolver.resolve(&cache, 1, &font, 36, .mono));
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 0), stats.hits);
++    try testing.expectEqual(@as(u64, 0), stats.misses);
++    try testing.expectEqual(@as(u64, 0), stats.rasterized);
++    try testing.expectEqual(@as(u32, 0), stats.entries);
++}
++
++test "a mono entry of a glyph does not serve a gray request, and a gray entry does not serve mono" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    // No mono rasterizer exists yet, so the mono entry is inserted by hand. It stands in for what one would store.
++    const gray = try resolver.resolve(&cache, 1, &font, 36, .gray);
++    const mono_key = glyph_cache.GlyphKey{ .font = 1, .glyph = 36, .size_bits = glyph_cache.sizeBits(16), .mode = .mono };
++    try testing.expect(cache.lookup(mono_key) == null);
++    const bitmap = try font.rasterize(testing.allocator, 36);
++    defer bitmap.deinit(testing.allocator);
++    const mono_metrics = glyph_cache.Metrics{
++        .advance = bitmap.metrics.advance,
++        .xoff = bitmap.metrics.xoff,
++        .yoff = bitmap.metrics.yoff,
++        .width = bitmap.metrics.width,
++        .height = bitmap.metrics.height,
++    };
++    _ = try cache.insert(mono_key, mono_metrics, bitmap.coverage);
++
++    const mono = cache.lookup(mono_key) orelse return error.TestUnexpectedResult;
++    try testing.expect(mono.region.x != gray.region.x or mono.region.y != gray.region.y);
++    const gray_again = try resolver.resolve(&cache, 1, &font, 36, .gray);
++    try testing.expectEqual(gray.region.x, gray_again.region.x);
++    try testing.expectEqual(gray.region.y, gray_again.region.y);
++
++    // Misses: the first gray request and the first mono lookup. Hits: the mono lookup and the second gray request.
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 2), stats.misses);
++    try testing.expectEqual(@as(u64, 2), stats.hits);
++    try testing.expectEqual(@as(u64, 1), stats.rasterized);
++    try testing.expectEqual(@as(u32, 2), stats.entries);
++}
++
++test "a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    const result = try resolver.resolveWithFallback(&cache, 1, &font, font.glyph_count, 36, .gray);
++    try testing.expect(result.substituted);
++    const direct = try resolver.resolve(&cache, 1, &font, 36, .gray);
++    try testing.expectEqual(direct.region.x, result.entry.region.x);
++    try testing.expectEqual(direct.region.y, result.entry.region.y);
++    try testing.expectEqual(direct.metrics.advance, result.entry.metrics.advance);
++
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 1), stats.missing_glyphs);
++    try testing.expectEqual(@as(u64, 1), stats.rasterized);
++    try testing.expectEqual(@as(u32, 1), stats.entries);
++}
++
++test "a glyph inside the font is drawn as itself, and is not counted as missing" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    // The fallback is glyph 0 here, which must not be used, since glyph 36 exists.
++    const result = try resolver.resolveWithFallback(&cache, 1, &font, 36, 0, .gray);
++    try testing.expect(!result.substituted);
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 0), stats.missing_glyphs);
++    try testing.expectEqual(@as(u64, 1), stats.rasterized);
++    try testing.expectEqual(@as(u32, 1), stats.entries);
++}
++
++test "a missing glyph whose fallback is also missing fails, counts the miss, and stores nothing" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    try testing.expectError(
++        error.GlyphOutOfRange,
++        resolver.resolveWithFallback(&cache, 1, &font, font.glyph_count, font.glyph_count, .gray),
++    );
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 1), stats.missing_glyphs);
++    try testing.expectEqual(@as(u64, 0), stats.rasterized);
++    try testing.expectEqual(@as(u32, 0), stats.entries);
++}
++
++test "an unsupported mode is refused by the fallback path before any miss is counted" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    try testing.expectError(
++        error.UnsupportedRasterMode,
++        resolver.resolveWithFallback(&cache, 1, &font, font.glyph_count, 36, .mono),
++    );
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 0), stats.missing_glyphs);
++    try testing.expectEqual(@as(u64, 0), stats.misses);
++    try testing.expectEqual(@as(u64, 0), stats.rasterized);
++}
++
++test "the resolved metrics match the font, and the cache entry and its pending upload agree with them" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    const entry = try resolver.resolve(&cache, 1, &font, 36, .gray);
++    const m = try font.glyphMetrics(36);
++    try testing.expectEqual(m.advance, entry.metrics.advance);
++    try testing.expectEqual(m.xoff, entry.metrics.xoff);
++    try testing.expectEqual(m.yoff, entry.metrics.yoff);
++    try testing.expectEqual(m.width, entry.metrics.width);
++    try testing.expectEqual(m.height, entry.metrics.height);
++    // The region is exactly the glyph's ink rectangle.
++    try testing.expectEqual(m.width, entry.region.w);
++    try testing.expectEqual(m.height, entry.region.h);
++
++    // A later lookup with the same key finds the same region.
++    const key = glyph_cache.GlyphKey{ .font = 1, .glyph = 36, .size_bits = glyph_cache.sizeBits(16) };
++    const found = cache.lookup(key) orelse return error.TestUnexpectedResult;
++    try testing.expectEqual(entry.region.page, found.region.page);
++    try testing.expectEqual(entry.region.x, found.region.x);
++    try testing.expectEqual(entry.region.y, found.region.y);
++
++    // The next flush uploads that same rectangle.
++    var queued = false;
++    for (cache.pendingRegions()) |r| {
++        if (r.page == entry.region.page and r.x == entry.region.x and r.y == entry.region.y and
++            r.w == entry.region.w and r.h == entry.region.h) queued = true;
++    }
++    try testing.expect(queued);
++
++    // The stored texels are the rasterized coverage, row by row.
++    const bitmap = try font.rasterize(testing.allocator, 36);
++    defer bitmap.deinit(testing.allocator);
++    const view = cache.regionCoverage(entry.region);
++    var row: u32 = 0;
++    while (row < entry.region.h) : (row += 1) {
++        var col: u32 = 0;
++        while (col < entry.region.w) : (col += 1) {
++            const stored = view[@as(usize, row) * @as(usize, cache.page_size) + @as(usize, col)];
++            const original = bitmap.coverage[@as(usize, row) * @as(usize, entry.region.w) + @as(usize, col)];
++            try testing.expectEqual(original, stored);
++        }
++    }
++}
++
++test "glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    // Glyph 0 is .notdef. It is a real glyph, so it is not missing, whatever its outline looks like.
++    const result = try resolver.resolveWithFallback(&cache, 1, &font, 0, 36, .gray);
++    try testing.expect(!result.substituted);
++    const m = try font.glyphMetrics(0);
++    try testing.expectEqual(m.advance, result.entry.metrics.advance);
++
++    // A second request is a hit. Zero gets no special treatment in the cache.
++    _ = try resolver.resolve(&cache, 1, &font, 0, .gray);
++    const stats = cache.snapshot();
++    try testing.expectEqual(@as(u64, 0), stats.missing_glyphs);
++    try testing.expectEqual(@as(u64, 1), stats.rasterized);
++    try testing.expectEqual(@as(u64, 1), stats.misses);
++    try testing.expectEqual(@as(u64, 1), stats.hits);
++}
++
++test "the last glyph is valid, and the glyph after it is missing, at the font's glyph count" {
++    const bytes = try readShippedFont(testing.allocator);
++    defer testing.allocator.free(bytes);
++    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
++    defer font.deinit();
++    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
++    defer cache.deinit();
++
++    // A glyph is missing when its ID is at least the font's glyph count. The count is 4652, so 4651 is the last valid ID.
++    const last = font.glyph_count - 1;
++    const valid = try resolver.resolveWithFallback(&cache, 1, &font, last, 36, .gray);
++    try testing.expect(!valid.substituted);
++    const past = try resolver.resolveWithFallback(&cache, 1, &font, font.glyph_count, 36, .gray);
++    try testing.expect(past.substituted);
++    try testing.expectEqual(@as(u64, 1), cache.snapshot().missing_glyphs);
++}
+diff -ruN -x '*.zip' orig/bairava/src/engine/text/glyph_resolver.zig bairava/src/engine/text/glyph_resolver.zig
+--- /dev/null
++++ b/src/engine/text/glyph_resolver.zig	2026-11-17 12:23:19.768549443 +0000
+@@ -0,0 +1,95 @@
++//! Resolves glyphs of a runtime outline font to their regions in a glyph cache. This is the on-demand path of Phase 4 of
++//! the text and font system migration plan: a lookup that hits returns the stored entry, and a miss rasterizes the glyph
++//! once and stores it. Source comments in glyph_cache.zig and glyph_atlas.zig call this "Phase 3 of the rendering
++//! migration plan". That label is legacy. The text plan's numbering is authoritative.
++//!
++//! Callers pass glyph IDs, the ones HarfBuzz returns after shaping. Nothing here maps codepoints.
++//!
++//! The functions are CPU-only. The renderer's atlas (renderer/glyph_atlas.zig) owns the cache, and its next flush
++//! uploads any region these calls changed. Callers must flush before a draw samples the region.
++
++const glyph_cache = @import("glyph_cache.zig");
++const runtime_font = @import("runtime_font.zig");
++
++pub const Error = runtime_font.Error || glyph_cache.Error || error{UnsupportedRasterMode};
++
++/// What `resolveWithFallback` drew: the entry, and whether it stands in for a glyph the font does not have.
++pub const Resolved = struct {
++    entry: glyph_cache.Entry,
++    substituted: bool,
++};
++
++/// Whether this path can produce a mode. The runtime rasterizer makes gray coverage only. Any other mode fails with
++/// UnsupportedRasterMode, so gray glyphs are never stored under a mono key.
++pub fn supports(mode: glyph_cache.RasterMode) bool {
++    return switch (mode) {
++        .gray => true,
++        .mono => false,
++    };
++}
++
++/// Returns the cache entry for `glyph_id` of `font` in `mode`.
++///
++/// `font_id` names `font` inside the cache. Two live fonts must not share an id, and a font's glyphs are forgotten by
++/// `cache.removeFont(font_id)`. The key also carries the font's pixel height and the mode, so one font at two sizes
++/// holds two entries.
++///
++/// An unsupported mode is refused before the cache is consulted, so it counts nothing. A hit rasterizes nothing and
++/// counts a hit. A miss counts a miss, rasterizes the glyph, counts one rasterization, and stores the coverage. An
++/// out-of-range glyph fails in the rasterizer before a rasterization is counted, so nothing is stored. A glyph whose
++/// insert is refused (AtlasFull, for instance) still counts its rasterization. The caller then draws its fallback, so
++/// no glyph is dropped silently.
++pub fn resolve(
++    cache: *glyph_cache.Cache,
++    font_id: u32,
++    font: *const runtime_font.RuntimeFont,
++    glyph_id: u32,
++    mode: glyph_cache.RasterMode,
++) Error!glyph_cache.Entry {
++    if (!supports(mode)) return error.UnsupportedRasterMode;
++    const key = glyph_cache.GlyphKey{
++        .font = font_id,
++        .glyph = glyph_id,
++        .size_bits = glyph_cache.sizeBits(font.pixel_height),
++        .mode = mode,
++    };
++    if (cache.lookup(key)) |entry| return entry;
++
++    const bitmap = try font.rasterize(cache.allocator, glyph_id);
++    defer bitmap.deinit(cache.allocator);
++    cache.noteRasterized();
++    return cache.insert(key, metricsOf(bitmap.metrics), bitmap.coverage);
++}
++
++/// Resolves `glyph_id`, or `fallback_glyph_id` when the font does not have `glyph_id`. A glyph is missing when its ID is
++/// past the font's last glyph. Glyph 0 is a real glyph in TrueType (.notdef), so it is not treated as missing here.
++///
++/// The caller passes the fallback glyph ID. This function does not choose a fallback: mapping `?` through the character
++/// map, and what to draw when no fallback exists, are deferred to Phase 7. Each request for a missing glyph counts once
++/// in `missing_glyphs`, whether or not the fallback then resolves. The missing glyph itself is never stored. An
++/// unsupported mode is refused first, so it counts nothing.
++pub fn resolveWithFallback(
++    cache: *glyph_cache.Cache,
++    font_id: u32,
++    font: *const runtime_font.RuntimeFont,
++    glyph_id: u32,
++    fallback_glyph_id: u32,
++    mode: glyph_cache.RasterMode,
++) Error!Resolved {
++    if (!supports(mode)) return error.UnsupportedRasterMode;
++    if (glyph_id < font.glyph_count) {
++        return .{ .entry = try resolve(cache, font_id, font, glyph_id, mode), .substituted = false };
++    }
++    cache.noteMissingGlyph();
++    return .{ .entry = try resolve(cache, font_id, font, fallback_glyph_id, mode), .substituted = true };
++}
++
++fn metricsOf(m: runtime_font.GlyphMetrics) glyph_cache.Metrics {
++    return .{
++        .advance = m.advance,
++        .xoff = m.xoff,
++        .yoff = m.yoff,
++        .width = m.width,
++        .height = m.height,
++    };
++}

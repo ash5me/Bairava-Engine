@@ -415,22 +415,22 @@ A CPU-only shaping service and reusable runtime outline-font face. No glyph atla
 
 ### Needs — must implement
 
-- [ ] Implement a rasterizer interface that consumes a font face and glyph ID and returns a coverage bitmap plus bitmap bounds/bearing information.
-- [ ] Implement the initial `stb_truetype` rasterizer for the approved TrueType outline subset. Add runtime FreeType only if Phase 0 selected it for broader format support.
-- [ ] Do not rasterize by Unicode codepoint after shaping; rasterize the glyph IDs returned by the shaper.
-- [ ] Treat spaces and other empty glyph images correctly: they keep their advances but do not consume atlas rectangles.
-- [ ] Define the glyph-cache key using font identity, glyph ID, pixel size, and rasterization settings.
-- [ ] Add atlas pages with packing padding, page-full behavior, growth limits, and clear allocation failure behavior.
-- [ ] Add a GPU upload/update path for atlas pages. The current texture API creates sampled textures but does not provide a dynamic glyph-region update contract.
-- [ ] Ensure uploads occur on the renderer-permitted thread and before a draw samples the changed region.
-- [ ] Ensure a queued SpriteBatch run cannot outlive or refer to a replaced atlas page. Retire pages only after the relevant GPU work is safe.
-- [ ] Define an initial eviction policy. It is acceptable to use bounded page growth first, provided memory limits and failure behavior are explicit; eviction can be a later enhancement.
-- [ ] Preserve the existing static `.bfnt` provider. It should not need to use the dynamic atlas.
-- [ ] Add cache hit/miss, rasterization count, page count, and allocated-byte counters.
+- [x] Implement a rasterizer interface that consumes a font face and glyph ID and returns a coverage bitmap plus bitmap bounds/bearing information.
+- [x] Implement the initial `stb_truetype` rasterizer for the approved TrueType outline subset. Add runtime FreeType only if Phase 0 selected it for broader format support.
+- [x] Do not rasterize by Unicode codepoint after shaping; rasterize the glyph IDs returned by the shaper.
+- [x] Treat spaces and other empty glyph images correctly: they keep their advances but do not consume atlas rectangles.
+- [x] Define the glyph-cache key using font identity, glyph ID, pixel size, and rasterization settings.
+- [x] Add atlas pages with packing padding, page-full behavior, growth limits, and clear allocation failure behavior.
+- [~] Add a GPU upload/update path for atlas pages. The current texture API creates sampled textures but does not provide a dynamic glyph-region update contract.
+- [~] Ensure uploads occur on the renderer-permitted thread and before a draw samples the changed region.
+- [~] Ensure a queued SpriteBatch run cannot outlive or refer to a replaced atlas page. Retire pages only after the relevant GPU work is safe.
+- [x] Define an initial eviction policy. It is acceptable to use bounded page growth first, provided memory limits and failure behavior are explicit; eviction can be a later enhancement.
+- [x] Preserve the existing static `.bfnt` provider. It should not need to use the dynamic atlas.
+- [x] Add cache hit/miss, rasterization count, page count, and allocated-byte counters.
 
 ### Wants — useful but not blocking
 
-- [ ] Batch multiple glyph misses and upload them together instead of issuing one GPU upload per glyph.
+- [x] Batch multiple glyph misses and upload them together instead of issuing one GPU upload per glyph.
 - [ ] Add a warm-up/preload API for known dialogue/UI strings.
 - [ ] Add LRU or another measured eviction policy after a stable page-growth implementation exists.
 
@@ -440,12 +440,43 @@ A runtime outline font can request an unseen glyph, rasterize it once, upload it
 
 ### Exit gate — Phase 4 is complete only when
 
-- [ ] Repeated requests for the same font/glyph/size produce cache hits and do not rasterize again.
-- [ ] Cache keys distinguish different fonts, sizes, and rasterization modes.
-- [ ] Atlas-full, allocation-failure, and resource-destruction tests pass.
+- [x] Repeated requests for the same font/glyph/size produce cache hits and do not rasterize again.
+- [x] Cache keys distinguish different fonts, sizes, and rasterization modes.
+- [x] Atlas-full, allocation-failure, and resource-destruction tests pass.
 - [ ] GPU upload/update synchronization is validated under GPU debugging.
-- [ ] Both renderer modes have defined and tested coverage-font behavior.
-- [ ] No queued draw can sample a destroyed or repurposed atlas page.
+- [~] Both renderer modes have defined and tested coverage-font behavior.
+- [~] No queued draw can sample a destroyed or repurposed atlas page.
+
+### Status (2026-11-17): resolver, modes, fallback, decisions, and mirror parity
+
+**Legend:** `[x]` means the code exists and a CPU test covers it. `[~]` means the code exists, but it is verified only by reading, or it needs a GPU or window run. `[ ]` means not done. The numbering in this plan is authoritative. The source comments that say "Phase 3" are legacy.
+
+**Caveat.** The sandbox has no Zig toolchain, no vendored HarfBuzz, and no network. The Zig changes were desk-checked but not compiled, so the owner must run `zig build test`. The C mirror (`checks/glyph_cache_mirror.c`) models the resolver, the raster modes, and the fallback. It runs 2159 checks with 0 failures. The original 1828 still pass unchanged, and 19 planted mutants are caught. Its parity with the Zig code is at the level of logic, against a synthetic glyph source. Of 45 Zig tests in the cache, font-test, and atlas files, 42 have a mirror check of the same logic (`checks/glyph_cache_parity.txt`). Parity is not claimed for real-font values, for the GPU, or for Zig compilation.
+
+**Decisions accepted (2026-11-17).**
+1. The raster mode is explicit in `resolve`. Gray is the only mode produced. Mono returns `UnsupportedRasterMode`. The mono variant stays in the cache key, so gray and mono entries cannot collide. An unsupported mode fails; it never falls back to gray.
+2. The caller supplies the fallback glyph ID. The resolver does not choose a fallback.
+3. A glyph is missing when its ID is at least the font's glyph count. The field is `RuntimeFont.glyph_count`, which holds the face's glyph count from HarfBuzz. Glyph 0 is valid (`.notdef`) and gets no special treatment in the cache or the resolver.
+4. Mapping `?` through the character map, and the fallback policy, are deferred to Phase 7.
+
+**Phase 7 hand-off.** Phase 7 decides: how `?` is mapped through the character map; what to draw when `?` is unavailable (nothing, or another fallback); and how missing-glyph diagnostics are reported. The `missing_glyphs` counter exists, but no reporting channel does yet. The existing `missing_codepoints` counter counts codepoints the text layer could not map. It stays distinct from `missing_glyphs`, which counts glyph IDs past the font's end.
+
+**Zig changes in this pass:**
+- `glyph_cache.zig`: a `missing_glyphs` counter and `noteMissingGlyph()`, a test that a zeroed key is gray, and a test that a gray and a mono key sharing a probe chain stay apart.
+- `glyph_resolver.zig`: `resolve` takes a raster mode. Only gray is supported. Other modes fail with `UnsupportedRasterMode` before the cache is consulted. `resolveWithFallback` handles glyph IDs at or past the font's glyph count. The caller supplies the fallback, each missing request is counted once, and the missing glyph is never stored.
+- `glyph_cache_font_test.zig`: tests for mode refusal, gray and mono separation, the fallback cases, glyph 0, the glyph-count boundary, and consistency between the resolved metrics, the cache entry, the pending upload rectangle, and the stored coverage.
+
+**Mirror and checks in this pass:** 21 new test functions, 331 new checks. The synthetic glyph 0 has ink, like `.notdef`. Two new mutants (`MUT_ZERO_IS_MISSING` and `MUT_MISSING_OFF_BY_ONE`) break the missing-glyph rule and are caught. `checks/glyph_cache_parity.py` regenerates the Zig-to-mirror map. `checks/glyph_cache_RESULTS.txt` records the runs.
+
+**Still open:**
+- [ ] GPU upload and update synchronization under GPU debugging (needs the owner's device).
+- [~] Both renderer modes on a device. The plan2d and flush logic is tested on the CPU only.
+- [~] No queued draw samples a destroyed or repurposed page. This holds by design. Phase 5 must keep `Cache.clear` and `Atlas.deinit` behind a GPU-idle wait.
+- [ ] Warm-up API and LRU eviction (optional "Wants"; not started).
+
+**Numbering.** The source comments in `glyph_cache.zig` and `glyph_atlas.zig` still say "Phase 3 of the rendering migration plan". They are legacy and were left as they are. `glyph_resolver.zig` uses this plan's numbering.
+
+**Next:** Phase 5 connects `resolve` and `resolveWithFallback` to `Canvas` and the text consumers, and calls `Atlas.flush` before the sprite upload. Phase 4 closes when `zig build test` passes on Windows, Linux, and macOS, and the two GPU items are checked on a device.
 
 ---
 

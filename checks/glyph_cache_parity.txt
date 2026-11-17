@@ -1,0 +1,66 @@
+Parity map: Zig tests to mirror checks (checks/glyph_cache_mirror.c)
+Regenerate with: python3 checks/glyph_cache_parity.py
+
+What parity means here. The mirror re-implements the cache, the resolver, and the fallback in C, and runs them
+against a synthetic glyph source (fake_metrics, fake_coverage). It checks the logic: keys, counters, allocation
+failures, the upload rectangle, and the fallback. It does NOT check values from a real font, the GPU, or the
+Zig compiler. A mirrored test passing shows the logic is the same as the Zig test's. The Zig test still has to
+pass in Zig before it counts.
+
+Zig tests: 45. Mirrored (logic checked in C): 42. Zig only: 3.
+Mirror blocks with no Zig test of the same name: 1.
+
+Zig file                       | status | Zig test
+----------------------------------------------------------------------------------------------------------------------------------
+glyph_cache.zig                | mirror | a new cache holds the white block at the origin of page 0 and queues it for upload
+glyph_cache.zig                | mirror | a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry
+glyph_cache.zig                | mirror | glyph rows are copied to the region the cache reports, and regionCoverage keeps the page stride
+                               |        |   mirror check: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride
+glyph_cache.zig                | mirror | glyphs with no ink take no page space and queue nothing
+glyph_cache.zig                | mirror | keys differ by font, glyph, and pixel height
+glyph_cache.zig                | mirror | a glyph that does not fit the shelf starts a new shelf below it
+glyph_cache.zig                | mirror | a full page sends the next glyph to the next page, and a full cache refuses it and counts it
+glyph_cache.zig                | mirror | a glyph wider than the page allows is refused and counted
+glyph_cache.zig                | mirror | a coverage buffer of the wrong length is refused and leaves the cache unchanged
+glyph_cache.zig                | mirror | removing a font forgets its glyphs and keeps the others
+glyph_cache.zig                | mirror | a removed entry does not hide the entries probed past it
+glyph_cache.zig                | mirror | the table grows as entries are added, and every entry is still found afterwards
+glyph_cache.zig                | mirror | more changed glyphs than the pending list holds mark their page for a full upload
+glyph_cache.zig                | mirror | clear empties the pages and marks every page for a full upload
+glyph_cache.zig                | mirror | markAllDirty queues every page and keeps the glyphs
+glyph_cache.zig                | mirror | missing codepoints are counted
+glyph_cache.zig                | mirror | invalid options are refused before anything is allocated
+glyph_cache.zig                | mirror | the pixel-height key is the float's bit pattern
+glyph_cache.zig                | mirror | keys differ by rasterization mode, so gray and mono coverage of one glyph are two entries
+glyph_cache.zig                | mirror | allocated bytes count the coverage pages and the lookup table
+glyph_cache.zig                | mirror | a failed allocation in init is reported, and init frees what it had already made
+glyph_cache.zig                | mirror | a lookup table that cannot grow refuses the insert and keeps the entries it has
+glyph_cache.zig                | mirror | a key without a mode is gray, and gray is the zero value, so a zeroed mode is gray
+glyph_cache.zig                | mirror | a gray and a mono key that share a probe chain stay apart
+glyph_cache_font_test.zig      | ZIG    | the first glyphs of the shipped font enter one cache page, and each region holds its rasterized coverage
+                               |        |   reason: reads the shipped font through HarfBuzz and rasterizes it with stb; the mirror has no font
+glyph_cache_font_test.zig      | ZIG    | a glyph the cache has not seen before is rasterized and stored on demand
+                               |        |   reason: rasterizes the shipped font with stb; the mirror has no font
+glyph_cache_font_test.zig      | mirror | a repeated request for a glyph finds it, and rasterizes it only once
+glyph_cache_font_test.zig      | mirror | a glyph with an advance and no ink keeps its advance and takes no page space
+glyph_cache_font_test.zig      | mirror | another size or another font id is a different entry and a separate rasterization
+glyph_cache_font_test.zig      | mirror | a glyph that does not fit the page is refused with AtlasFull, counted, and not stored
+glyph_cache_font_test.zig      | mirror | a glyph ID past the last glyph of the font is refused before anything is stored
+glyph_cache_font_test.zig      | mirror | a failed allocation while rasterizing stores nothing and counts no rasterization
+glyph_cache_font_test.zig      | mirror | an unsupported raster mode is refused before the cache is consulted
+glyph_cache_font_test.zig      | mirror | a mono entry of a glyph does not serve a gray request, and a gray entry does not serve mono
+glyph_cache_font_test.zig      | mirror | a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it
+glyph_cache_font_test.zig      | mirror | a glyph inside the font is drawn as itself, and is not counted as missing
+glyph_cache_font_test.zig      | mirror | a missing glyph whose fallback is also missing fails, counts the miss, and stores nothing
+glyph_cache_font_test.zig      | mirror | an unsupported mode is refused by the fallback path before any miss is counted
+glyph_cache_font_test.zig      | mirror | the resolved metrics match the font, and the cache entry and its pending upload agree with them
+glyph_cache_font_test.zig      | mirror | glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing
+glyph_cache_font_test.zig      | mirror | the last glyph is valid, and the glyph after it is missing, at the font's glyph count
+glyph_atlas.zig                | mirror | a page's changed regions are gathered once, and an unchanged page gathers nothing
+glyph_atlas.zig                | mirror | a glyph's region is gathered with the page stride, and a whole-page upload is one region
+glyph_atlas.zig                | mirror | the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D
+glyph_atlas.zig                | ZIG    | the atlas and its flush compile against the backend
+                               |        |   reason: a compile check of the Zig renderer; the mirror cannot compile Zig
+
+Mirror blocks with no Zig counterpart by name:
+  - the GPU step records the same regions whichever renderer is active (flush model)
