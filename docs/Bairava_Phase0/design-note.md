@@ -48,6 +48,8 @@ Memory: GPU only, 8 MiB. With the 2D renderer and all four pages in use, 24 MiB.
 
 Both SDL GPU and the SDL3 2D renderer are acceptance targets. The coverage shader and sprite batching are reused. Phase 0 changes no renderer code.
 
+**Renderer policy (P3-11).** `src/game/config.zig` is authoritative and sets `.sdl_gpu`. The SDL3 2D path is reserved until it is complete. `application.sdl2d_available` enforces this: a request for `.sdl2d` resolves to SDL_GPU, and the F10 toggle does nothing. The README documents F10 only once the flag is set to true.
+
 ## 7. Consequences for later phases
 
 - **Phase 2.** The runtime face defines the pixel-to-unit mapping once, following D2. It rasterizes by glyph ID.

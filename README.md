@@ -78,7 +78,6 @@ It creates `zig-out/release/` with the executable, packaged assets, documentatio
 | Arrow keys or `W A S D` | Move |
 | Esc | Quit |
 | F8 | Toggle the game menu (`Semkootru`, sliders, Saves, and Controls) |
-| F10 | Toggle between the SDL_GPU and SDL3 2D renderer paths |
 | F11 | Toggle fullscreen |
 | F3 | Toggle the debug overlay |
 | `I` | Toggle integer/fit scaling (integer is the default) |
@@ -89,6 +88,8 @@ It creates `zig-out/release/` with the executable, packaged assets, documentatio
 | F9 | Load from the selected slot |
 | Tab | Select the next save slot |
 | Left mouse button | Interact with UI controls |
+
+The game runs on SDL_GPU. The SDL3 2D renderer path is reserved until it is complete, so F10 does nothing for now. The renderer setting in `src/game/config.zig` is the authority, and `sdl2d_available` in `src/engine/core/application.zig` enforces it.
 
 Input is action-based. Defaults are defined in `src/game/controls.zig`, and the copy of `settings.txt` beside the executable can rebind actions to keyboard, mouse, gamepad, stick, or trigger inputs.
 

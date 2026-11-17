@@ -760,6 +760,86 @@ static void t_size_bits(void) {
     CHECK(sixteen != sixteen_and_half, "16 and 16.5 differ");
 }
 
+/* Model of Atlas.flush's GPU step. Atlas.flush needs a device, so no test can call it headless; this model follows
+ * its order: gather each page, record the GPU regions unconditionally, then let plan_2d read the renderer flag. The
+ * MUT_FLUSH_GATED build gates the GPU record on the flag, which is the bug this check exists to catch. */
+static size_t gather_model(const Cache *c, uint32_t page) {
+    if (c->pages[page].dirty_all) return 1;
+    size_t n = 0;
+    for (size_t i = 0; i < c->pending_count; i++) {
+        if (c->pending[i].page == page) n++;
+    }
+    return n;
+}
+
+static size_t flush_model_gpu(const Cache *c, int sdl2d_active, size_t *syncs) {
+    size_t gpu = 0;
+    *syncs = 0;
+    for (uint32_t page = 0; page < c->page_count; page++) {
+        size_t count = gather_model(c, page);
+#ifdef MUT_FLUSH_GATED
+        if (sdl2d_active && count > 0) gpu += count;
+#else
+        gpu += count;
+#endif
+        if (plan_2d(sdl2d_active, 0, c->pages[page].used, count > 0) == ACT_SYNC_WHOLE_PAGE) (*syncs)++;
+    }
+    return gpu;
+}
+
+static void t_flush_gpu_independent(void) {
+    begin("the GPU step records the same regions whichever renderer is active (flush model)");
+    Cache c;
+    CHECK_ERR(cache_init(&c, 32, 2), ERR_NONE, "init");
+    uint8_t four[4] = { 9, 9, 9, 9 };
+    Entry e;
+    CHECK_ERR(cache_insert(&c, key_of(1, 1), metrics_of(2, 2), four, 4, &e), ERR_NONE, "insert");
+    size_t syncs_gpu = 0, syncs_2d = 0;
+    size_t gpu_off = flush_model_gpu(&c, 0, &syncs_gpu);
+    size_t gpu_on = flush_model_gpu(&c, 1, &syncs_2d);
+    CHECK_EQ(gpu_off, 2, "GPU mode: white block and the glyph are both recorded");
+    CHECK_EQ(gpu_on, gpu_off, "2D mode records the same GPU regions as GPU mode");
+    CHECK_EQ(syncs_gpu, 0, "GPU mode makes no 2D copy");
+    CHECK_EQ(syncs_2d, 1, "2D mode makes one copy: page 0 is in use, page 1 is not");
+    cache_deinit(&c);
+}
+
+static void t_gather(void) {
+    begin("a page's changed regions are gathered once, and an unchanged page gathers nothing");
+    Cache c;
+    CHECK_ERR(cache_init(&c, 32, 2), ERR_NONE, "init");
+    /* The white block is the only change so far: page 0 has one pending region, page 1 none. */
+    CHECK_EQ(c.pending_count, 1, "page 0: one changed region");
+    CHECK(c.pending[0].page == 0, "that region is on page 0");
+    cache_clear_pending(&c);
+    /* After a flush nothing is pending and nothing needs a full upload, so the next flush records nothing. */
+    CHECK_EQ(c.pending_count, 0, "nothing gathered after the flush");
+    CHECK(!c.pages[0].dirty_all && !c.pages[1].dirty_all, "no page flagged after the flush");
+    cache_deinit(&c);
+}
+
+static void t_gather_stride(void) {
+    begin("a glyph's region is gathered with the page stride, and a whole-page upload is one region");
+    Cache c;
+    CHECK_ERR(cache_init(&c, 32, 1), ERR_NONE, "init");
+    uint8_t first[4] = { 1, 2, 3, 4 };
+    uint8_t second[4] = { 5, 6, 7, 8 };
+    Entry e;
+    CHECK_ERR(cache_insert(&c, key_of(1, 1), metrics_of(2, 2), first, 4, &e), ERR_NONE, "first glyph");
+    cache_clear_pending(&c);
+    CHECK_ERR(cache_insert(&c, key_of(1, 2), metrics_of(2, 2), second, 4, &e), ERR_NONE, "second glyph");
+    CHECK_EQ(c.pending_count, 1, "one changed region");
+    CHECK_EQ(c.pending[0].w, 2, "region width");
+    CHECK_EQ(c.pending[0].x, 6, "second glyph sits at x=6 after glyph one (3..4) and its padding (5)");
+    /* The first texel of the region is pages[0][x + 0 * stride]; the stride is the page width, 32. */
+    CHECK_EQ(page_byte(&c, 0, (size_t)c.pending[0].y * 32 + c.pending[0].x), 5, "first texel of the region");
+    cache_clear_pending(&c);
+    cache_mark_all_dirty(&c);
+    CHECK(c.pages[0].dirty_all, "a whole-page upload is one region covering the page");
+    CHECK_EQ(c.pending_count, 0, "the changed list is not used for a whole-page upload");
+    cache_deinit(&c);
+}
+
 int main(void) {
     t_white_block();
     t_hit_miss();
@@ -780,6 +860,9 @@ int main(void) {
     t_options();
     t_size_bits();
     t_plan_2d();
+    t_gather();
+    t_gather_stride();
+    t_flush_gpu_independent();
     printf("\n%d checks, %d failures\n", checks, failures);
     if (failures != 0) {
         printf("FAILED\n");

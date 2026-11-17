@@ -604,6 +604,7 @@ Phase 2 CI is green on all three systems (owner-reported), so Phase 3 has starte
 | P3-8 | Table. A small open-addressing table in `glyph_cache.zig`. The engine's `hash_map.zig` handles only string keys, and this Zig snapshot has no std hash map precedent. | Decided here |
 | P3-9 | Renderer recreation. The engine has none today. Policy: rebuild the atlas (`deinit`, then `init`) and re-rasterize on demand. `markAllDirty` supports a keep-the-cache path later. | Decided here |
 | P3-10 | Lazy 2D copies. A page's SDL2D copy is created on the first 2D flush that finds the page in use, rebuilt from the CPU mirror, updated while 2D is active, and released on the first flush outside 2D. The 2D renderer cannot sample SDL_GPU textures, so the copy cannot be removed outright. The CPU mirror is what makes it disposable. | Implemented (owner direction, 2026-11-17) |
+| P3-11 | Renderer policy. `src/game/config.zig` is authoritative: `.renderer = .sdl_gpu`, and `.sdl2d` stays reserved until the 2D path is complete. The engine enforces this with `application.sdl2d_available = false`. While it is false, a request for `.sdl2d` resolves to SDL_GPU (`resolveRenderer`, used at startup and by `setRendererBackend`), a warning is logged if the config asks for it, and `toggleRendererBackend` does nothing. The README F10 row is removed, with a note that the key is inert while the path is reserved. F10 is restored in the README when the flag is set to true. | Accepted (owner, 2026-11-17) |
 
 **Memory budget.** These figures come from arithmetic on the page size and the texel formats, not from a measurement.
 
@@ -613,49 +614,59 @@ Phase 2 CI is green on all three systems (owner-reported), so Phase 3 has starte
 | 2D, one page in use | 4 MiB | 4 MiB | 4 MiB | 12 MiB |
 | 2D, all four pages in use | 4 MiB | 4 MiB | 16 MiB | 24 MiB |
 
-Before P3-10, the 16 MiB of 2D copies existed in every session, so the total was 24 MiB throughout. The owner's ~24 MiB budget is now the worst case, not the normal case.
+Before P3-10, the 16 MiB of 2D copies existed in every session, so the total was 24 MiB throughout. The owner's ~24 MiB budget is now the worst case, not the normal case. In the shipped config the 2D half is unreachable, so the GPU-only row is the one that applies.
 
-**Future optimization (deferred).** The copy-elimination investigation of 2026-11-17 left two levers open.
+**The flush and the renderer flag.** `Atlas.flush(cmd, sdl2d_active)` has two steps for each page, in this order.
 
-- Lazy page allocation. Most sessions probably use one page. The font test expects 300 ASCII glyphs to fit on page 0, and it has not run yet. Creating pages 2 to 4 on first use would reduce the GPU-only total to about 2 MiB. That needs a backend creation path with no upload fence. Decide after measuring `pages_in_use` in the first Phase 5 run.
-- Smaller 2D format. A two-byte luminance-plus-alpha format would halve the copy. Confirming that the SDL3 renderer accepts it needs the SDL3 headers, which are not in the upload. An alpha-only format would lose the tint, because the tint comes from color modulation of the white RGB. That makes it a separate design, and I'd defer it.
+1. GPU, always. `gatherPage` collects the page's changed regions, and `recordCoverageGpu` records them into the frame command buffer. This step does not read `sdl2d_active`, so pending glyphs reach the GPU whatever the renderer. The flush then clears the changed list, also regardless of the renderer.
+2. 2D, only the 2D copy. `plan2d(sdl2d_active, valid, in_use, changed)` returns one of four actions: none, make the copy, update the changed regions, or release the copy. `sdl2d_active` is read only here.
+
+The contract is therefore: the boolean selects 2D copy behavior and nothing else. Two checks support it. The Zig code has no path from the flag to the GPU step, and the C mirror's flush model fails when a deliberately planted bug gates the GPU step on the flag (see Verified). The flush cannot be called headless, so the model is the closest check available; the first Phase 5 run should also confirm it with the counters below.
 
 **Written.**
 
 - `src/engine/text/glyph_cache.zig`: the CPU cache, with no SDL or GPU imports. It holds four 1024² coverage pages, a shelf packer with one texel of padding on the right and bottom, a 2×2 white block at the origin of page 0, and an open-addressing table keyed by font, glyph, and pixel-height bits. It counts hits, misses, inserts, empty glyphs, `cache_full`, `too_large`, missing codepoints, removals, and rehashes. It tracks changed regions in a bounded list of 512 and marks a page for a whole-page upload when the list overflows. `pageInUse` tells the atlas which pages have glyphs. `snapshot` returns `Stats`.
 - `src/engine/text/glyph_cache_font_test.zig`: two tests against the shipped `assets/font.ttf`. The first caches the first 300 glyphs from `RuntimeFont` and checks that every stored texel equals its rasterized coverage. The second caches a glyph far from ASCII, then checks the miss and the hit.
-- `src/engine/renderer/glyph_atlas.zig`: `Atlas` owns the cache and one GPU texture per page, created with GPU only. `flush(cmd, want_2d)` records the GPU copies, then applies `plan2d` to each page's 2D copy. `plan2d` is pure and is tested. `pageTexture` and `spriteSource` give sprites the page pointer and the texel rectangle.
+- `src/engine/renderer/glyph_atlas.zig`: `Atlas` owns the cache and one GPU texture per page, created GPU-only. `gatherPage` and `plan2d` are pure and tested. `flush` runs the two steps above and counts what it does in `FlushStats`, which `flushStats()` returns. `pageTexture` and `spriteSource` give sprites the page pointer and the texel rectangle.
 - `src/engine/renderer/texture.zig`: `createCoverageGpuOnly`, `recordCoverageGpu`, `syncCoverage2d` (makes the 2D copy on first use, then overwrites it), `updateCoverage2d` (writes changed regions into the copy), and `releaseCoverage2d`. The prebaked font path (`createCoverage`) is unchanged.
 - `src/engine/renderer/backends/sdl_gpu/texture.zig`: `CoverageRegion` and `recordCoverageRegions`. It stages each region's rows in one transfer buffer, and records one copy per region into the frame command buffer, outside a render pass.
 - `src/engine/platform/sdl/renderer2d.zig` and `platform.zig`: `updateTexture`, which calls `SDL_UpdateTexture` on one rectangle.
+- `src/engine/core/application.zig`, `context.zig`, `lifecycle.zig`: the renderer gate (P3-11), with a test that holds whichever way the flag is set.
+- `README.md`: the F10 row is removed, and a note explains why the key is inert.
 - `src/tests.zig`: registers the three new test files.
-- `checks/glyph_cache_mirror.c` and `checks/glyph_cache_RESULTS.txt`: a C mirror of the cache logic and of `plan2d`, with the same test names and numbers as the Zig tests.
+- `checks/glyph_cache_mirror.c` and `checks/glyph_cache_RESULTS.txt`: a C mirror of the cache logic, of `plan2d`, and of the flush's GPU step, with the same test names and numbers as the Zig tests where a Zig test exists.
 
 **Verified in the sandbox.**
 
-- The mirror runs 1808 checks with 0 failures under AddressSanitizer, UBSan, and LeakSanitizer, built with `-Werror`. Its 19 test sections match the Zig tests one-to-one, except for the compile check in `glyph_atlas.zig`, which has no C counterpart.
-- Ten planted bugs, including one that keeps a 2D copy alive outside 2D mode. The harness fails on each.
+- The mirror runs 1828 checks with 0 failures under AddressSanitizer, UBSan, and LeakSanitizer, built with `-Werror`. Its sections match the Zig tests one-to-one, except for the compile check in `glyph_atlas.zig`, which has no C counterpart, and the flush model, which has no Zig counterpart because `flush` needs a device.
+- Eleven planted bugs. Ten are in the cache and the 2D plan, including one that keeps a 2D copy alive outside 2D mode. The eleventh gates the GPU step on the renderer flag. The harness fails on all eleven.
 - `scripts/boundary_scan.py --self-test` rejects 3 of 3 fixtures, and `--fail` reports 0 reachable violations and exits 0.
-- Bracket balance holds in all touched Zig files. A grep confirms no reference to the removed `updateCoverageRegions` or to a per-page validity array. I re-read the Zig for mixed `usize`/`u32` arithmetic and for file-level names shadowed by parameters. I fixed three instances of each in the first pass, and found none in the second.
+- Bracket balance holds in all touched Zig files. A grep confirms that `want_2d` and the removed `updateCoverageRegions` have no remaining uses. `config.zig` is unchanged.
 
 **Not verified here.**
 
 - The Zig compile and the Zig tests. Zig is not installed, and `vendor/` is absent from the upload. This is the owner's `zig build test` on all three systems.
-- The GPU path (`recordCoverageRegions`) and the 2D paths (`syncCoverage2d`, `updateCoverage2d`, `releaseCoverage2d`). They need a window and a device, which the test binary does not create.
+- The GPU path (`recordCoverageRegions`) and the 2D paths (`syncCoverage2d`, `updateCoverage2d`, `releaseCoverage2d`). They need a window and a device, which the test binary does not create. The 2D paths also cannot run in the shipped build until the flag is set.
 - `glyph_cache_font_test.zig`, which needs Zig.
-- The shipped build (`zig build`). The new code is referenced only from `tests.zig`, so the shipped engine module should be unaffected. Confirm this in the owner's run.
+- The shipped build (`zig build`). The new code is referenced only from `tests.zig` and from the renderer gate, so the shipped engine module should be unaffected. Confirm this in the owner's run.
 
-**Known risk.** `sprite.draw2d` skips any quad whose texture has no 2D copy (`sprite.zig`, line 472). Under P3-10, flush creates the copies for every used page before any 2D draw, so this should only happen if creation fails, for example with no active 2D renderer or when SDL is out of memory. Flush retries on the next frame. In the first 2D run, check that no text disappears.
+**Known risk.** `sprite.draw2d` skips any quad whose texture has no 2D copy (`sprite.zig`, line 472). Flush creates the copies for every used page before any 2D draw, so this should only happen if creation fails, for example with no active 2D renderer or when SDL is out of memory. The `sdl2d_missing_copies` counter records it. A nonzero value during the 2D run means text is missing.
 
-**Phase 3 gate.** Phase 3 closes when `zig build test` passes on Windows, Linux, and macOS, with the 18 `glyph_cache` tests, the two font tests, the `plan2d` test, and the compile check among them, and when `zig build` passes. Paste the first error and the test name if either fails.
+**Phase 3 gate.** Phase 3 closes when `zig build test` passes on Windows, Linux, and macOS, with the 18 `glyph_cache` tests, the two font tests, the `plan2d` and `gatherPage` tests, the renderer gate test, and the compile check among them, and when `zig build` passes. Paste the first error and the test name if either fails.
 
-The GPU and 2D paths, and the exit criterion "both renderer paths," are only partly met here. They are written and documented, and they are first exercised when Phase 5 puts the atlas in the frame. The window-level check belongs to that integration.
+The GPU and 2D paths, and the exit criterion "both renderer paths," are only partly met here. They are written and documented, and they are first exercised when Phase 5 puts the atlas in the frame. The 2D half is first exercised when the owner sets `sdl2d_available` to true.
 
-**Phase 5 insertion point.** Call `atlas.flush(frame.cmd, ctx.renderer == .sdl2d)` in `src/engine/core/runtime.zig` after the frame's text is queued, and before `if (ctx.renderer == .sdl2d) {` (around line 420). That position runs the flush before both the 2D draw and the sprite upload. The atlas must be created once the GPU device and the 2D renderer exist (lifecycle stage `.gpu`).
+**Phase 5 insertion point.** After all of the frame's text is queued, and before the SDL2D rendering branch and the sprite upload, call `atlas.flush(frame.cmd, ctx.renderer == .sdl2d)` in `src/engine/core/runtime.zig` (around line 420, before `if (ctx.renderer == .sdl2d) {`). The atlas must be created once the GPU device and the 2D renderer exist (lifecycle stage `.gpu`). While `sdl2d_available` is false, the boolean is always false, so only the GPU step runs.
 
-**Open question (owner).** `src/game/config.zig` says `.sdl2d` is "reserved until the complete 2D resource and sprite path is implemented." The README documents F10 as a runtime toggle to that same path. Which is intended? The answer decides whether the 2D copies need to be solid now or can wait.
+**First SDL2D run checklist.** The run requires `sdl2d_available = true`. Two of the items also apply to the GPU path, and they are marked. Read the counters from `atlas.flushStats()`, through the debugger or a temporary log line, until the overlay line exists in Phase 5.
 
-**Diagnostics.** `Cache.snapshot()` returns the counters named in the Phase 3 checklist. The `glyph_cache_full` diagnostic is `cache_full`. The overlay line that shows them belongs to Phase 5, because the overlay is the consumer.
+- [ ] Text queued during the frame is visible in that same frame. Check on the frame a new glyph first appears: `flushes` and `gpu_regions` increase on that frame, and the glyph is drawn with its coverage, not blank. (Both renderers.)
+- [ ] Newly rasterized glyphs are uploaded before they are sampled. The frame an insert happens, `gpu_regions` increases, and in 2D mode `sdl2d_region_updates` or `sdl2d_syncs` increases on the same frame. No glyph appears blank on its first frame.
+- [ ] Existing cached glyphs remain visible. Their text stays intact while other glyphs are added, and in 2D mode `sdl2d_syncs` increases once per page in use, not every frame.
+- [ ] No text disappears when switching renderers with F10. This item applies only once the flag is true and F10 is restored. Switching to 2D: `sdl2d_syncs` rises for each used page and `sdl2d_missing_copies` stays 0. Switching back: `sdl2d_releases` rises by the number of copies, and the text is intact in both renderers.
+- [ ] No stale atlas references or invalid texture bindings. `sdl2d_missing_copies` stays 0 throughout, the run survives repeated switches, and the debug build reports no failure. Released copies are only released in GPU frames, so no 2D draw can reach them.
+- [ ] Repeated frames do not cause unnecessary atlas uploads when nothing changed. On a static screen, `idle_flushes` rises by one per frame, and `gpu_regions`, `gpu_full_pages`, `sdl2d_syncs`, and `sdl2d_region_updates` stay flat.
+- [ ] Precaution: the renderer flag does not gate GPU uploads. Run the same scripted input in GPU mode and in 2D mode, with the flag true. `gpu_regions` and `gpu_full_pages` must match exactly between the two runs.
 
 **Checklist** (rendering migration plan, Phase 3):
 
@@ -664,16 +675,16 @@ The GPU and 2D paths, and the exit criterion "both renderer paths," are only par
 - [x] Shelf packing with padding, and explicit full-page handling (`AtlasFull`, counted).
 - [x] Page policy: pages in order, no eviction, no silent loss (P3-2, P3-4).
 - [~] Safe GPU upload path for new glyph regions. Written (`recordCoverageRegions`); not run.
-- [~] Both renderer paths. The GPU and SDL2D updates are written, and `plan2d`, which decides the 2D copy, is tested; the rest is not run.
+- [~] Both renderer paths. The GPU and 2D updates are written, and `plan2d` is tested. The 2D path is reserved, so it is not run.
 - [~] Updates cannot race queued draws or in-flight work. The design holds (P3-4, P3-5). The window-level check belongs to Phase 5.
 - [x] Cache lifetime and cleanup for font removal and teardown (`removeFont`, `clear`, `deinit`). Renderer recreation: P3-9.
-- [x] Counters for hits, misses, pages, and allocations (`Stats`). Overlay wiring is Phase 5.
+- [x] Counters for hits, misses, pages, allocations (`Stats`), and flushes (`FlushStats`). Overlay wiring is Phase 5.
 - [x] Tests for hits, misses, page-full, repeated requests, texture replacement (the full-page flush path, CPU side), and cleanup, in the mirror and in the Zig tests.
 
 **Open items.**
 
-- The F10 and `config.zig` question above.
 - The text layer (Phase 5) draws `?` when the font has one, and nothing otherwise (Q3). This file only counts missing codepoints.
 - Copy-then-sample ordering in one command buffer is the same pattern the sprite vertex upload already uses. Confirm it on screen in the first Phase 5 run.
-- The two deferred memory levers (lazy page allocation, smaller 2D format), decided after the first Phase 5 run and the SDL3 headers.
+- The two deferred memory levers (lazy page allocation, smaller 2D format), to be decided after the first Phase 5 run and the SDL3 headers.
+- Set `sdl2d_available` and restore the F10 row when the 2D path is complete. Then run the checklist above.
 - Run `scripts/check-dependency-pins.py` on a full checkout. It fails on this upload only because `vendor/` is absent.

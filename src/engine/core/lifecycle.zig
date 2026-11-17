@@ -171,6 +171,9 @@ pub const Session = struct {
         self.stage = .textures;
         self.textures = try self.engine_allocator.create(context.TextureStore);
         self.reloads.stat = hotReloadStamp;
+        if (application.resolveRenderer(config.renderer) != config.renderer) {
+            elog.warn("the SDL3 2D renderer is reserved until it is complete, so the game starts on SDL_GPU", .{});
+        }
         // Before the first frame is drawn, assume the view fills the window at its native size.
         self.ctx = Context{
             .gpu_state = @ptrCast(self.gpu.device),
@@ -178,7 +181,7 @@ pub const Session = struct {
             .input = &self.input,
             .event_reader = self.game_events.reader(),
             .scale_mode = config.scale_mode,
-            .renderer = config.renderer,
+            .renderer = application.resolveRenderer(config.renderer),
             .zoom_min = config.zoom_min,
             .zoom_max = config.zoom_max,
             .layout = .{ .dst_w = native_wf, .dst_h = native_hf, .view_w = native_wf, .view_h = native_hf },

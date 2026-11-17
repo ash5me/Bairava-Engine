@@ -205,17 +205,20 @@ pub const Context = struct {
         return self.renderer;
     }
 
-    /// Selects an SDL renderer implementation for the next frame.
+    /// Selects an SDL renderer implementation for the next frame. A request for the reserved 2D path resolves to SDL_GPU
+    /// (see application.resolveRenderer).
     pub fn setRendererBackend(self: *Context, renderer: application.Renderer) void {
-        self.renderer = renderer;
+        self.renderer = application.resolveRenderer(renderer);
     }
 
-    /// Switches between SDL_GPU and SDL3's 2D renderer.
+    /// Switches between SDL_GPU and SDL3's 2D renderer. Does nothing while the 2D path is reserved, so F10 is inert.
     pub fn toggleRendererBackend(self: *Context) void {
-        self.renderer = switch (self.renderer) {
-            .sdl_gpu => .sdl2d,
-            .sdl2d => .sdl_gpu,
-        };
+        if (application.sdl2d_available) {
+            self.renderer = switch (self.renderer) {
+                .sdl_gpu => .sdl2d,
+                .sdl2d => .sdl_gpu,
+            };
+        }
     }
 
     /// Reports features available to this running game build on the active GPU and audio device.

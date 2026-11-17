@@ -9,9 +9,28 @@ const view = @import("../renderer/view.zig");
 const render_types = @import("../renderer/render_types.zig");
 const ScaleMode = view.ScaleMode;
 
-/// Rendering implementation used by the engine. SDL_GPU is the feature-complete default;
-/// SDL2D can be selected at startup or switched at runtime with the configured hotkey.
+/// Rendering implementation used by the engine. SDL_GPU is the feature-complete default. SDL2D is reserved until its
+/// rendering path is complete (see `sdl2d_available`).
 pub const Renderer = enum { sdl_gpu, sdl2d };
+
+/// The SDL3 2D path is reserved until it is complete. `src/game/config.zig` is the game's authority on the renderer
+/// setting, and this constant is the engine's enforcement of that reservation. While it is false:
+///   - a request for `.sdl2d`, at startup or through `Context.setRendererBackend`, resolves to SDL_GPU;
+///   - `Context.toggleRendererBackend` does nothing, so the F10 key leaves the renderer unchanged.
+/// Set it to true only when the 2D path is ready to ship. Then restore F10 in the README controls table.
+pub const sdl2d_available: bool = false;
+
+/// The renderer the engine uses for a request. While the 2D path is reserved, a request for `.sdl2d` gets SDL_GPU.
+pub fn resolveRenderer(requested: Renderer) Renderer {
+    if (requested == .sdl2d and !sdl2d_available) return .sdl_gpu;
+    return requested;
+}
+
+test "a request for the reserved 2D path resolves to SDL_GPU while the path is unavailable" {
+    const expected: Renderer = if (sdl2d_available) .sdl2d else .sdl_gpu;
+    try std.testing.expectEqual(expected, resolveRenderer(.sdl2d));
+    try std.testing.expectEqual(Renderer.sdl_gpu, resolveRenderer(.sdl_gpu));
+}
 
 /// Settings the game passes to `run`.
 pub const Config = struct {
