@@ -179,6 +179,11 @@ pub const SpriteBatch = struct {
     /// The one-texel map that lit sprites without a normal map sample. It faces the viewer. The batch owns it, and
     /// `deinit` releases it. Null only for a batch that was never given a device, such as a test fixture.
     flat_normal: ?*const Texture = null,
+    /// A 2x2 white texture for solid UI fills (see ui.zig's `queueQuads`). It is a coverage texture at full coverage,
+    /// so a fill goes through the same coverage pipeline as a glyph and draws the pixels the font's white block did.
+    /// The batch owns it, and `deinit` releases it. Null for a batch made without a device, such as a test fixture.
+    /// A fill then falls back to the font's own white block.
+    white: ?*const Texture = null,
 
     /// Builds the pipeline and GPU buffers. `color_format` is the swapchain format
     /// the sprites render into. `fragment` is the shader the quads run through.
@@ -193,6 +198,7 @@ pub const SpriteBatch = struct {
             .vertices = allocVertices(allocator, initial_sprites * vertices_per_quad),
             .batches = allocBatches(allocator, initial_batches),
             .flat_normal = createFlatNormal(allocator, device),
+            .white = createWhite(allocator, device),
             .projection = math.ortho2d(1.0, 1.0),
         };
         batch.lighting.reset();
@@ -436,6 +442,12 @@ pub const SpriteBatch = struct {
             owned.deinit();
             self.allocator.destroy(owned);
         }
+        if (self.white) |white| {
+            // `init` made this texture the same way, so the batch owns it and may release it.
+            const owned: *Texture = @constCast(white);
+            owned.deinit();
+            self.allocator.destroy(owned);
+        }
         freeSlice(self.allocator, Quad, self.quads);
         freeSlice(self.allocator, Vertex, self.vertices);
         freeSlice(self.allocator, Batch, self.batches);
@@ -596,6 +608,15 @@ fn createFlatNormal(allocator: std.mem.Allocator, device: *backend.Device) *cons
     const texel = [4]u8{ 128, 128, 255, 255 };
     flat.* = texture.createRgba8(allocator, device, 1, 1, &texel);
     return flat;
+}
+
+/// A 2x2 coverage texture at full coverage. `createCoverage` marks it as coverage, so it samples through the same
+/// pipeline as the font atlas, which is why solid fills look the same as before.
+fn createWhite(allocator: std.mem.Allocator, device: *backend.Device) *const Texture {
+    const white = allocator.create(Texture) catch @panic("out of memory");
+    const coverage = [4]u8{ 255, 255, 255, 255 };
+    white.* = texture.createCoverage(allocator, device, 2, 2, &coverage);
+    return white;
 }
 
 fn allocQuads(allocator: std.mem.Allocator, count: usize) []Quad {

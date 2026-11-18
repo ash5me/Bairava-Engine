@@ -6,15 +6,16 @@
 const std = @import("std");
 
 const engine = @import("bairava");
+
 const config = @import("config.zig");
 const controls = @import("controls.zig");
+const enemy = @import("enemy.zig");
 const Level = @import("level.zig").Level;
+const level_data = @import("level_data.zig");
 const Player = @import("player.zig").Player;
+const prefab = @import("prefab.zig");
 const save_store = @import("save.zig");
 const script_host = @import("script_host.zig");
-const prefab = @import("prefab.zig");
-const level_data = @import("level_data.zig");
-const enemy = @import("enemy.zig");
 
 const log = engine.log.scoped("game");
 
@@ -580,7 +581,6 @@ pub const Game = struct {
             const player_center = self.player.drawCenter(dc.alpha);
             dc.debug.point(dc.cam.screenX(player_center.x), dc.cam.screenY(player_center.y), player_marker_color);
         }
-
         // The panel goes last. Its quads were built in the update step, so this only queues them.
         self.ui.queue(dc.batch, ui_z);
     }

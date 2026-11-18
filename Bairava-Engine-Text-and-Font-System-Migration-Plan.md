@@ -370,8 +370,8 @@ A reviewed design decision record containing: supported font formats, font-sourc
 - [~] Define text options for font, size/scale, color, line spacing, alignment, wrapping width, and optional direction/script/language overrides. *(Sandbox, 2026-11-18: `TextOptions` in `font_resource.zig`, with the D-06 defaults `Latn` and `en`, a one-value `Direction` for left to right only, and `shaperOptions()`. `scale`, `line_spacing`, and `color` are fields only. No consumer reads them until Phase 5.)*
 - [ ] Separate text measurement, layout, glyph resolution, and draw submission into distinct responsibilities.
 - [~] Keep current `.bfnt` loading behind a legacy/prebaked coverage provider; do not rewrite the file format in this phase. *(Sandbox, 2026-11-18: `FontResource.bfnt_coverage` wraps the unchanged `font.Font`. The loader in `font.zig` is not changed. Not done: nothing loads a BFNT through `Resources` yet, which waits on the Canvas migration.)*
-- [ ] Preserve the current `Canvas.text`, `Canvas.textWidth`, `Canvas.layoutText`, and `Canvas.drawTextLayout` behavior through wrappers or adapters where practical. Not started. D-05 is accepted, but the change touches `ui.zig` and needs a compile and E-03.
-- [~] Decouple solid-rectangle drawing from the white 2x2 texel embedded in the font atlas. Use a renderer-owned white texture or a primitive path so a font atlas is not required for rectangles. Blocked: D-04. *(Partly, sandbox, 2026-11-18, C side only: `ui_quad` has a `solid` flag. `ui_quad_push_solid` sets it, and `imgui.c` `fill()` is the only solid-fill call site. Glyphs set it to 0. `Canvas.rect` sets it to 1 in Zig. Behaviour is unchanged: the Zig backend still samples the font atlas, and `checks/ui_quad_dump.c` diffs identical against the original upload. Not done: the renderer-owned white texture on SDL_GPU and the SDL3 2D path, and the backend's use of the flag. That needs a device, E-02 and E-04.)*
+- [~] Preserve the current `Canvas.text`, `Canvas.textWidth`, `Canvas.layoutText`, and `Canvas.drawTextLayout` behavior through wrappers or adapters where practical. Not started for the handle move: `Canvas` still holds `*Font`, and that change touches game-facing code (`Canvas.create`, `Ui.init`, `context.loadFont`, `runtime.zig`, `game.zig`). D-05 is accepted, and the public signatures are unchanged. The rectangle change in the decoupling item above is internal.
+- [~] Decouple solid-rectangle drawing from the white 2x2 texel embedded in the font atlas. Use a renderer-owned white texture or a primitive path so a font atlas is not required for rectangles. *(Partly, sandbox, 2026-11-18. C side: `ui_quad` has a `solid` flag, set by `ui_quad_push_solid` and by `imgui.c` `fill()`, and glyphs set it to 0. Zig side, third pass: `SpriteBatch.white` is a 2x2 coverage texture that the batch creates in `init` and frees in `deinit`, as `flat_normal` is. `queueQuads` draws a solid quad from it and ignores the quad's `src`. With no white texture, a solid quad falls back to the font's block. Not done: device checks on SDL_GPU and the SDL3 2D path (E-02, E-04), and reference screenshots (E-03). The font atlas still contains the white block, because the C side and the fallback use it.)*
 - [~] Define ownership rules: a queued draw cannot reference a font page that may be destroyed, repacked, or overwritten before submission completes. *(Partly, sandbox, 2026-11-18: the registry's rules are written in the `font_registry.zig` header: `Registry(T)` owns each value until `remove`, `deinit` frees only the table, `get` pointers are valid until the next `insert` or `remove`, and a handle is valid only for the registry that issued it. The `Resources` release and failed-insert rules are in the `font_resource.zig` header. Not done: the queued-draw and atlas-page rule, which needs the GPU path and Phase 5's flush wiring.)*
 - [ ] Keep renderer-specific types out of the public text API.
 - [x] One definition of the debug overlay font, 9 px mono (D-07, accepted by owner direction). The source of truth is `application.zig` (`default_debug_font_path`, `default_debug_font_px`), read by `src/game/config.zig`. Evidence (owner-confirmed 2026-11-18): `application.zig:40` is `default_debug_font_px: f32 = 9`, and `config.zig:108` reads it. The 10 px default described in earlier notes is not in this upload, so no reconciliation is needed.
@@ -716,6 +716,23 @@ This note records the second pass on Phase 1 in the sandbox. The owner status ab
 
 The commit and a saved log have not been reported for any run. Until a passing log is recorded, the Phase 1 test gate stays open. These runs are not CI gate runs, and they do not close E-01, E-02, E-03, or E-04.
 
+
+### Sandbox progress (2026-11-18, third pass): Canvas rectangles (D-04)
+
+This note records the first slice of the Canvas migration. The owner status above still governs, and the Phase 1 exit gate remains open.
+
+**Landed (Zig and CPU; not compiled in the sandbox):**
+- `src/engine/renderer/sprite.zig`: `SpriteBatch.white`, a 2x2 coverage texture at full coverage. `SpriteBatch.init` creates it from the device the way it creates `flat_normal`, and `deinit` releases it. `createCoverage` sets the coverage flag, so solid fills use the same pipeline as before.
+- `src/engine/ui/ui.zig`: `queueQuads` draws a solid quad (`solid` set) from `batch.white` and ignores the quad's `src`. With `batch.white` null, a solid quad falls back to the font's white block. Three tests cover a fill on the white texture, a glyph followed by a fill, and the fallback.
+
+**Unchanged:** the public signatures of `Canvas.text`, `textWidth`, `layoutText`, `drawTextLayout`, and `rect`, and of `Canvas.create` and `Ui.init`. The C side is unchanged, and glyph quads still sample the font atlas.
+
+**Not done, with the reason:**
+- Moving the font from `*Font` to a `FontHandle` in the registry. This changes game-facing code, and it needs a decision on which module owns the registry. It is the next slice.
+- Device checks on SDL_GPU and the SDL3 2D path (E-02, E-04).
+- Visual checks against reference screenshots (E-03).
+
+**Behavior note:** fills and glyphs now break draw runs at each texture change, so a frame that mixes them can issue more draw calls. The sampled coverage values are the same, so the output should match. E-03 confirms it, and the debug overlay shows the draw-call count.
 
 ---
 

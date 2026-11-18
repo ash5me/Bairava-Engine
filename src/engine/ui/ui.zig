@@ -1,5 +1,6 @@
-//! Text and widgets, bridged from the C code in src/engine/ui/. The C side builds quads in pixels,
-//! all sampling one font atlas. This file queues each quad as a sprite. Fonts are loaded from prebaked
+//! Text and widgets, bridged from the C code in src/engine/ui/. The C side builds quads in pixels.
+//! Glyph quads sample the font atlas, and solid fills sample the batch's white texture. This file queues each quad
+//! as a sprite. Fonts are loaded from prebaked
 //! `.bfnt` files in text/font.zig.
 //!
 //! The C headers are private to this file and to text/font.zig. Everything else reaches the UI
@@ -135,8 +136,8 @@ pub const Canvas = struct {
         c.ui_font_draw_text(&self.font.baked, self.list, x, y, str.ptr, str.len, toC(color));
     }
 
-    /// Adds a solid rectangle. It samples the font's white block, so it shares the font's texture
-    /// and its draw call. Like `ui_quad_push`, quads past the list's capacity are counted in
+    /// Adds a solid rectangle. It draws from the batch's white texture when it is queued (see `queueQuads`), so it
+    /// does not depend on the font's white block. Like `ui_quad_push`, quads past the list's capacity are counted in
     /// `dropped` and not drawn.
     pub fn rect(self: *Canvas, x: f32, y: f32, w: f32, h: f32, color: Color) void {
         const list = self.list;
@@ -303,9 +304,10 @@ fn toC(color: Color) c.ui_color {
     return .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a };
 }
 
-/// Queues each quad in `list` as one sprite on `batch`. A quad's `src` is its texel rectangle in
-/// `texture`, its `dst` is its pixel rectangle, and the color's RGB and alpha become the sprite's
-/// tint and alpha. `z` puts the UI above or below other sprites, as with any sprite.
+/// Queues each quad in `list` as one sprite on `batch`. A glyph quad's `src` is its texel rectangle in the font's
+/// atlas. A solid quad draws from the batch's white texture, and its `src` is ignored. When the batch has no white
+/// texture, a solid quad falls back to the font's own block, as every quad did before. `dst` is the pixel rectangle,
+/// and the color's RGB and alpha become the sprite's tint and alpha. `z` puts the UI above or below other sprites.
 fn queueQuads(batch: *sprite.SpriteBatch, font: *Font, list: *const c.ui_quad_list, z: i32) void {
     const count: usize = @intCast(list.count);
     for (list.items[0..count]) |q| {
@@ -313,6 +315,17 @@ fn queueQuads(batch: *sprite.SpriteBatch, font: *Font, list: *const c.ui_quad_li
         const snap_y = @floor(q.dst.y + 0.5);
         const snap_w = @max(1.0, @floor(q.dst.w + 0.5));
         const snap_h = @max(1.0, @floor(q.dst.h + 0.5));
+        if (q.solid != 0) {
+            if (batch.white) |white| {
+                batch.drawSprite(
+                    white,
+                    .{ .x = 0, .y = 0, .w = @floatFromInt(white.width), .h = @floatFromInt(white.height) },
+                    .{ .x = snap, .y = snap_y, .w = snap_w, .h = snap_h },
+                    .{ .tint = .{ q.color.r, q.color.g, q.color.b }, .alpha = q.color.a, .z = z },
+                );
+                continue;
+            }
+        }
         batch.drawSprite(
             &font.texture,
             .{ .x = q.src.x, .y = q.src.y, .w = q.src.w, .h = q.src.h },
@@ -381,4 +394,98 @@ test "ui begin passes Escape as the cancel, and the key pressed as its control" 
     try std.testing.expectEqual(escape_code, @as(u32, @intCast(ui.ctx.in.control)));
     ui.end();
     try std.testing.expect(!ui.listening());
+}
+
+test "a solid rectangle draws from the batch's white texture, not the font atlas" {
+    const allocator = std.testing.allocator;
+    const fixtures = @import("../test_fixtures.zig");
+    const Texture = @import("../renderer/texture.zig").Texture;
+
+    var font = Font{ .baked = std.mem.zeroes(c.ui_font), .texture = fixtures.texture(64, 64) };
+    font.baked.white = .{ .x = 0, .y = 0, .w = 2, .h = 2 };
+    const list = try allocator.create(c.ui_quad_list);
+    defer allocator.destroy(list);
+    list.count = 0;
+    list.dropped = 0;
+    var canvas = Canvas{ .allocator = allocator, .font = &font, .list = list };
+    canvas.rect(10, 10, 20, 5, .{ .r = 1, .g = 0, .b = 0, .a = 1 });
+
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = fixtures.batch(&no_vertices, &no_batches);
+    defer fixtures.freeBatch(&batch);
+    const white = fixtures.texture(2, 2);
+    batch.white = &white;
+    batch.begin(320, 180);
+    canvas.queue(&batch, 0);
+    batch.prepare();
+
+    try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
+    try std.testing.expectEqual(@as(*const Texture, &white), batch.batches[0].texture);
+    // The white texture is 2x2 and entirely covered, so the whole texture maps onto the quad.
+    try std.testing.expectEqual(@as(f32, 0), batch.vertices[0].uv[0]);
+    try std.testing.expectEqual(@as(f32, 1), batch.vertices[2].uv[0]);
+    try std.testing.expectEqual(@as(f32, 1), batch.vertices[2].uv[1]);
+}
+
+test "a glyph keeps the font atlas, and a fill after it starts a run on the white texture" {
+    const allocator = std.testing.allocator;
+    const fixtures = @import("../test_fixtures.zig");
+    const Texture = @import("../renderer/texture.zig").Texture;
+
+    var font = Font{ .baked = std.mem.zeroes(c.ui_font), .texture = fixtures.texture(64, 64) };
+    font.baked.white = .{ .x = 0, .y = 0, .w = 2, .h = 2 };
+    const list = try allocator.create(c.ui_quad_list);
+    defer allocator.destroy(list);
+    list.count = 0;
+    list.dropped = 0;
+    // A glyph quad, as the C side pushes one: solid is 0, and src is a texel rectangle of the atlas.
+    list.items[0] = std.mem.zeroes(c.ui_quad);
+    list.items[0].dst = .{ .x = 0, .y = 0, .w = 8, .h = 8 };
+    list.items[0].src = .{ .x = 4, .y = 4, .w = 8, .h = 8 };
+    list.items[0].color = .{ .r = 1, .g = 1, .b = 1, .a = 1 };
+    list.items[0].solid = 0;
+    list.count = 1;
+    var canvas = Canvas{ .allocator = allocator, .font = &font, .list = list };
+    canvas.rect(10, 10, 20, 5, .{ .r = 1, .g = 0, .b = 0, .a = 1 });
+
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = fixtures.batch(&no_vertices, &no_batches);
+    defer fixtures.freeBatch(&batch);
+    const white = fixtures.texture(2, 2);
+    batch.white = &white;
+    batch.begin(320, 180);
+    canvas.queue(&batch, 0);
+    batch.prepare();
+
+    try std.testing.expectEqual(@as(u32, 2), batch.batch_count);
+    try std.testing.expectEqual(@as(*const Texture, &font.texture), batch.batches[0].texture);
+    try std.testing.expectEqual(@as(*const Texture, &white), batch.batches[1].texture);
+}
+
+test "without a white texture on the batch, a fill falls back to the font's own block" {
+    const allocator = std.testing.allocator;
+    const fixtures = @import("../test_fixtures.zig");
+    const Texture = @import("../renderer/texture.zig").Texture;
+
+    var font = Font{ .baked = std.mem.zeroes(c.ui_font), .texture = fixtures.texture(64, 64) };
+    font.baked.white = .{ .x = 0, .y = 0, .w = 2, .h = 2 };
+    const list = try allocator.create(c.ui_quad_list);
+    defer allocator.destroy(list);
+    list.count = 0;
+    list.dropped = 0;
+    var canvas = Canvas{ .allocator = allocator, .font = &font, .list = list };
+    canvas.rect(10, 10, 20, 5, .{ .r = 1, .g = 0, .b = 0, .a = 1 });
+
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = fixtures.batch(&no_vertices, &no_batches);
+    defer fixtures.freeBatch(&batch);
+    batch.begin(320, 180);
+    canvas.queue(&batch, 0);
+    batch.prepare();
+
+    try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
+    try std.testing.expectEqual(@as(*const Texture, &font.texture), batch.batches[0].texture);
 }
