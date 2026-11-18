@@ -5,8 +5,9 @@
 //! defaults; a game supplies explicit values only for presentation or behavior it owns.
 
 const std = @import("std");
-const view = @import("../renderer/view.zig");
+
 const render_types = @import("../renderer/render_types.zig");
+const view = @import("../renderer/view.zig");
 const ScaleMode = view.ScaleMode;
 
 /// Rendering implementation used by the engine. SDL_GPU is the feature-complete default. SDL2D is reserved until its

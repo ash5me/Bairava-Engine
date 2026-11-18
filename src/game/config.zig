@@ -2,7 +2,15 @@
 //! rate, and scale mode. Read once at startup. The engine knows nothing else about the game.
 
 const std = @import("std");
+
 const engine = @import("bairava");
+/// Strengths the effects read: vignette, scanline dim, and grayscale amount, each from 0 to 1. The defaults keep their original look.
+pub const post_params: engine.PostParams = engine.default_post_params;
+/// The font for the debug overlay, and its height. This is the engine's single definition (application.zig), so the
+/// game and the samples cannot disagree. It is the same 9 px mono atlas as the demo panel. At 7 px mono hinting drops
+/// strokes, and at 8 px some glyphs still blur together.
+pub const debug_font_path = engine.default_debug_font_path;
+pub const debug_font_px: f32 = engine.default_debug_font_px;
 
 /// Window title. The window keeps it as written; frame stats are in the debug overlay (F3).
 pub const title: [:0]const u8 = "Semkootru";
@@ -43,8 +51,6 @@ pub const zoom_rate: f32 = 8.0;
 /// Post-processing effects, run in order over the finished world before it is shown. Empty turns them off.
 /// To try one, list it, for example `&.{ .vignette }` or `&.{ .grayscale, .vignette }`.
 pub const post_effects: []const engine.Effect = &.{};
-/// Strengths the effects read: vignette, scanline dim, and grayscale amount, each from 0 to 1. The defaults keep their original look.
-pub const post_params: engine.PostParams = engine.default_post_params;
 /// The most bytes the texture cache may hold. Zero means no budget. Requested textures are loaded through the cache,
 /// so the budget applies to them; direct `acquireTexture` loads count against it too.
 pub const texture_budget_bytes: usize = 0;
@@ -101,12 +107,6 @@ comptime {
 /// 320x180 view. The file must have been baked at exactly this size.
 pub const ui_font_path = "assets/ui_font_9px.bfnt";
 pub const ui_font_px: f32 = 9;
-/// The font for the debug overlay, and its height. This is the engine's single definition (application.zig), so the
-/// game and the samples cannot disagree. It is the same 9 px mono atlas as the demo panel. At 7 px mono hinting drops
-/// strokes, and at 8 px some glyphs still blur together.
-pub const debug_font_path = engine.default_debug_font_path;
-pub const debug_font_px: f32 = engine.default_debug_font_px;
-
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.
 pub const log_file_name: ?[:0]const u8 = "Semkootru.log";
 pub const crash_file_name: ?[:0]const u8 = "Semkootru.crash.txt";

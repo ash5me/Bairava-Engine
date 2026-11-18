@@ -15,10 +15,13 @@
 //! which reuses cache slots and therefore needs one.
 //!
 //! Ownership and lifetime:
-//! - `Registry(T)` owns each stored value until `remove` returns it. The caller then releases the value, for example
-//!   a GPU texture. Removing does not release anything by itself.
-//! - `Registry.deinit` frees only the table. Remove every entry, and release each value, before calling it.
-//! - A pointer from `get` is valid until the next `insert` or `remove`, because either may move the table.
+//! - `Registry(T)` owns each stored value until `remove` returns it, or until `deinitWith` releases it. Removing
+//!   does not release anything by itself. The caller releases the value, for example a GPU texture.
+//! - Each value lives in its own heap allocation, so its address does not change while it is stored. A pointer from
+//!   `get` or `peek` stays valid until that handle is removed or the registry is deinitialized. Inserting more fonts
+//!   never moves a stored font. The C UI bridge keeps a pointer into a font's metrics, so this must hold.
+//! - `deinit` frees the value allocations and the table. It does not release the values, so remove them first, or
+//!   use `deinitWith`, which releases each one.
 //! - A handle is valid only with the registry that issued it. Two registries can issue the same id.
 
 const std = @import("std");
@@ -58,15 +61,16 @@ pub fn issue(next: *FontId) IssueError!FontId {
     return id;
 }
 
-/// A table of values keyed by `FontId`, with a handle for each. Lookups are linear, which is fine for the small
-/// number of fonts a game loads.
+/// A table of values keyed by `FontId`, with a handle for each. Each value is heap-allocated once, so the table can
+/// grow without moving a stored value. Lookups are linear, which is fine for the small number of fonts a game loads.
 pub fn Registry(comptime T: type) type {
     return struct {
         const Self = @This();
 
         pub const Entry = struct {
             id: FontId,
-            value: T,
+            /// The value's own allocation. It does not move while the entry is stored.
+            value: *T,
         };
 
         allocator: std.mem.Allocator,
@@ -78,8 +82,21 @@ pub fn Registry(comptime T: type) type {
             return .{ .allocator = allocator };
         }
 
-        /// Frees the table only. Remove every entry, and release its value, first.
+        /// Frees each value's allocation and the table. It does not release the values. Remove them first, or use
+        /// `deinitWith`.
         pub fn deinit(self: *Self) void {
+            for (self.entries.items) |entry| self.allocator.destroy(entry.value);
+            self.entries.deinit(self.allocator);
+            self.* = undefined;
+        }
+
+        /// Calls `release` on every value still stored, frees them, and frees the table. Use it at shutdown, before
+        /// anything the values depend on is destroyed.
+        pub fn deinitWith(self: *Self, release: *const fn (*T) void) void {
+            for (self.entries.items) |entry| {
+                release(entry.value);
+                self.allocator.destroy(entry.value);
+            }
             self.entries.deinit(self.allocator);
             self.* = undefined;
         }
@@ -89,26 +106,37 @@ pub fn Registry(comptime T: type) type {
             return self.entries.items.len;
         }
 
-        /// Stores `value` under a new id and returns its handle. If the table cannot grow, the id is still spent. That
-        /// is safe, because ids are never reused.
+        /// Stores `value` under a new id and returns its handle. If the value cannot be stored, the id is still spent.
+        /// That is safe, because ids are never reused. Nothing is stored in that case, so the caller still owns `value`.
         pub fn insert(self: *Self, value: T) InsertError!FontHandle {
             const id = try issue(&self.next_id);
-            try self.entries.append(self.allocator, .{ .id = id, .value = value });
+            const slot = try self.allocator.create(T);
+            errdefer self.allocator.destroy(slot);
+            slot.* = value;
+            try self.entries.append(self.allocator, .{ .id = id, .value = slot });
             return .{ .id = id };
         }
 
-        /// Returns the stored value. The pointer is valid until the next `insert` or `remove`.
+        /// Returns the stored value. The pointer stays valid until this handle is removed or the registry is deinitialized.
         pub fn get(self: *Self, handle: FontHandle) LookupError!*T {
             const index = try self.indexOf(handle);
-            return &self.entries.items[index].value;
+            return self.entries.items[index].value;
+        }
+
+        /// As `get`, for a caller that only reads and holds a const registry.
+        pub fn peek(self: *const Self, handle: FontHandle) LookupError!*const T {
+            const index = try self.indexOf(handle);
+            return self.entries.items[index].value;
         }
 
         /// Removes the entry and returns its value. The caller owns the value and must release it. The handle becomes
-        /// stale and stays stale.
+        /// stale and stays stale. Pointers to this value are invalid after this returns.
         pub fn remove(self: *Self, handle: FontHandle) LookupError!T {
             const index = try self.indexOf(handle);
             const removed = self.entries.swapRemove(index);
-            return removed.value;
+            const value = removed.value.*;
+            self.allocator.destroy(removed.value);
+            return value;
         }
 
         fn indexOf(self: *const Self, handle: FontHandle) LookupError!usize {
@@ -156,6 +184,27 @@ test "an inserted value is found by its handle" {
     _ = try reg.remove(b);
 }
 
+test "a stored value keeps its address as more fonts are inserted" {
+    var reg = Reg.init(testing.allocator);
+    defer reg.deinit();
+    const first = try reg.insert(42);
+    const before = try reg.get(first);
+    var i: u32 = 0;
+    while (i < 200) : (i += 1) _ = try reg.insert(i);
+    const after = try reg.get(first);
+    try testing.expect(before == after);
+    try testing.expectEqual(@as(u32, 42), after.*);
+}
+
+test "peek reads a value through a const registry" {
+    var reg = Reg.init(testing.allocator);
+    defer reg.deinit();
+    const h = try reg.insert(9);
+    const view: *const Reg = &reg;
+    try testing.expectEqual(@as(u32, 9), (try view.peek(h)).*);
+    try testing.expectError(error.InvalidHandle, view.peek(FontHandle.invalid));
+}
+
 test "the invalid handle, and an id never issued, are InvalidHandle" {
     var reg = Reg.init(testing.allocator);
     defer reg.deinit();
@@ -200,6 +249,23 @@ test "removing one font leaves the other handles valid" {
     _ = try reg.remove(c);
 }
 
+var test_release_calls: u32 = 0;
+
+fn countRelease(_: *u32) void {
+    test_release_calls += 1;
+}
+
+test "deinitWith releases each value still stored, and only those" {
+    test_release_calls = 0;
+    var reg = Reg.init(testing.allocator);
+    const a = try reg.insert(1);
+    _ = try reg.insert(2);
+    _ = try reg.insert(3);
+    _ = try reg.remove(a);
+    reg.deinitWith(&countRelease);
+    try testing.expectEqual(@as(u32, 2), test_release_calls);
+}
+
 test "a registry at the top of the id range refuses insert without wrapping" {
     var reg = Reg.init(testing.allocator);
     defer reg.deinit();
@@ -218,7 +284,7 @@ test "a failed insert stores nothing and spends its id, so a later insert never 
     var reg = Reg.init(failing.allocator());
     defer reg.deinit();
 
-    // The first allocation fails, so the append fails. The id was issued before the append, so it is spent.
+    // The first allocation fails, so the value's allocation fails. The id was issued before it, so it is spent.
     try testing.expectError(error.OutOfMemory, reg.insert(1));
     try testing.expectEqual(@as(usize, 0), reg.count());
     try testing.expectEqual(@as(FontId, 2), reg.next_id);
