@@ -16,6 +16,7 @@ and reflected in the version records that ship with release artifacts.
 | cglm, FreeType, stb, log.c, Parson | Versions, upstream references, and source-tree SHA-256 values in [`dependency-lock.json`](dependency-lock.json) |
 | HarfBuzz | Version, upstream reference, and source-tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); vendored under `vendor/harfbuzz-15.1.0/` (`src/` and `COPYING`) |
 | Test font (Noto Sans Tamil) | Upstream commit and tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); files under `tests/fixtures/`, used only by `zig build test` |
+| Test font (Chemmozhi Paranar) | SHA-256 in [`dependency-lock.json`](dependency-lock.json); file under `tests/fixtures/`, used only by `zig build test`. License accepted by the owner (see "Test fixtures") |
 
 The lock file covers every file in the vendored dependency paths, not just
 version headers. It also mirrors the Zig, Slang, SDL, and ztracy pins. The
@@ -76,6 +77,14 @@ change history for rollback.
 - Used by `src/engine/text/shaper_tamil_test.zig` only. `scripts/package-release.ps1` copies a fixed list of files and does not copy `tests/`, so the font is not in release archives.
 - The lock records the tree hash of both files, and `scripts/check-dependency-pins.py` verifies it on every run.
 - Replace the font only as a reviewed change: a new pinned commit, new hashes, and the expected Tamil values in `shaper_tamil_test.zig` rechecked against it.
+
+**Chemmozhi Paranar** (`tests/fixtures/ChemmozhiParanar.ttf`)
+
+- Version 1.000 (2011). The name table credits R. Kalaimani, 1998, and says the font was modified by ICTA (Sri Lanka) and renamed from TSCu_Paranar.
+- License, as the font's own name records state it (name IDs 0 and 10): "Released Under the GNU GPL, Dec. 2002." The GPL version is not stated, and the font has no font exception.
+- **Owner decision, 2026-11-18:** the owner accepted this license for use in the repository. The fixture is used by `src/engine/text/shaper_chemmozhi_test.zig` only, and `scripts/package-release.ps1` does not copy `tests/`, so it is not in release archives.
+- Not approved for shipping in the game. Bundling this font in game assets or a release would make its GPL terms apply to that release, and that needs a separate owner decision.
+- The file hash in the lock (`ab3de81b…`) is the pin. No upstream URL exists for the file, so there is no commit to record.
 
 ## Release record
 

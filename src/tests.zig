@@ -23,6 +23,7 @@ test {
     _ = @import("engine/text/shaped_layout.zig");
     _ = @import("engine/text/glyph_records.zig");
     _ = @import("engine/text/shaper_tamil_test.zig");
+    _ = @import("engine/text/shaper_chemmozhi_test.zig");
     _ = @import("engine/renderer/glyph_atlas.zig");
     _ = @import("engine/renderer/renderer.zig");
     _ = @import("engine/renderer/post.zig");

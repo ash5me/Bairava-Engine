@@ -99,6 +99,16 @@
         "tests/fixtures/NotoSansTamil-OFL.txt"
       ],
       "sha256": "75c12e3d397b0f7abf68fec99befd428ae2bf638ecb2232fd1b106da7a4c5e15"
+    },
+    {
+      "name": "Chemmozhi Paranar (test fixture)",
+      "version": "1.000 (2011); ICTA modification of TSCu_Paranar, copyright R. Kalaimani 1998",
+      "source": "Owner-supplied file (uploaded 2026-11-18). No upstream URL; the file hash below is the pin.",
+      "license": "GNU GPL, version not stated in the font, no font exception (name records 0 and 10). Accepted by the owner, 2026-11-18.",
+      "paths": [
+        "tests/fixtures/ChemmozhiParanar.ttf"
+      ],
+      "sha256": "eee6c997d1bc175c1141bab0e3e4973105da97a033016cacc67f8e29f8b97621"
     }
   ]
 }
