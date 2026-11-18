@@ -57,3 +57,11 @@ Not verified here
   - The Zig does not compile in the sandbox. The .solid = 1 line in ui.zig is unverified until zig build test.
   - The renderer-owned white texture and per-quad texture selection are not implemented. Checking them needs a
     device (E-02 for the GPU path and E-04 for the 2D path).
+
+
+Owner run (2026-11-18, Windows, zig 0.16.0-dev.3142+5ccfeb926, commit 9e8039d)
+  zig build test-ui printed:
+    imgui: all checks passed
+    text: all checks passed
+  This closes the "not run" item above for the repository's own UI tests. It is a console record, not a saved log.
+  The plan's "Owner local run" paragraph records the platform, toolchain, and commit, and it states the open items.

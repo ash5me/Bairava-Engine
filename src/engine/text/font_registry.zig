@@ -212,3 +212,24 @@ test "a registry at the top of the id range refuses insert without wrapping" {
     try testing.expectEqual(@as(u32, 5), (try reg.get(last)).*);
     _ = try reg.remove(last);
 }
+
+test "a failed insert stores nothing and spends its id, so a later insert never reissues it" {
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    var reg = Reg.init(failing.allocator());
+    defer reg.deinit();
+
+    // The first allocation fails, so the append fails. The id was issued before the append, so it is spent.
+    try testing.expectError(error.OutOfMemory, reg.insert(1));
+    try testing.expectEqual(@as(usize, 0), reg.count());
+    try testing.expectEqual(@as(FontId, 2), reg.next_id);
+
+    // The next attempt issues id 2. Its allocation may succeed or fail, and the counter moves on either way.
+    const second = reg.insert(2);
+    try testing.expectEqual(@as(FontId, 3), reg.next_id);
+    if (second) |handle| {
+        try testing.expectEqual(@as(FontId, 2), handle.id);
+        try testing.expectEqual(@as(u32, 2), (try reg.get(handle)).*);
+    } else |err| {
+        try testing.expect(err == error.OutOfMemory);
+    }
+}

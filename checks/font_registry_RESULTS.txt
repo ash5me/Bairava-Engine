@@ -52,7 +52,7 @@ Zig test to mirror check (parity map, font_registry.zig)
   "removing one font leaves the other handles valid"                   test_remove_middle_keeps_others
   "a registry at the top of the id range refuses insert without..."    test_insert_at_top
 
-  8 of 8 Zig tests have a mirror check with the same values.
+  8 of 8 mirrored Zig tests have a mirror check with the same values. The ninth Zig test is the out-of-memory test below.
 
 Mirror-only checks (no Zig test yet)
 
@@ -63,8 +63,17 @@ Mirror-only checks (no Zig test yet)
 
 Known gaps (recorded, not hidden)
 
-  - No Zig test covers the OOM rule. A std.testing.FailingAllocator test is the natural addition, but it was not
-    written here because the pinned Zig dev build's FailingAllocator API cannot be checked without a compiler.
+  - Added after the mirror run: a Zig test covers the OOM rule. It is named "a failed insert stores nothing and
+    spends its id, so a later insert never reissues it", and it uses std.testing.FailingAllocator with fail_index 0, as
+    glyph_cache.zig and allocators.zig do. It mirrors test_oom_spends_id. Its second attempt accepts either outcome,
+    because the allocator's behaviour after the failure index is not checked here. The mirror checks the success case.
+    Not compiled in the sandbox; the owner's zig build test is the first check of it.
   - D-03 (ShapedRun.font_id, Shaper.initWithFontId) has Zig tests in shaper.zig and no C mirror. HarfBuzz is not
     modeled in the sandbox. Those tests run only under `zig build test`.
   - The mirror checks control flow. It is not evidence that the Zig compiles or that the Zig tests pass.
+
+
+Owner run (2026-11-18): the owner reports that zig build and zig build test succeed on the tree in the zip. That
+report gave no toolchain or commit, so it is not yet confirmed as the same run as the UI run that printed the Zig
+version and commit. The plan's "Owner local run" paragraph has those details and the open items. This is a console
+record, not a saved log.
