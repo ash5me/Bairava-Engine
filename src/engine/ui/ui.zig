@@ -148,6 +148,7 @@ pub const Canvas = struct {
             .dst = .{ .x = x, .y = y, .w = w, .h = h },
             .src = self.font.baked.white,
             .color = toC(color),
+            .solid = 1,
         };
         list.count += 1;
     }

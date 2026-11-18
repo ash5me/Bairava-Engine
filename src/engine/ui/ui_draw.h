@@ -23,6 +23,7 @@ typedef struct ui_quad {
     ui_rect dst;    /* where to draw, in pixels from the top-left of the UI */
     ui_rect src;    /* what to draw, in texels of the font atlas */
     ui_color color; /* RGB tints the texel, and alpha multiplies its alpha */
+    int solid;      /* 1 for a solid fill, 0 for a glyph. A backend may draw a fill from its own white texture and ignore src. */
 } ui_quad;
 
 typedef struct ui_quad_list {
@@ -41,6 +42,22 @@ static inline void ui_quad_push(ui_quad_list *list, ui_rect dst, ui_rect src, ui
     q->dst = dst;
     q->src = src;
     q->color = color;
+    q->solid = 0;
+}
+
+/* Adds a solid fill. `src` is the atlas white texel, which the atlas path samples today. The flag tells a backend
+ * that it may draw the fill from its own white texture instead, so the fill does not depend on the font. */
+static inline void ui_quad_push_solid(ui_quad_list *list, ui_rect dst, ui_rect src, ui_color color) {
+    ui_quad *q;
+    if (list->count == UI_MAX_QUADS) {
+        list->dropped++;
+        return;
+    }
+    q = &list->items[list->count++];
+    q->dst = dst;
+    q->src = src;
+    q->color = color;
+    q->solid = 1;
 }
 
 #endif

@@ -49,7 +49,7 @@ static ui_rect next_row(ui_context *ui, float h) {
 }
 
 static void fill(ui_context *ui, ui_rect r, ui_color c) {
-    ui_quad_push(&ui->list, r, ui->font->white, c);
+    ui_quad_push_solid(&ui->list, r, ui->font->white, c);
 }
 
 /* The press logic every widget shares. Hover is only claimed while nothing is active, so a widget

@@ -1,0 +1,59 @@
+UI quad solid flag: C side of decision D-04, 2026-11-18 (sandbox, Ubuntu 24.04, gcc 13.3.0)
+==========================================================================================
+
+What changed (production code)
+  src/engine/ui/ui_draw.h   ui_quad gains `int solid`. ui_quad_push sets it to 0 (glyphs). The new
+                            ui_quad_push_solid sets it to 1 (fills). Both keep dst, src, and color.
+  src/engine/ui/imgui.c     fill() calls ui_quad_push_solid. It is the only solid-fill call site.
+  src/engine/ui/ui.zig      Canvas.rect sets .solid = 1. Without it the Zig struct literal would not compile,
+                            because C struct fields have no defaults. This is the only Zig quad literal.
+
+Behaviour is unchanged. The Zig backend still samples the font atlas for every quad, and it ignores the flag.
+The renderer-owned white texture, and the backend's use of the flag, are not done (they need a device).
+
+Check 1: checks/ui_solid_check.c (20 checks, real text.c and imgui.c, synthetic font)
+
+  gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
+      -Isrc/engine/ui -Isrc/engine/text -Ichecks checks/ui_solid_check.c \
+      src/engine/text/text.c src/engine/ui/imgui.c -lm -o ui_solid_check
+  ./ui_solid_check
+  -> 20 checks, 0 failures, PASSED
+
+  Covers: the two push helpers mark the flag and keep the other fields; glyph quads from ui_font_draw_text are
+  not solid and do not sample the white block; in a widget frame, every solid quad samples the white texel,
+  the label and button text draw glyphs that never sample it, and nothing is dropped.
+
+Check 2: checks/ui_quad_dump.c (regression against the original upload)
+
+  The program prints dst, src, and color for every quad, and never the flag, so it builds against both trees.
+  It runs a five-frame scenario: text, scaled text, then hover, press, and release on the button (frame 2 reports
+  clicked=1), and a press and release on the slider (its value moves in frame 3).
+
+  Built against the original upload (/tmp/orig) and against this tree, the output is 132 lines in each and
+  `diff` reports no difference. Floats print as hex, so the comparison is exact.
+
+Planted bugs (scratch copies in /tmp only; the repository was not modified)
+
+  Mutant         Planted bug                                        Caught by
+  FILL_NOT_SOLID fill() uses ui_quad_push, so the fill is not solid  ui_solid_check: exit 1, 2 FAIL lines
+  GLYPH_SOLID    ui_quad_push sets solid = 1 for glyphs              ui_solid_check: exit 1, 9 FAIL lines
+  SOLID_CLEARED  ui_quad_push_solid sets solid = 0                   ui_solid_check: exit 1, 3 FAIL lines
+  FILL_TEXEL     fill samples texel (8,0,2,2), flag untouched        ui_quad_dump diff: differs from original
+                                                                     ui_solid_check: exit 1, 1 FAIL line
+
+  FILL_TEXEL is the case the flag cannot see. The dump diff catches it, and so does the solid check, which
+  requires fills to sample the white texel.
+
+Other checks re-run on the changed tree
+  Phase 0 characterization harness (includes text.c):  70 checks, 0 failed
+  font_registry mirror (strict, sanitizers):           41 checks, 0 failures
+  glyph_cache mirror (strict, sanitizers):             2199 checks, 0 failures
+  scripts/boundary_scan.py --fail:                      0 reachable violations
+
+Not verified here
+  - The repository UI tests (tests/ui/test_imgui.c, test_text.c) need vendor/ (stb_truetype and FreeType), which
+    is absent from the upload. They were not run. They only read quad fields and construct none, so the new
+    field does not change what they check. That is a reading of the code, not a run.
+  - The Zig does not compile in the sandbox. The .solid = 1 line in ui.zig is unverified until zig build test.
+  - The renderer-owned white texture and per-quad texture selection are not implemented. Checking them needs a
+    device (E-02 for the GPU path and E-04 for the 2D path).
