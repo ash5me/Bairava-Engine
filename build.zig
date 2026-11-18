@@ -592,7 +592,8 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     addCglm(b, test_module);
-    // Shaping is not in the shipped engine yet, so only the test module links HarfBuzz for now.
+    // The engine module links HarfBuzz as well (configureEngineModule), so the game, sample, and benchmark link it.
+    // This test module links it again because tests.zig compiles the text sources directly, not through the engine module.
     addHarfBuzz(b, test_module);
     // Renderer modules use SDL GPU declarations, and embedded shaders are needed to compile them.
     // Tests open no window and create no GPU device.

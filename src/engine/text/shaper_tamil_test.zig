@@ -120,3 +120,111 @@ test "Tamil words wrap at their space, and the conjunct on the second line keeps
         try testing.expectApproxEqAbs(line.width, sum, 1e-4);
     }
 }
+
+// The values in the tests below were read from HarfBuzz 8.3.0 (a system build), not from the pinned 15.1.0. The
+// expectations above reproduce on 8.3.0, which is why that build was used. The pinned run must confirm these values
+// before the Phase 3 gate closes. Glyph names are the font's own, from its post table.
+
+test "the KSSA ligature is glyph 76 (tchatamil), advance 23.890625 px, and it has no offset" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var sh = try shaper.Shaper.init(&font);
+    defer sh.deinit();
+
+    var run = try sh.shape(testing.allocator, "\u{0B95}\u{0BCD}\u{0BB7}", taml);
+    defer run.deinit();
+    try testing.expectEqual(@as(usize, 1), run.glyphs.len);
+    try testing.expectEqual(@as(u32, 76), run.glyphs[0].glyph_id);
+    try testing.expectEqual(@as(f32, 23.890625), run.glyphs[0].x_advance);
+    try testing.expectEqual(@as(f32, 0), run.glyphs[0].x_offset);
+    try testing.expectEqual(@as(f32, 0), run.glyphs[0].y_offset);
+}
+
+test "the same conjunct under Latn: glyphs 18, 52, 38 with their advances, and a width of 28 px" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var sh = try shaper.Shaper.init(&font);
+    defer sh.deinit();
+
+    var run = try sh.shape(testing.allocator, "\u{0B95}\u{0BCD}\u{0BB7}", .{ .script = "Latn", .language = "en" });
+    defer run.deinit();
+    const ids = [_]u32{ 18, 52, 38 };
+    const advances = [_]f32{ 10.640625, 0, 17.359375 };
+    try testing.expectEqual(@as(usize, 3), run.glyphs.len);
+    for (run.glyphs, ids, advances) |g, id, advance| {
+        try testing.expectEqual(id, g.glyph_id);
+        try testing.expectEqual(advance, g.x_advance);
+        try testing.expectEqual(@as(f32, 0), g.x_offset);
+        try testing.expectEqual(@as(f32, 0), g.y_offset);
+    }
+    try testing.expectEqual(@as(f32, 28), run.width);
+}
+
+test "the vowel sign O on க: glyphs 46, 18, 41 with their advances and no offsets" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var sh = try shaper.Shaper.init(&font);
+    defer sh.deinit();
+
+    var run = try sh.shape(testing.allocator, "\u{0B95}\u{0BCA}", taml);
+    defer run.deinit();
+    const ids = [_]u32{ 46, 18, 41 };
+    const advances = [_]f32{ 11.625, 10.640625, 8.265625 };
+    try testing.expectEqual(@as(usize, 3), run.glyphs.len);
+    for (run.glyphs, ids, advances) |g, id, advance| {
+        try testing.expectEqual(id, g.glyph_id);
+        try testing.expectEqual(advance, g.x_advance);
+        try testing.expectEqual(@as(f32, 0), g.x_offset);
+        try testing.expectEqual(@as(f32, 0), g.y_offset);
+    }
+}
+
+test "an anusvara after க has no advance, an x offset of -7.59375 px, and shares the cluster" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var sh = try shaper.Shaper.init(&font);
+    defer sh.deinit();
+
+    // U+0B95 U+0B82. Glyph 18 is katamil. Glyph 4 is anusvaratamil, which the font places by its offset.
+    var run = try sh.shape(testing.allocator, "\u{0B95}\u{0B82}", taml);
+    defer run.deinit();
+    try testing.expectEqual(@as(usize, 2), run.glyphs.len);
+    try testing.expectEqual(@as(u32, 18), run.glyphs[0].glyph_id);
+    try testing.expectEqual(@as(f32, 10.640625), run.glyphs[0].x_advance);
+    try testing.expectEqual(@as(f32, 0), run.glyphs[0].x_offset);
+    try testing.expectEqual(@as(u32, 4), run.glyphs[1].glyph_id);
+    try testing.expectEqual(@as(u32, 0), run.glyphs[1].cluster);
+    try testing.expectEqual(@as(f32, 0), run.glyphs[1].x_advance);
+    try testing.expectEqual(@as(f32, -7.59375), run.glyphs[1].x_offset);
+    try testing.expectEqual(@as(f32, 0), run.glyphs[1].y_offset);
+}
+
+test "the word தமிழ் shapes to glyphs 25, 29, 42, 94 with these advances, and a width of 36.171875 px" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var sh = try shaper.Shaper.init(&font);
+    defer sh.deinit();
+
+    var run = try sh.shape(testing.allocator, "\u{0BA4}\u{0BAE}\u{0BBF}\u{0BB4}\u{0BCD}", taml);
+    defer run.deinit();
+    const ids = [_]u32{ 25, 29, 42, 94 };
+    const advances = [_]f32{ 10.640625, 11.078125, 3.375, 11.078125 };
+    try testing.expectEqual(@as(usize, 4), run.glyphs.len);
+    for (run.glyphs, ids, advances) |g, id, advance| {
+        try testing.expectEqual(id, g.glyph_id);
+        try testing.expectEqual(advance, g.x_advance);
+        try testing.expectEqual(@as(f32, 0), g.x_offset);
+        try testing.expectEqual(@as(f32, 0), g.y_offset);
+    }
+    try testing.expectEqual(@as(f32, 36.171875), run.width);
+}

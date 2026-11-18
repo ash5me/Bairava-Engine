@@ -32,6 +32,13 @@ test "a request for the reserved 2D path resolves to SDL_GPU while the path is u
     try std.testing.expectEqual(Renderer.sdl_gpu, resolveRenderer(.sdl_gpu));
 }
 
+/// The debug overlay's font: the one definition of its file and height. The game reads these through
+/// src/game/config.zig, and every engine application that does not set its own uses them as the defaults. The file is
+/// the 9 px mono atlas that the game's UI also draws with, baked at exactly this height in assets/asset_manifest.txt.
+/// Change the size here and in the manifest together.
+pub const default_debug_font_path: []const u8 = "assets/ui_font_9px.bfnt";
+pub const default_debug_font_px: f32 = 9;
+
 /// Settings the game passes to `run`.
 pub const Config = struct {
     /// Parent allocator for all memory owned during this run. The runtime creates narrower
@@ -63,8 +70,8 @@ pub const Config = struct {
     zoom_rate: f32 = 8.0,
     /// Font for the debug overlay: a prebaked `.bfnt` file relative to the executable's folder, baked at exactly
     /// `debug_font_px`. A missing or mismatched file turns the overlay off.
-    debug_font_path: []const u8 = "assets/default_font_10px.bfnt",
-    debug_font_px: f32 = 10.0,
+    debug_font_path: []const u8 = default_debug_font_path,
+    debug_font_px: f32 = default_debug_font_px,
     /// Name of the log file, written beside the executable. Each run replaces the file from the
     /// last run. Null logs to the terminal only.
     log_file: ?[:0]const u8 = null,

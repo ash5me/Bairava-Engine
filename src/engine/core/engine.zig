@@ -14,6 +14,8 @@
 //! runs once per frame and gets `alpha` to blend between the last two updates.
 
 pub const Config = @import("application.zig").Config;
+pub const default_debug_font_path = @import("application.zig").default_debug_font_path;
+pub const default_debug_font_px = @import("application.zig").default_debug_font_px;
 pub const Renderer = @import("application.zig").Renderer;
 pub const Context = @import("context.zig").Context;
 pub const AssetError = @import("context.zig").AssetError;

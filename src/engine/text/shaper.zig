@@ -391,3 +391,28 @@ test "one shaper reused for many strings leaves nothing allocated" {
         try testing.expectEqual(@as(usize, 1), short.glyphs.len);
     }
 }
+
+test "a combining overline is a zero-advance glyph placed by its offset, and the base has none" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var shaper = try Shaper.init(&font);
+    defer shaper.deinit();
+
+    // Glyph 68 is the Latin a. Glyph 2116 is uni0305, the combining overline. The values were read from HarfBuzz 8.3.0
+    // with this font at 16 px, and are not yet confirmed against the pinned 15.1.0. The y axis points down here, so a
+    // positive y_offset moves the mark down onto the base: the overline's own outline sits high in the font.
+    var run = try shaper.shape(testing.allocator, "a\u{305}", .{});
+    defer run.deinit();
+    try testing.expectEqual(@as(usize, 2), run.glyphs.len);
+    try testing.expectEqual(@as(u32, 68), run.glyphs[0].glyph_id);
+    try testing.expectEqual(@as(f32, 7.96875), run.glyphs[0].x_advance);
+    try testing.expectEqual(@as(f32, 0), run.glyphs[0].x_offset);
+    try testing.expectEqual(@as(f32, 0), run.glyphs[0].y_offset);
+    try testing.expectEqual(@as(u32, 2116), run.glyphs[1].glyph_id);
+    try testing.expectEqual(@as(f32, 0), run.glyphs[1].x_advance);
+    try testing.expectEqual(@as(f32, -4.15625), run.glyphs[1].x_offset);
+    try testing.expectEqual(@as(f32, 2.421875), run.glyphs[1].y_offset);
+    try testing.expectEqual(@as(u32, 0), run.glyphs[1].cluster);
+}

@@ -4,6 +4,8 @@
 const engine = @import("core/engine.zig");
 
 pub const Config = engine.Config;
+pub const default_debug_font_path = engine.default_debug_font_path;
+pub const default_debug_font_px = engine.default_debug_font_px;
 pub const Context = engine.Context;
 pub const AssetError = engine.AssetError;
 pub const Capabilities = engine.Capabilities;

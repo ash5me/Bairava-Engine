@@ -1,6 +1,6 @@
 # Bairava Engine — Text and Font System Migration Plan
 
-**Status:** Proposed — planning document only; no implementation performed by this document  
+**Status (updated 2026-11-18):** Phase 0 decisions D-01 through D-06, D-08, D-09, and D-12 are accepted as recorded in section 6.2. E-01 is passed on commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded` (Windows, Linux, macOS; evidence in section 6.4). **Phases 1 and 2 implementation have not started.** Phase 3/4/5 CPU work exists in the reviewed branch, but implementation and integration status remain as recorded in the phase sections; E-01 does not close GPU/device gates or imply Phases 1, 2, 4, or 5 are complete.  
 **Scope:** Merge the runtime text/shaping pipeline (Architecture 1) with the multi-source font system (Architecture 2)  
 **Repository reviewed:** `ash5me/Bairava-Engine` default branch  
 **Target:** A unified text system that supports hand-authored bitmap fonts, the existing prebaked coverage fonts, runtime-rasterized outline fonts, and optional MSDF fonts while continuing to use Bairava's existing renderer and `SpriteBatch`.
@@ -248,26 +248,92 @@ Static bitmap, BFNT, and MSDF atlases can be pre-existing assets. Runtime covera
 
 ## 6. Implementation phases and exit gates
 
-**Gate policy:** Do not start the next phase simply because the current code compiles. The phase's exit criteria must pass, be reviewed, and be recorded. A phase may be split into smaller PRs, but its gate remains mandatory.
+## 6.1 Gate model
+
+Each phase has four parts that close separately:
+
+1. **Decisions.** Owner choices that change a format, an API, or a dependency. They are listed in section 6.2 with an ID (`D-xx`). Code can propose a decision but cannot settle one. A phase's implementation does not start until its decisions are Accepted.
+2. **Implementation.** The Needs and Wants lists. Each item is done, partly done, not started, or N/A (section 6.3).
+3. **Environment.** Validation that needs a toolchain or hardware the work environment may not have (`E-xx`, section 6.4). An environment gate closes only on a recorded run.
+4. **Exit gate.** The phase's exit criteria. A phase closes only when they pass, are reviewed, and are recorded here.
+
+Gate policy: do not start a phase's implementation until its decisions are Accepted. Do not start the next phase simply because the current code compiles. A phase may be split into smaller PRs, but its gate remains mandatory.
+
+**Current state (updated 2026-11-18).** Phase 1 and Phase 2 implementation have not started. CPU code exists for parts of Phases 3, 4, and 5: the shaper and shaped layout, the glyph cache and resolver, and the atlas. `Atlas.flush` is called only from the debug glyph check (`src/engine/renderer/glyph_check.zig`); the frame flush wiring and consumer migration remain open. The pinned CI compile/test matrix now passes at E-01 commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`. Do not treat that CI result as evidence that Phases 1, 2, 4, or 5 implementation is complete.
+
+## 6.2 Decision register
+
+Status values: **Accepted** (with the date), **Accepted by direction** (an owner instruction, recorded here), or **Open** (a proposal that is not in force). Proposals in this table are not in force until they are accepted.
+
+Phase 1 decisions come first. They fix the font representation, the `Canvas` API boundary, and the overlay font, and Phase 5 depends on all three. Starting Phase 5 before they are resolved risks rework.
+
+| ID | Decision | Needed before | Status |
+|---|---|---|---|
+| D-01 | **One public `FontHandle` backed by a registry-owned `FontResource` tagged union** for bitmap, BFNT coverage, runtime coverage, and MSDF providers. The registry owns provider resources; game-facing code uses the handle and does not know the provider. | Phase 1 | **Accepted (owner, 2026-11-18)** |
+| D-02 | **Opaque registry-issued `FontId` (`u64`)**. Zero is invalid; IDs are never reused during the process lifetime; stale handles fail explicitly; exhaustion fails rather than wrapping. | Phase 1 | **Accepted with clarification (owner, 2026-11-18)** |
+| D-03 | Store font identity once on `ShapedRun`, not on every `Glyph`, until a font-fallback chain exists. | Phase 1 | **Accepted (owner, 2026-11-18)** |
+| D-04 | `Canvas.rect` must use a renderer-owned 2×2 white texture, created independently of font resources and atlas pages. | Phase 1 | **Accepted (owner, 2026-11-18)** |
+| D-05 | Preserve existing `Canvas.text`, `textWidth`, `layoutText`, and `drawTextLayout` signatures; change internals through adapters. New functionality is additive; do not require game code to manage glyph IDs or atlas pages. | Phase 1 (required by Phase 5) | **Accepted (owner, 2026-11-18)** |
+| D-06 | First release is horizontal LTR only; no RTL or paragraph bidi. Script and language remain explicit caller-controlled options, with compatibility defaults `Latn` and `en`; do not guess them. Tamil callers specify `Taml` and `ta`. | Phase 1 | **Accepted with clarification (owner, 2026-11-18)** |
+| D-07 | Debug overlay and console font: one definition, 9 px mono, `assets/ui_font_9px.bfnt`. Defined once in `application.zig` (`default_debug_font_path`, `default_debug_font_px`); `src/game/config.zig` reads it. | Phase 1 | Accepted by direction (owner, 2026-11-18): preserve 9 px. Code status is tracked in Phase 1. |
+| D-08 | **Use the established AngelCode BMFont text descriptor format** for hand-authored bitmap font metadata. Parse/import it into Bairava-owned normalized structures; do not expose BMFont types as public engine API. | Phase 2 | **Accepted with change (owner, 2026-11-18)** |
+| D-09 | Use `dhepper/font8x8` `font8x8_basic` as the initial 8×8 monochrome ASCII pixel-font source, pinned to commit `4876b70490600222f30bb9acd2c02868e390bb56`. Include printable ASCII U+0020–U+007E; 16 columns × 6 rows (128×48 atlas); fixed 8-pixel advance; space has no ink; `?` is the initial fallback. The repository identifies the font data as public domain. The asset still must be generated/imported, checked in, and covered by descriptor/importer tests. | Phase 2 | **Accepted; asset integration pending (owner, 2026-11-18)** |
+| D-10 | Runtime outline formats: TrueType `glyf` only; CFF stays on the prebaked path. The code enforces this (`checkFormat`). Variable fonts use their default instance. | Phase 0 exit; Phase 3 | Open |
+| D-11 | Runtime FreeType is not part of the first release. | Phase 0 exit | Open |
+| D-12 | Scripts and test corpus: Latin and Tamil. **Chemmozhi Paranar may remain in the distributed repository only as a test fixture**, with its exact upstream license text/version, copyright and modification attribution, provenance, and hash retained. It must not be silently included in game assets, binaries, or release packages. Any downstream redistribution must comply with the actual GPL version attached to the font. | Phase 0 exit | **Accepted with test-only restriction (owner, 2026-11-18)** |
+| D-13 | Missing glyphs: a caller-supplied fallback glyph, with no font chain in the first release. Mapping `?` and font chains move to Phase 7. | Phase 0 exit; Phase 4 | Open |
+| D-14 | Atlas memory ceiling: 4 pages of 1024² R8, which is 8 MiB at the default, plus 4 MiB per 2D copy while 2D is active. No eviction. A full cache refuses the glyph with `AtlasFull` and counts it. | Phase 0 exit; Phase 4 | Open |
+| D-15 | Success metrics: the frame-time budget and the text load it applies to. The plan asks for "acceptable" performance and gives no number. | Phase 0 exit; Phase 7 | Open (owner input) |
+| D-16 | OpenType features: HarfBuzz defaults only in the first release. Configurable features stay a Want. | Phase 3 | Open |
+| D-17 | MSDF generator. Candidate: `msdf-atlas-gen`, an offline tool built on `msdfgen`. Its license is not checked in this environment; check it at the pinned revision. | Phase 0 exit; Phase 6 | Open |
+| D-18 | MSDF on the SDL3 2D renderer: none. The 2D path uses a prebaked coverage fallback. | Phase 0 exit; Phase 6 | Open |
+| D-19 | The old C text path after cutover: keep it as a BFNT compatibility adapter, or remove it once every consumer has migrated. | Phase 8 | Open |
+
+## 6.3 Status markers
+
+- `[x]` done, with the evidence in the item.
+- `[~]` partly done. The item names what is missing.
+- `[ ]` not done. Nothing blocks it except the work itself, unless the item says `Blocked: D-xx` or `Blocked: E-xx`.
+- `[-]` N/A. The item gives the reason and its evidence. N/A is not work left over, and it does not hold a gate open.
+
+An item is N/A only by evidence (for example, a file that never calls the text API) or by an accepted decision. Difficulty is never a reason. An item that is not N/A and not done is incomplete, and it stays open until it is done or the plan changes.
+
+## 6.4 Environment gates
+
+These gates need a toolchain or hardware the work environment may not have. Each one closes only on a recorded run: a CI job link, a log file, or a screenshot path, tied to the commit it ran on. Sandbox evidence (CPU tests, C mirrors, characterization harnesses, static checks) is recorded, but it does not close an environment gate.
+
+- **E-01, pinned toolchain and CI — PASSED.** GitHub Actions run [#112](https://github.com/ash5me/Bairava-Engine/actions/runs/44223038398), commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`, used Zig `0.16.0-dev.3142+5ccfeb926`. Linux job [ubuntu-latest](https://github.com/ash5me/Bairava-Engine/actions/runs/44223038398/job/134529366519), Windows job [windows-latest](https://github.com/ash5me/Bairava-Engine/actions/runs/44223038398/job/134529366769), and macOS job [macos-latest](https://github.com/ash5me/Bairava-Engine/actions/runs/44223038398/job/134529366794) all completed successfully. Each job passed development, debug, and release builds, asset checks/importer CLI checks, and unit/UI tests; macOS also passed its Metal shader build. This closes the pinned-toolchain compile/CI evidence for the code at that SHA, including the Phase 3 HarfBuzz build/test check. It does **not** close Phase 4's GPU burst/synchronization gate, Phase 5's flush/device/visual checks, or any phase implementation exit. E-01 evidence is commit-specific; rerun it after relevant code changes.
+- **E-02, GPU device with validation — OPEN.** A run with `-Dgpu-debug=true` on a display with an SDL_GPU device. Required for the Phase 4 burst (including a forced whole-page upload and clean validation) and GPU synchronization exit, and the Phase 5 flush wiring check.
+- **E-03, reference screenshots — OPEN.** Capture on the current BFNT path, in both renderer modes, before any `Canvas` change: `ui_font_9px` text, the debug overlay, and the widgets. Closes: the Phase 0 baseline, the Phase 1 comparison, the Phase 5 visual exit, and Phase 8.
+- **E-04, SDL3 2D renderer on a device — OPEN.** Requires `sdl2d_available` to be set (`application.zig`) and the 2D path to run. Closes: the Phase 4 and Phase 5 both-renderer items, the Phase 6 MSDF fallback, and the Phase 7 device-recreation tests.
+
+## 6.5 N/A and conditional items
+
+Two kinds appear here, and they are kept apart.
+
+- **Evidence N/A.** Marked `[-]` in the item. The sample scene's text migration: `sample/main.zig` and `sample/benchmark.zig` draw textures only and call no text API. Owner direction (2026-11-18): mark it N/A rather than leave it as unfinished work. Rich-text spans are also N/A, because they are a non-goal in section 3.
+- **Conditional items.** Their status depends on a decision that is still open, so they stay `[ ]` with a note until the decision is Accepted. D-08 is accepted; the BMFont importer remains implementation work. Configurable OpenType features depend on D-16. Variable-font axis selection depends on D-10. Multiple MSDF atlas pages depend on the asset corpus.
 
 ## Phase 0 — Baseline audit and design decisions
 
 **Purpose:** Remove ambiguity before changing formats, dependencies, APIs, or renderer behavior.
 
+**Decisions to record here:** D-08, D-10 to D-15, D-17, D-18 (section 6.2). **Environment:** E-03 for the baseline screenshots.
+
 ### Needs — must complete
 
-- [ ] Inventory all font load, measure, draw, and layout call sites in engine, sample, game, overlay, console, widgets, and tests.
-- [ ] Record current public behavior: font pixel-height rules, baseline/top-left convention, ascent/line-height, kerning, fallback glyph, UTF-8 error behavior, wrapping, alignment, color/alpha, clipping, and pixel snapping.
-- [ ] Capture reference screenshots for current UI/debug text in both GPU and SDL3 2D renderer modes.
-- [ ] Define the first supported language/test corpus. Minimum recommendation: Latin and Tamil, including combining marks and conjunct fixtures in a suitable font.
-- [ ] Decide the initial runtime outline-font support matrix. `stb_truetype` is already present, but CFF support is currently handled by the offline FreeType bake path; do not silently regress it.
-- [ ] Decide whether runtime rasterization supports TrueType `glyf` only initially, or whether FreeType must also move into the runtime for CFF.
-- [ ] Decide how bitmap font atlases are described: select an established descriptor format or define a versioned Bairava format. Do not hard-code an undocumented sprite-sheet convention.
-- [ ] Decide which MSDF generator will be used, its license, version pin, supported font formats, output metadata, and asset-builder integration.
-- [ ] Decide fallback behavior for missing glyphs and whether font fallback chains are part of the first release or a later phase.
-- [ ] Decide the initial renderer policy for MSDF. Recommended: SDL_GPU first; the SDL3 2D renderer uses a matching prebaked coverage/bitmap fallback until it has an equivalent shader path.
-- [ ] Define atlas growth, maximum pages, memory budget, and whether eviction is required for the first release.
-- [ ] Define success metrics: no visual regression for existing fonts, correct shaping fixtures, no duplicate rasterization for cache hits, and acceptable cold/hot text performance.
+- [x] Inventory all font load, measure, draw, and layout call sites in engine, sample, game, overlay, console, widgets, and tests. Evidence: the call-site inventory in the Phase 0 decision sheet. The sample draws no text, so its part is N/A (section 6.5).
+- [~] Record current public behavior: font pixel-height rules, baseline/top-left convention, ascent/line-height, kerning, fallback glyph, UTF-8 error behavior, wrapping, alignment, color/alpha, clipping, and pixel snapping. C runtime: `docs/Bairava_Phase0/characterization/harness.c` passes 70 of 70 (gcc 13.3, `-std=c11 -Wall -Wextra -pedantic`, no warnings). The Zig side has not been run (E-01).
+- [ ] Capture reference screenshots for current UI/debug text in both GPU and SDL3 2D renderer modes. Blocked: E-03.
+- [x] Define the first supported language/test corpus: Latin and Tamil, including combining marks and conjunct fixtures. Chemmozhi Paranar is accepted as a test-only GPL fixture under D-12.
+- [ ] Decide the initial runtime outline-font support matrix. `stb_truetype` is already present, but CFF support is currently handled by the offline FreeType bake path; do not silently regress it. → D-10.
+- [ ] Decide whether runtime rasterization supports TrueType `glyf` only initially, or whether FreeType must also move into the runtime for CFF. → D-10, D-11.
+- [x] Decide the bitmap descriptor format: AngelCode BMFont text descriptor, normalized into Bairava-owned structures (D-08).
+- [ ] Decide which MSDF generator will be used, its license, version pin, supported font formats, output metadata, and asset-builder integration. → D-17.
+- [ ] Decide fallback behavior for missing glyphs and whether font fallback chains are part of the first release or a later phase. → D-13.
+- [ ] Decide the initial renderer policy for MSDF. Recommended: SDL_GPU first; the SDL3 2D renderer uses a matching prebaked coverage/bitmap fallback until it has an equivalent shader path. → D-18.
+- [ ] Define atlas growth, maximum pages, memory budget, and whether eviction is required for the first release. → D-14.
+- [ ] Define success metrics: no visual regression for existing fonts, correct shaping fixtures, no duplicate rasterization for cache hits, and acceptable cold/hot text performance. → D-15.
 
 ### Wants — useful but not blocking
 
@@ -281,11 +347,11 @@ A reviewed design decision record containing: supported font formats, font-sourc
 ### Exit gate — Phase 0 is complete only when
 
 - [ ] Every required font source has an agreed import/runtime path.
-- [ ] TrueType/CFF behavior is explicitly decided.
+- [ ] TrueType/CFF behavior is explicitly decided (D-10/D-11 remain open).
 - [ ] HarfBuzz and MSDF dependency/tooling choices are explicit and licensable.
 - [ ] SDL_GPU and SDL3 2D behavior for every rendering mode is documented.
-- [ ] Existing behavior has baseline tests or screenshots.
-- [ ] No unresolved design question would force a data-format or public-API rewrite in a later phase.
+- [ ] Existing behavior has baseline tests or screenshots (E-03 remains open).
+- [ ] No unresolved design question would force a data-format or public-API rewrite in a later phase. D-01–D-06, D-08, and D-12 are accepted; other Phase 0 decisions remain open.
 
 ---
 
@@ -293,18 +359,21 @@ A reviewed design decision record containing: supported font formats, font-sourc
 
 **Purpose:** Establish the common API and data contracts while the current BFNT implementation still works.
 
+**Decisions:** D-01 to D-07 are accepted. **Implementation status:** not started (owner status, 2026-11-18). **Environment:** E-01 is passed for the recorded commit; E-03 remains open for the baseline comparison.
+
 ### Needs — must implement
 
-- [ ] Introduce a common font handle/face abstraction that can represent bitmap, prebaked coverage, runtime outline, and MSDF sources.
-- [ ] Define common font metrics and baseline conventions.
-- [ ] Define the shaped-glyph and glyph-render-record contracts from Section 5.
-- [ ] Define text options for font, size/scale, color, line spacing, alignment, wrapping width, and optional direction/script/language overrides.
+- [ ] Introduce a common font handle/face abstraction that can represent bitmap, prebaked coverage, runtime outline, and MSDF sources. Blocked: D-01.
+- [ ] Define common font metrics and baseline conventions. Blocked: D-01.
+- [ ] Define the shaped-glyph and glyph-render-record contracts from Section 5. Blocked: D-03.
+- [ ] Define text options for font, size/scale, color, line spacing, alignment, wrapping width, and optional direction/script/language overrides. Blocked: D-06.
 - [ ] Separate text measurement, layout, glyph resolution, and draw submission into distinct responsibilities.
-- [ ] Keep current `.bfnt` loading behind a legacy/prebaked coverage provider; do not rewrite the file format in this phase.
-- [ ] Preserve the current `Canvas.text`, `Canvas.textWidth`, `Canvas.layoutText`, and `Canvas.drawTextLayout` behavior through wrappers or adapters where practical.
-- [ ] Decouple solid-rectangle drawing from the white 2x2 texel embedded in the font atlas. Use a renderer-owned white texture or a primitive path so a font atlas is not required for rectangles.
+- [ ] Keep current `.bfnt` loading behind a legacy/prebaked coverage provider; do not rewrite the file format in this phase. Blocked: D-01.
+- [ ] Preserve the current `Canvas.text`, `Canvas.textWidth`, `Canvas.layoutText`, and `Canvas.drawTextLayout` behavior through wrappers or adapters where practical. Blocked: D-05.
+- [ ] Decouple solid-rectangle drawing from the white 2x2 texel embedded in the font atlas. Use a renderer-owned white texture or a primitive path so a font atlas is not required for rectangles. Blocked: D-04.
 - [ ] Define ownership rules: a queued draw cannot reference a font page that may be destroyed, repacked, or overwritten before submission completes.
 - [ ] Keep renderer-specific types out of the public text API.
+- [ ] One definition of the debug overlay font, 9 px mono (D-07, accepted by owner direction). The intended source of truth is `application.zig` (`default_debug_font_path`, `default_debug_font_px`), read by `src/game/config.zig`. The shipped path currently uses 9 px while the application default was 10 px; implementation must reconcile this to 9 px. The owner reports Phase 1 implementation has not started.
 
 ### Wants — useful but not blocking
 
@@ -317,10 +386,10 @@ A common text/font interface with an adapter to the existing BFNT implementation
 
 ### Exit gate — Phase 1 is complete only when
 
-- [ ] Existing sample/UI/debug text renders and measures the same as the captured baseline.
+- [ ] Existing UI and debug text renders and measures the same as the captured baseline (E-03). The sample draws no text and is excluded (section 6.5).
 - [ ] Existing `.bfnt` v1/v2/v4 compatibility behavior remains covered by tests (where those versions are supported by the current loader).
-- [ ] Rectangle drawing works without referencing a font atlas.
-- [ ] New interfaces compile without exposing SDL or HarfBuzz types to game-facing code.
+- [ ] Rectangle drawing works without referencing a font atlas. Blocked: D-04, E-03.
+- [ ] New interfaces compile without exposing SDL or HarfBuzz types to game-facing code. E-01 passed on the recorded CI commit, but this Phase 1 interface work remains unimplemented.
 - [ ] Resource ownership and shutdown order are documented and tested.
 
 ---
@@ -329,9 +398,11 @@ A common text/font interface with an adapter to the existing BFNT implementation
 
 **Purpose:** Add the missing first-class path for pixel fonts that are already hand-drawn as bitmap glyphs.
 
+**Decisions:** D-08 and D-09 are accepted. **Implementation status:** not started (owner status, 2026-11-18). **Entry:** Phase 1 must close first (section 7). **Environment:** E-03 is required for the pixel-accuracy check at native resolution and integer scales.
+
 ### Needs — must implement
 
-- [ ] Add a versioned bitmap-font asset descriptor containing glyph mapping, atlas page, source rectangle, advance, bearing/offset, baseline/line metrics, and optional kerning pairs.
+- [ ] Add a versioned bitmap-font asset descriptor containing glyph mapping, atlas page, source rectangle, advance, bearing/offset, baseline/line metrics, and optional kerning pairs. Blocked: D-08.
 - [ ] Support mapping Unicode codepoints to glyph entries. Keep glyph IDs distinct from codepoints internally even if the first format maps one codepoint to one glyph.
 - [ ] Import atlas image data without vectorizing it or sending it through MSDF generation.
 - [ ] Validate atlas bounds, duplicate codepoints, invalid metrics, missing pages, malformed descriptors, and missing fallback glyphs during asset build.
@@ -340,12 +411,12 @@ A common text/font interface with an adapter to the existing BFNT implementation
 - [ ] Define atlas padding/edge handling so neighboring glyphs cannot bleed when sampled or scaled.
 - [ ] Add a basic bitmap shaper/mapper that looks up the font's codepoint mapping and stored kerning; explicitly document its limits for ligatures and complex scripts.
 - [ ] Draw through the common text API and existing `SpriteBatch`; do not make a separate bitmap-text public API.
-- [ ] Add an example font asset authored as a bitmap atlas and exercise punctuation, spaces, missing glyphs, baseline offsets, and kerning.
+- [ ] Add an example font asset authored as a bitmap atlas and exercise punctuation, spaces, missing glyphs, baseline offsets, and kerning. Blocked: D-09.
 
 ### Wants — useful but not blocking
 
 - [ ] Support multi-page bitmap font atlases in the descriptor, even if the first example uses one page.
-- [ ] Support importing a common external bitmap-font descriptor if it is a good fit and has no unacceptable license/format constraints.
+- [ ] Support importing a common external bitmap-font descriptor if it is a good fit and has no unacceptable license/format constraints. Conditional on D-08 (section 6.5).
 - [ ] Provide an atlas preview or validation report showing glyph rectangles and baseline positions.
 
 ### Deliverable
@@ -367,19 +438,21 @@ A developer can add a hand-drawn bitmap font through the asset pipeline and use 
 
 **Purpose:** Add the shaping foundation and load outline-font information without coupling it to a GPU atlas.
 
+**Decisions:** D-06, D-10, D-16. **Entry:** Phases 1 and 2 closed (section 7). **Environment:** E-01.
+
 ### Needs — must implement
 
-- [ ] Pin HarfBuzz to an explicit version/commit and record it in dependency policy and lock data.
-- [ ] Integrate HarfBuzz into Bairava's actual Zig/C/C++ build for Linux, Windows, and macOS. Do not copy another project's Zig build script or dependency versions blindly.
-- [ ] Reuse the existing `stb_truetype` source where suitable; do not add a duplicate copy.
-- [ ] Create a runtime outline-font face that owns or safely references the font bytes for as long as HarfBuzz and the rasterizer require them.
-- [ ] Reuse HarfBuzz face/font objects; do not create them per string or per frame.
-- [ ] Define units and scaling from font units to Bairava pixels in one place.
-- [ ] Implement the shaping call with explicit direction, script, language, and feature handling. Provide sensible defaults but allow the caller or text system to set them deliberately.
-- [ ] Return glyph IDs, clusters, advances, and offsets in an engine-owned shaped-run structure.
-- [ ] Handle empty strings, malformed UTF-8, zero-width/non-rendering glyphs, and missing-glyph results deterministically.
-- [ ] Test Latin kerning/GPOS behavior and Tamil shaping with fonts that contain the required OpenType tables.
-- [ ] Keep shaping tests CPU-only; they must not require a GPU device or window.
+- [~] Pin HarfBuzz to an explicit version/commit and record it in dependency policy and lock data. Lock entry present: HarfBuzz 15.1.0, commit `3df40d9`, in `docs/dependency-lock.json`. The dependency-policy record still needs checking.
+- [~] Integrate HarfBuzz into Bairava's actual Zig/C/C++ build for Linux, Windows, and macOS. Do not copy another project's Zig build script or dependency versions blindly. Linked into the engine module (`build.zig`, `configureEngineModule`) and the test module. The pinned cross-platform build/test matrix now passes at E-01 commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`; phase completion still depends on the remaining Phase 3 code/test exit criteria and the Phase 1/2 entry gates.
+- [x] Reuse the existing `stb_truetype` source where suitable; do not add a duplicate copy. One `vendor/stb_truetype_impl.c` is shared by every module that uses it.
+- [x] Create a runtime outline-font face that owns or safely references the font bytes for as long as HarfBuzz and the rasterizer require them. `RuntimeFont` copies the bytes. Test: the font keeps its own copy.
+- [x] Reuse HarfBuzz face/font objects; do not create them per string or per frame. One face and font per `RuntimeFont`, and one buffer per `Shaper`.
+- [x] Define units and scaling from font units to Bairava pixels in one place. `RuntimeFont.init` sets the scale. `shaper.zig` `unitsToPixels` converts.
+- [~] Implement the shaping call with explicit direction, script, language, and feature handling. Provide sensible defaults but allow the caller or text system to set them deliberately. Script and language are caller-set. Direction is fixed to left to right (D-06). Features are HarfBuzz defaults (D-16).
+- [~] Return glyph IDs, clusters, advances, and offsets in an engine-owned shaped-run structure. Glyphs and width are returned. The run has no font identity (D-03) and no direction field.
+- [x] Handle empty strings, malformed UTF-8, zero-width/non-rendering glyphs, and missing-glyph results deterministically. Tests in `shaper.zig` and `shaped_layout.zig`.
+- [~] Test Latin kerning/GPOS behavior and Tamil shaping with fonts that contain the required OpenType tables. Kerning and Tamil clusters are tested. Six glyph-ID, advance, and offset tests were added in this pass, with values from HarfBuzz 8.3.0. Confirming them against the pinned 15.1.0 is Blocked: E-01.
+- [x] Keep shaping tests CPU-only; they must not require a GPU device or window.
 
 ### Font-format constraint
 
@@ -392,8 +465,8 @@ Do not advertise all TTF/OTF formats as supported merely because HarfBuzz can pa
 
 ### Wants — useful but not blocking
 
-- [ ] Add configurable OpenType feature tags for callers who need to disable/enable specific substitutions or positioning.
-- [ ] Add language/script overrides for diagnostics and tests.
+- [ ] Add configurable OpenType feature tags for callers who need to disable/enable specific substitutions or positioning. Conditional on D-16 (section 6.5).
+- [x] Add language/script overrides for diagnostics and tests. `Options.script` and `Options.language` are caller-set (`shaper.zig`).
 
 ### Deliverable
 
@@ -401,17 +474,19 @@ A CPU-only shaping service and reusable runtime outline-font face. No glyph atla
 
 ### Exit gate — Phase 3 is complete only when
 
-- [ ] HarfBuzz builds and links on all supported CI platforms.
-- [ ] Tests verify glyph IDs, clusters, advances, and offsets for Latin and Tamil fixtures.
-- [ ] Font data and HarfBuzz objects survive repeated shaping calls and are released correctly.
-- [ ] Unsupported font-format/rasterizer combinations fail explicitly rather than rendering blank glyphs silently.
-- [ ] HarfBuzz objects/types do not leak into the public game-facing API.
+- [x] HarfBuzz builds and links on all supported CI platforms. Evidence: E-01 GitHub Actions run #112, commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`.
+- [ ] Tests verify glyph IDs, clusters, advances, and offsets for Latin and Tamil fixtures against the pinned HarfBuzz version. E-01 confirms the CI test suite passes at the recorded commit; review the fixture assertions and expected values before marking this phase item complete.
+- [x] Font data and HarfBuzz objects survive repeated shaping calls and are released correctly. Shaper reuse and create/destroy cycle tests, under a leak-checking allocator.
+- [x] Unsupported font-format/rasterizer combinations fail explicitly rather than rendering blank glyphs silently. `checkFormat` tests in `runtime_font.zig`.
+- [x] HarfBuzz objects/types do not leak into the public game-facing API. The game and samples import no text internals, and HarfBuzz is used only inside the text package.
 
 ---
 
 ## Phase 4 — Runtime coverage rasterizer, glyph cache, and dynamic atlas
 
 **Purpose:** Implement Architecture 1's on-demand glyph path while keeping static bitmap/BFNT/MSDF assets as separate providers.
+
+**Decisions:** D-13, D-14. **Entry:** Phase 3 closed. **Environment:** E-01 passed on the recorded commit; E-02 and E-04 remain required for GPU/device validation.
 
 ### Needs — must implement
 
@@ -444,7 +519,7 @@ A runtime outline font can request an unseen glyph, rasterize it once, upload it
 - [x] Repeated requests for the same font/glyph/size produce cache hits and do not rasterize again.
 - [x] Cache keys distinguish different fonts, sizes, and rasterization modes.
 - [x] Atlas-full, allocation-failure, and resource-destruction tests pass.
-- [ ] GPU upload/update synchronization is validated under GPU debugging.
+- [ ] GPU upload/update synchronization is validated under GPU debugging. Blocked: E-02.
 - [~] Both renderer modes have defined and tested coverage-font behavior.
 - [~] No queued draw can sample a destroyed or repurposed atlas page.
 
@@ -452,7 +527,7 @@ A runtime outline font can request an unseen glyph, rasterize it once, upload it
 
 **Legend:** `[x]` means the code exists and a CPU test covers it. `[~]` means the code exists, but it is verified only by reading, or it needs a GPU or window run. `[ ]` means not done. The numbering in this plan is authoritative. The source comments that say "Phase 3" are legacy.
 
-**Caveat.** The sandbox has no Zig toolchain, no vendored HarfBuzz, and no network. The Zig changes were desk-checked but not compiled, so the owner must run `zig build test`. The C mirror (`checks/glyph_cache_mirror.c`) models the resolver, the raster modes, and the fallback. It runs 2191 checks with 0 failures. The original 1828 still pass unchanged, and 21 planted mutants are caught. Its parity with the Zig code is at the level of logic, against a synthetic glyph source. Of 49 Zig tests in the cache, font-test, and atlas files, 46 have a mirror check of the same logic (`checks/glyph_cache_parity.txt`). Parity is not claimed for real-font values, for the GPU, or for Zig compilation.
+**Caveat (updated 2026-11-18).** The C mirror (`checks/glyph_cache_mirror.c`) models the resolver, the raster modes, and the fallback. The pinned CI build/test matrix is now recorded under E-01 on commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`. This is compile/test evidence only; it does not constitute the GPU burst run or synchronization validation required by E-02. It runs 2191 checks with 0 failures. The original 1828 still pass unchanged, and 21 planted mutants are caught. Its parity with the Zig code is at the level of logic, against a synthetic glyph source. Of 49 Zig tests in the cache, font-test, and atlas files, 46 have a mirror check of the same logic (`checks/glyph_cache_parity.txt`). Parity is not claimed for real-font values, for the GPU, or for Zig compilation.
 
 **Decisions accepted (2026-11-17).**
 1. The raster mode is explicit in `resolve`. Gray is the only mode produced. Mono returns `UnsupportedRasterMode`. The mono variant stays in the cache key, so gray and mono entries cannot collide. An unsupported mode fails; it never falls back to gray.
@@ -481,7 +556,7 @@ A runtime outline font can request an unseen glyph, rasterize it once, upload it
 
 **Numbering.** The source comments in `glyph_cache.zig` and `glyph_atlas.zig` still say "Phase 3 of the rendering migration plan". They are legacy and were left as they are. `glyph_resolver.zig` uses this plan's numbering.
 
-**Warm-up pass (2026-11-17, second pass).** `glyph_resolver.warm` caches a list of glyph IDs before their first draw. Each glyph goes through `resolveWithFallback`, so the mode, fallback, and counter rules match a single draw. `WarmStats` reports the glyphs rasterized, already cached, and substituted. The C mirror runs 32 new checks (2191 in all, 0 failures, under ASan and UBSan, built with `-std=c99 -Werror`). All 21 planted mutants are caught, including two new ones that break the warm-up checks. The parity map lists 49 Zig tests, 46 of them mirrored. The Zig is not compiled.
+**Warm-up pass (2026-11-17, second pass).** `glyph_resolver.warm` caches a list of glyph IDs before their first draw. Each glyph goes through `resolveWithFallback`, so the mode, fallback, and counter rules match a single draw. `WarmStats` reports the glyphs rasterized, already cached, and substituted. The C mirror runs 32 new checks (2191 in all, 0 failures, under ASan and UBSan, built with `-std=c99 -Werror`). All 21 planted mutants are caught, including two new ones that break the warm-up checks. The parity map lists 49 Zig tests, 46 of them mirrored. The pinned Zig CI compile/test result is recorded under E-01; this does not close E-02.
 
 Proposed, not yet accepted: warm-up stops at the first error and returns it, and the glyphs before that one stay cached. It does not skip the failed glyph. When the atlas is full, later glyphs would be refused too, so going on would only add rasterization work. The owner should accept or reject this rule.
 
@@ -495,6 +570,8 @@ Corrected: the frames-in-flight comments in `glyph_cache.zig` and `glyph_atlas.z
 
 **Purpose:** Connect HarfBuzz output to the glyph providers and make the new text system usable throughout Bairava.
 
+**Decisions:** D-01 to D-07 (Phase 1). D-05 is required by the Canvas migration. **Entry:** Phases 1 to 4 closed. **Environment:** E-02, E-03, E-04 (E-01 is passed on the recorded commit).
+
 ### Needs — must implement
 
 - [x] Shape a complete text run before measuring it for line placement. Use shaped advances/offsets rather than summing codepoint widths. *(Done, CPU: `shaped_layout.zig` shapes each candidate line before measuring it, and keeps each line's own shaped glyphs. `shaper_tamil_test.zig` covers Tamil.)*
@@ -503,10 +580,11 @@ Corrected: the frames-in-flight comments in `glyph_cache.zig` and `glyph_atlas.z
 - [~] Preserve baseline, ascent/descent, line height, blank-line, alignment, and pixel-snapping behavior for existing UI fonts. *(Partly: `glyph_records.zig` uses the legacy formulas (rounded line top, rounded ascent, one rounding per glyph), and its tests check them for the runtime font. The existing UI fonts are not yet compared against screenshots, which needs a device.)*
 - [~] Produce glyph render records from the appropriate provider after shaping/layout: bitmap mapping, static BFNT, or runtime coverage cache. *(Partly: runtime coverage is done, through the Phase 4 cache. Bitmap and static BFNT providers are not done.)*
 - [~] Add a common glyph-quad submission path supporting texture page, UV, plane bounds, tint/alpha, and render mode. *(Partly: the CPU record carries page, texel rectangle, pixel rectangle, and mode, in `glyph_records.Record`. The sprite submission and the texture-page binding are not written.)*
-- [ ] Preserve or deliberately version `Canvas.text`, `textWidth`, `layoutText`, and `drawTextLayout` so game code does not have to manage glyph IDs or atlas pages.
-- [ ] Migrate the debug overlay, developer console, widgets, sample scene, and game-owned text call sites.
-- [ ] Preserve clipping, z-order, tint, alpha blending, pixel snapping, and integer viewport scaling.
-- [ ] Keep rectangle drawing independent from font resources.
+- [ ] Preserve or deliberately version `Canvas.text`, `textWidth`, `layoutText`, and `drawTextLayout` so game code does not have to manage glyph IDs or atlas pages. Blocked: D-05.
+- [ ] Migrate the debug overlay, developer console, widgets, and game-owned text call sites. Blocked: D-05, E-03.
+- [-] Sample scene: N/A. `sample/main.zig` and `sample/benchmark.zig` draw textures only and call no text API (checked in this pass; section 6.5).
+- [ ] Preserve clipping, z-order, tint, alpha blending, pixel snapping, and integer viewport scaling. Verification: E-03.
+- [ ] Keep rectangle drawing independent from font resources. Blocked: D-04.
 - [x] Keep shaping, layout, and glyph cache tests separable from GPU visual tests. *(Done: the three new modules import no renderer or platform module, and the harness compiles and runs them without SDL.)*
 
 ### Wants — useful but not blocking
@@ -517,7 +595,7 @@ Corrected: the frames-in-flight comments in `glyph_cache.zig` and `glyph_atlas.z
 
 ### Deliverable
 
-The sample, UI widgets, developer console, and debug overlay use the shared text system. Outline fonts are shaped by HarfBuzz and rendered through the coverage path. Bitmap fonts continue to use their own provider but the same API/layout system.
+UI widgets, the developer console, and the debug overlay use the shared text system. The sample draws no text and is N/A (section 6.5). Outline fonts are shaped by HarfBuzz and rendered through the coverage path. Bitmap fonts continue to use their own provider but the same API/layout system.
 
 ### Exit gate — Phase 5 is complete only when
 
@@ -541,10 +619,9 @@ The sample, UI widgets, developer console, and debug overlay use the shared text
 - `shaper_tamil_test.zig`: five Tamil corpus tests, registered in `tests.zig`. They use `tests/fixtures/NotoSansTamil.ttf`, approved and recorded on 2026-11-18 (see Decisions below).
 
 **What was run, and with what:**
-- Toolchain: Zig 0.16.0 from PyPI (`ziglang==0.16.0`). The lock pins `0.16.0-dev.3142+5ccfeb926`, which is not on PyPI, so this is the nearest stable release, not the pinned build.
-- HarfBuzz 15.1.0 at commit `3df40d9…`, and stb at `9600522…`, both fetched from GitHub and compiled to a static library in a scratch directory. The repo's `vendor/` is not in the upload, so nothing was taken from it.
-- SDL is not built: `codeberg.org` is unreachable from the sandbox, and the real `zig build test` was not run. The harness compiles the text modules alone. It substitutes a stand-in for `assets/staging.zig`, which pulls in SDL. Two `packagedReader` tests therefore ran against that stand-in, not the platform file reader.
-- Results: 118 CPU tests pass under `std.testing.allocator` (leak-checked), in one run against the repo test modules. That is the 73 existing Phase 3 and 4 tests, now compiled for the first time, plus 45 new ones: 13 shaper, 12 shaped layout (one of them pins the combining-mark limit), 10 glyph records, 5 Tamil (Noto Sans Tamil), and 5 Chemmozhi Paranar. The Tamil tests read the repo fixtures, both approved and recorded on 2026-11-18.
+- Pinned toolchain: Zig `0.16.0-dev.3142+5ccfeb926`.
+- Cross-platform evidence: E-01 GitHub Actions run #112 on commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`; Ubuntu, Windows, and macOS jobs all passed their build, asset-check, and unit/UI-test steps. Per-job links are recorded in section 6.4.
+- This supersedes the earlier sandbox-only limitation below for compile/test validation. The standalone sandbox harness results remain useful supplemental evidence, not the E-01 gate.
 - Mutation checks: one fault per mutant, seeded in the scratch copy and checked for a real assertion failure, not a compile error. Shaped layout: no cluster rebase (1 failure, `expected 3, found 0`), a boundary at every byte (1 failure), and an ignored fit check (2 failures). Glyph records: an unrounded ascent (1 failure, `expected 2, found 1.965`), an unkerned pen (2 failures, `expected 9, found 10`), and an unrounded line top (1 failure, `expected 3, found 2.6`). The repo copy was restored after each run.
 
 **Findings from running the code:**
@@ -555,7 +632,7 @@ The sample, UI widgets, developer console, and debug overlay use the shared text
 
 **Still open (Phase 5 is not complete):**
 - No Atlas flush call before the sprite upload, and no 2D flush call. Both are the Phase 4 hand-off, and they need a device run. Glyph records are not yet submitted to `SpriteBatch`.
-- `Canvas`, `Ui`, the debug overlay, the console, widgets, sample, and game call sites are still on the BFNT path. Nothing has been migrated.
+- `Canvas`, `Ui`, the debug overlay, the console, widgets, and game call sites are still on the BFNT path. Nothing has been migrated. The sample draws no text and is N/A (section 6.5).
 - `Canvas.rect` still samples the font's white texel, so rectangles depend on the font. This is a Phase 1 item that Phase 5 still needs.
 - The bitmap-font provider and the static BFNT provider are not written.
 - Visual checks (both renderer modes, reference screenshots, clipping and z-order) need a device.
@@ -566,7 +643,22 @@ The sample, UI widgets, developer console, and debug overlay use the shared text
 1. **Tamil fixture: done.** `tests/fixtures/NotoSansTamil.ttf` and its OFL license file are checked in, from google/fonts commit `7af0d90b4d532ffa4b041937b560c6df4e7b1e95`, with bytes unchanged. The license is recorded in `docs/dependency-policy.md` ("Test fixtures"). The lock has a new entry with tree hash `75c12e3d397b0f7abf68fec99befd428ae2bf638ecb2232fd1b106da7a4c5e15`, and `scripts/check-dependency-pins.py` verifies it. `shaper_tamil_test.zig` is registered in `tests.zig`. In the upload, the checker still fails on the six `vendor/` entries, which are absent from the upload. Its output is otherwise identical to the original upload's.
 2. **Line-break policy: accepted,** including its limit. A combining mark directly after a space starts the next line. A test pins that behavior, so a change to it will be visible.
 3. **Glyph fallback: unchanged.** A glyph ID past the font's end still draws the fallback, as in Phase 4. Whether `?` maps through the character map is still a Phase 7 decision.
-4. **`zig build test` on Windows, Linux, and macOS: still open.** The owner approved this, but the sandbox cannot run it. `codeberg.org` is unreachable from it, and that is where the pinned SDL package is fetched. The upload also has no `vendor/` tree. Zig 0.16.0 from PyPI, which the sandbox could run, is also not the pinned `0.16.0-dev.3142+5ccfeb926`. The run must be done on the owner's machines with the pinned toolchain. The Linux, Windows, and macOS results need to be recorded here, and this item stays open until they are. What the sandbox did run is listed under "What was run" above, together with the boundary scan (`scripts/boundary_scan.py --fail`, zero reachable violations, the same result as the original upload).
+4. **E-01 pinned Zig build/test matrix: passed.** The earlier sandbox-only limitation is superseded by GitHub Actions run #112 at commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`. Windows, Linux, and macOS results and job links are recorded in section 6.4. The sandbox boundary scan (`scripts/boundary_scan.py --fail`) also reported zero reachable violations. This does not close E-02, E-03, or E-04.
+
+
+### Owner status correction (2026-11-18)
+
+The following implementation status is authoritative and overrides any implication elsewhere in this document that Phase 1 or Phase 2 code has already been written:
+
+- **Phase 1 implementation: not started.** D-01 through D-06 and D-07 are decisions, not completed code. The rectangle path and font identity work still need implementation. Preserve the 9 px debug-font default; the existing `config.zig` (9 px) and `application.zig` (10 px) disagreement must be reconciled to 9 px.
+- **Phase 2 implementation: not started.** D-08 and D-09 are decisions only. The BMFont importer/descriptor validation and the selected 8×8 example asset still need to be created, registered, and tested.
+- **Phase 3:** tests and shaping code exist; the pinned cross-platform CI evidence is now recorded under E-01. This does not waive the formal phase-entry dependency on Phases 1 and 2.
+- **Phase 4:** CPU cache/atlas/resolver work exists. The GPU burst has not started; E-02 remains open. It must force at least one whole-page upload (`full pages > 0`) and finish with clean GPU validation.
+- **Phase 5:** flush wiring and call-site migration have not started. Remaining work includes atlas flush before sprite submission, the SDL3 2D flush path, `Canvas` migration, console/debug-overlay/widgets migration, and device checks. Console moves with the debug overlay/Canvas work.
+- **Sample scene migration:** N/A. `sample/main.zig` and `sample/benchmark.zig` draw textures only and call no text API.
+- **Findings:** (1) `build.zig` line 204 links HarfBuzz into the shipped engine module; the comment around line 595 saying only the test module links it is stale and should be corrected. (2) Debug font defaults disagree: `config.zig` is 9 px and `application.zig` is 10 px; the shipped path is 9 px, which remains the accepted value. (3) The sample scene has no text call sites, so there is nothing to migrate there.
+
+These are status and scope corrections, not evidence that implementation work is complete.
 
 ---
 
@@ -574,9 +666,11 @@ The sample, UI widgets, developer console, and debug overlay use the shared text
 
 **Purpose:** Add scalable outline-font rendering without replacing bitmap or coverage rendering.
 
+**Decisions:** D-17, D-18. **Entry:** Phase 5 closed. **Environment:** E-01 (SPIR-V, DXIL, and MSL builds), E-04.
+
 ### Needs — must implement
 
-- [ ] Integrate the selected MSDF generator as an offline asset-build tool, with a pinned version and reviewed license.
+- [ ] Integrate the selected MSDF generator as an offline asset-build tool, with a pinned version and reviewed license. Blocked: D-17.
 - [ ] Define a versioned MSDF asset descriptor containing font identity/metrics, glyph IDs, atlas page, atlas bounds, plane bounds, pixel range/distance range, and any generator parameters required at runtime.
 - [ ] Generate MSDF from supported vector outlines. Do not make bitmap-to-vector conversion part of the normal asset pipeline.
 - [ ] Validate the generator's handling of corners, small counters, thin strokes, punctuation, and the chosen font corpus.
@@ -585,15 +679,15 @@ The sample, UI widgets, developer console, and debug overlay use the shared text
 - [ ] Extend the GPU sprite pipeline/run classification so normal sprites, coverage glyphs, and MSDF glyphs select the correct shader. A single `coverage: bool` is insufficient once MSDF is added; use an explicit render/material mode.
 - [ ] Add per-texture sampling policy. The current global nearest sampler should remain for pixel art; MSDF assets need their validated sampling mode (normally linear) without changing unrelated textures.
 - [ ] Extend shader generation/embedding for SPIR-V and the optional DXIL/MSL targets.
-- [ ] Define SDL3 2D renderer behavior. Recommended initial policy: MSDF is rendered on SDL_GPU; an MSDF asset also supplies a prebaked coverage/bitmap fallback for the SDL3 2D renderer. If no fallback exists, report the unsupported mode clearly rather than sampling MSDF as ordinary RGBA.
-- [ ] Test the same outline font through runtime coverage and MSDF at small, medium, and large sizes.
+- [ ] Define SDL3 2D renderer behavior. Recommended initial policy: MSDF is rendered on SDL_GPU; an MSDF asset also supplies a prebaked coverage/bitmap fallback for the SDL3 2D renderer. If no fallback exists, report the unsupported mode clearly rather than sampling MSDF as ordinary RGBA. Blocked: D-18.
+- [ ] Test the same outline font through runtime coverage and MSDF at small, medium, and large sizes. Blocked: E-02, E-04.
 - [ ] Keep pixel fonts on the bitmap path even when their style resembles a vector outline.
 
 ### Wants — useful but not blocking
 
 - [ ] Add MSDF atlas visualization tooling to inspect RGB distance channels and glyph rectangles.
 - [ ] Compare atlas sizes, visual quality, memory, and draw performance against the coverage path.
-- [ ] Support multiple MSDF atlas pages if the asset corpus requires them.
+- [ ] Support multiple MSDF atlas pages if the asset corpus requires them. Conditional on the corpus (section 6.5).
 
 ### Deliverable
 
@@ -614,21 +708,23 @@ An outline font can be generated offline into an MSDF asset, loaded at runtime, 
 
 **Purpose:** Make the unified system reliable for real game content and changing runtime text.
 
+**Decisions:** D-13 (fallback chain and `?`), D-15 (memory and performance targets). **Environment:** E-02 and E-04 for lifetime and recreation tests.
+
 ### Needs — must implement
 
-- [ ] Finalize missing-glyph behavior for each font provider: fallback glyph, explicit missing-glyph marker, or a reported unsupported character.
+- [ ] Finalize missing-glyph behavior for each font provider: fallback glyph, explicit missing-glyph marker, or a reported unsupported character. Blocked: D-13 (fallback chain and `?`).
 - [ ] Add a basic ordered font fallback chain if multi-language game content requires more than one font. Fallback selection must preserve clusters and shaping correctness; do not split a shaping cluster across fonts blindly.
 - [ ] Define behavior for font unloading while text layouts or queued draws still reference it.
 - [ ] Define cache and atlas memory ceilings and observable failure behavior.
-- [ ] Test renderer/device recreation, texture upload failure, asset reload, repeated font load/unload, and shutdown ordering.
+- [ ] Test renderer/device recreation, texture upload failure, asset reload, repeated font load/unload, and shutdown ordering. Blocked: E-02, E-04.
 - [ ] Ensure a cache miss cannot cause unsafe atlas mutation during a draw already submitted to the GPU.
 - [ ] Document that full bidi paragraph processing is separate from HarfBuzz shaping; add a bidi dependency/phase only if the engine's target language requirements need it.
 
 ### Wants — optional enhancements
 
 - [ ] Subpixel positioning for smooth UI typography, only if it does not undermine pixel-font rendering.
-- [ ] Variable-font axis selection.
-- [ ] Rich-text spans with multiple fonts/styles in one paragraph.
+- [ ] Variable-font axis selection. Conditional on D-10 (section 6.5).
+- [-] Rich-text spans with multiple fonts/styles in one paragraph. N/A: rich text is a non-goal (section 3).
 - [ ] Font prewarming based on localization bundles or known dialogue.
 - [ ] LRU cache eviction if telemetry shows page growth is too expensive.
 
@@ -650,18 +746,20 @@ A stable font runtime with predictable fallback, memory limits, lifetime behavio
 
 **Purpose:** Make the unified system the supported path without prematurely deleting compatibility code.
 
+**Decisions:** D-19. **Environment:** E-01, E-03, E-04.
+
 ### Needs — must complete
 
-- [ ] Run the full test suite: `zig build test`, `zig build test-ui`, `zig build check-assets`, and the repository's boundary/dependency checks.
+- [ ] Run the full test suite: `zig build test`, `zig build test-ui`, `zig build check-assets`, and the repository's boundary/dependency checks. Blocked: E-01, E-03.
 - [ ] Run asset-builder tests for bitmap, BFNT, and MSDF inputs, including malformed and unsupported assets.
-- [ ] Run CI on Linux, Windows, and macOS; verify the supported shader targets and C/C++ dependency linkage.
-- [ ] Compare screenshots against Phase 0 baselines for existing UI, debug overlay, console, and widgets.
+- [ ] Run CI on Linux, Windows, and macOS; verify the supported shader targets and C/C++ dependency linkage. Blocked: E-01.
+- [ ] Compare screenshots against Phase 0 baselines for existing UI, debug overlay, console, and widgets. Blocked: E-03, E-04.
 - [ ] Add visual reference tests for bitmap fonts, Latin shaping, Tamil shaping, and MSDF at multiple sizes.
-- [ ] Profile cold-cache and warm-cache text workloads: shaping time, rasterization count, upload cost, cache hit rate, draw calls, memory, and frame time.
+- [ ] Profile cold-cache and warm-cache text workloads: shaping time, rasterization count, upload cost, cache hit rate, draw calls, memory, and frame time. Blocked: E-02.
 - [ ] Rewrite `docs/text.md` to explain font formats, asset authoring, rendering modes, supported shaping, sampling, fallback, and limitations.
 - [ ] Update README asset-pipeline notes and public API documentation.
 - [ ] Update dependency policy/lock records for HarfBuzz and the MSDF generator (and runtime FreeType if selected).
-- [ ] Decide the status of old C text code: keep it as a BFNT compatibility adapter or remove it only after all consumers have migrated and compatibility tests prove it is unused.
+- [ ] Decide the status of old C text code: keep it as a BFNT compatibility adapter or remove it only after all consumers have migrated and compatibility tests prove it is unused. → D-19.
 - [ ] Preserve old `.bfnt` assets or provide a deterministic migration tool before changing/removing a format.
 
 ### Wants — useful but not blocking
@@ -689,14 +787,16 @@ A documented, tested, multi-source text/font system with an explicit supported-f
 | Order | Phase | Primary result | Must be true before proceeding |
 |---:|---|---|---|
 | 0 | Baseline and decisions | Agreed capability and compatibility matrix | All format, shaping, renderer, and dependency decisions resolved |
-| 1 | Shared model and compatibility | One font/text contract over existing BFNT | Existing text is unchanged and public API boundary is stable |
-| 2 | Bitmap importer and renderer | First-class hand-authored pixel fonts | Atlas and metadata validation plus visual pixel-accuracy tests pass |
-| 3 | HarfBuzz and runtime font face | CPU shaping service | Cross-platform dependency build and shaping fixtures pass |
+| 1 | Shared model and compatibility | One font/text contract over existing BFNT | D-01 to D-07 are Accepted; implementation and E-03 baseline comparison still required |
+| 2 | Bitmap importer and renderer | First-class hand-authored pixel fonts | D-08 and D-09 are Accepted; Phase 1 must close, then importer/asset and visual tests must pass |
+| 3 | HarfBuzz and runtime font face | CPU shaping service | Cross-platform dependency build and shaping fixtures pass (E-01) |
 | 4 | Runtime rasterizer and glyph cache | On-demand coverage glyphs | Cache, upload, atlas lifetime, and synchronization tests pass |
 | 5 | Shaped layout and UI integration | New text system used by engine consumers | Latin/Tamil layout, measurement, and UI regression tests pass |
 | 6 | MSDF generation and renderer | Optional scalable outline path | Shader, sampling, visual, and secondary-renderer fallback tests pass |
 | 7 | Fallback and hardening | Predictable runtime behavior | Memory, lifetime, missing-glyph, and error behavior are covered |
 | 8 | Cutover and documentation | Supported unified subsystem | Full CI, visual baselines, docs, and dependency records pass |
+
+**Decision order.** D-01 to D-07 are accepted and define the Phase 1 contract; Phase 1 implementation is still not started. D-08 and D-09 are accepted and define the Phase 2 descriptor and example asset; Phase 2 implementation is still not started and cannot enter until Phase 1 closes. Phase 5 depends on the Phase 1 API/font/rectangle decisions and the required preceding phase gates. CPU work written ahead of those implementation gates remains provisional (section 6.1).
 
 This order is deliberate: bitmap fonts become usable early; HarfBuzz and runtime coverage are introduced without destabilizing the current UI; MSDF is added only after the shared shaping/layout/provider contracts are proven.
 
@@ -784,7 +884,9 @@ The migration is accepted when all of the following are true:
 - [ ] MSDF is generated offline and uses its own shader/sampling policy.
 - [ ] The SDL3 2D renderer has an explicit, tested fallback for MSDF assets.
 - [ ] Text layout and glyph rendering remain independent subsystems.
-- [ ] `Canvas`, widgets, console, diagnostics, and sample code use the common API.
+- [ ] `Canvas`, widgets, console, and diagnostics use the common API. The sample draws no text and is N/A (section 6.5).
+- [ ] Every decision in section 6.2 is Accepted or changed, with a date.
+- [ ] Every environment gate in section 6.4 has a recorded run.
 - [ ] Atlas lifetime, GPU upload synchronization, font unloading, and cache limits are tested.
 - [ ] Existing visual baselines and the full supported CI matrix pass.
 - [ ] `docs/text.md`, dependency records, and public API documentation describe the actual implementation.

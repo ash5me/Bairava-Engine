@@ -101,10 +101,11 @@ comptime {
 /// 320x180 view. The file must have been baked at exactly this size.
 pub const ui_font_path = "assets/ui_font_9px.bfnt";
 pub const ui_font_px: f32 = 9;
-/// The font for the debug overlay, and its height. It is the same 9 px mono atlas as the demo panel, so the file
-/// must be baked at 9. At 7 px mono hinting drops strokes, and at 8 px some glyphs still blur together.
-pub const debug_font_path = "assets/ui_font_9px.bfnt";
-pub const debug_font_px: f32 = 9;
+/// The font for the debug overlay, and its height. This is the engine's single definition (application.zig), so the
+/// game and the samples cannot disagree. It is the same 9 px mono atlas as the demo panel. At 7 px mono hinting drops
+/// strokes, and at 8 px some glyphs still blur together.
+pub const debug_font_path = engine.default_debug_font_path;
+pub const debug_font_px: f32 = engine.default_debug_font_px;
 
 /// The log file, written beside the executable and replaced on each run. Null logs to the terminal only.
 pub const log_file_name: ?[:0]const u8 = "Semkootru.log";
