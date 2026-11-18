@@ -19,9 +19,9 @@ const std = @import("std");
 
 const staging = @import("../assets/staging.zig");
 const logging = @import("../logging/log.zig");
+const font_registry = @import("../text/font_registry.zig");
 const glyph_cache = @import("../text/glyph_cache.zig");
 const resolver = @import("../text/glyph_resolver.zig");
-const font_registry = @import("../text/font_registry.zig");
 const runtime_font = @import("../text/runtime_font.zig");
 const backend = @import("backends/sdl_gpu/backend.zig");
 const glyph_atlas = @import("glyph_atlas.zig");
@@ -31,7 +31,7 @@ const elog = logging.scoped("glyph check");
 
 /// Set to true to run the check. The shipped engine has it off. lifecycle.zig reads this to decide whether to create
 /// the check at all.
-pub const enabled: bool = false;
+pub const enabled: bool = true;
 
 /// The packaged font, relative to the package folder. The manifest row for `ui_font_ttf` writes it under assets/fonts.
 /// If the log says FileNotFound, check where the font landed under zig-out\bin and change this path to match.
@@ -148,16 +148,36 @@ fn queuePhrase(state: *State, batch: *sprite.SpriteBatch, phrase: []const u8) vo
 /// (each one is a new cache entry), and draws it in a grid. The log gives the count found and the count new to the
 /// cache, so a burst that adds nothing new shows up in the log.
 fn queueBurst(state: *State, batch: *sprite.SpriteBatch) void {
-    const misses_before = state.atlas.cache.snapshot().misses;
+    //const misses_before = state.atlas.cache.snapshot().misses;
+    const inserts_before = state.atlas.cache.snapshot().inserts;
+    const failures_before = state.failures;
     var inked: usize = 0;
     var glyph: u32 = burst_first_glyph;
     while (inked < burst_size and glyph < state.font.glyph_count) : (glyph += 1) {
         const metrics = state.font.glyphMetrics(glyph) catch continue;
         // A glyph with no ink takes no atlas space and queues no region, so it is not part of the burst.
         if (metrics.width == 0 or metrics.height == 0) continue;
-        const entry = resolver.resolve(&state.atlas.cache, font_id, &state.font, glyph, .gray) catch |err| {
+        const entry = resolver.resolve(
+            &state.atlas.cache,
+            font_id,
+            &state.font,
+            glyph,
+            .gray,
+        ) catch |err| {
             state.failures += 1;
-            elog.err("burst glyph {d} not drawn: {s}", .{ glyph, @errorName(err) });
+
+            if (err == error.AtlasFull) {
+                elog.err(
+                    "burst: physical atlas full after {d} glyphs",
+                    .{inked},
+                );
+                break;
+            }
+
+            elog.err(
+                "burst glyph {d} not drawn: {s}",
+                .{ glyph, @errorName(err) },
+            );
             continue;
         };
         batch.drawSprite(
@@ -173,13 +193,18 @@ fn queueBurst(state: *State, batch: *sprite.SpriteBatch) void {
         );
         inked += 1;
     }
-    const new_glyphs = state.atlas.cache.snapshot().misses - misses_before;
+    //const new_glyphs = state.atlas.cache.snapshot().misses - misses_before;
+    const new_glyphs = state.atlas.cache.snapshot().inserts - inserts_before;
+    const burst_failures = state.failures - failures_before;
     if (inked < burst_size) {
         elog.err("burst: only {d} glyphs with ink from ID {d} on; the burst needs {d}", .{ inked, burst_first_glyph, burst_size });
     }
     elog.info("burst: {d} glyphs with ink queued, {d} new to the cache, against a pending limit of {d}", .{
         inked, new_glyphs, glyph_cache.max_pending,
     });
+    if (inked != burst_size or new_glyphs != burst_size or burst_failures != 0) {
+        elog.err("FAIL: burst did not insert and queue all 600 glyphs", .{});
+    }
 }
 
 /// Reports whether the burst's flush made a whole-page upload. A burst that does not overflow the pending list leaves the
