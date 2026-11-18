@@ -275,7 +275,7 @@ Phase 1 decisions come first. They fix the font representation, the `Canvas` API
 | D-04 | `Canvas.rect` must use a renderer-owned 2×2 white texture, created independently of font resources and atlas pages. | Phase 1 | **Accepted (owner, 2026-11-18)** |
 | D-05 | Preserve existing `Canvas.text`, `textWidth`, `layoutText`, and `drawTextLayout` signatures; change internals through adapters. New functionality is additive; do not require game code to manage glyph IDs or atlas pages. | Phase 1 (required by Phase 5) | **Accepted (owner, 2026-11-18)** |
 | D-06 | First release is horizontal LTR only; no RTL or paragraph bidi. Script and language remain explicit caller-controlled options, with compatibility defaults `Latn` and `en`; do not guess them. Tamil callers specify `Taml` and `ta`. | Phase 1 | **Accepted with clarification (owner, 2026-11-18)** |
-| D-07 | Debug overlay and console font: one definition, 9 px mono, `assets/ui_font_9px.bfnt`. Defined once in `application.zig` (`default_debug_font_path`, `default_debug_font_px`); `src/game/config.zig` reads it. | Phase 1 | Accepted by direction (owner, 2026-11-18): preserve 9 px. Code status is tracked in Phase 1. |
+| D-07 | Debug overlay and console font: one definition, 9 px mono, `assets/ui_font_9px.bfnt`. Defined once in `application.zig` (`default_debug_font_path`, `default_debug_font_px`); `src/game/config.zig` reads it. | Phase 1 | Accepted by direction (owner, 2026-11-18): preserve 9 px. Code verified at 9 px in this upload (`application.zig:40`, read by `config.zig:108`), owner-confirmed 2026-11-18. |
 | D-08 | **Use the established AngelCode BMFont text descriptor format** for hand-authored bitmap font metadata. Parse/import it into Bairava-owned normalized structures; do not expose BMFont types as public engine API. | Phase 2 | **Accepted with change (owner, 2026-11-18)** |
 | D-09 | Use `dhepper/font8x8` `font8x8_basic` as the initial 8×8 monochrome ASCII pixel-font source, pinned to commit `4876b70490600222f30bb9acd2c02868e390bb56`. Include printable ASCII U+0020–U+007E; 16 columns × 6 rows (128×48 atlas); fixed 8-pixel advance; space has no ink; `?` is the initial fallback. The repository identifies the font data as public domain. The asset still must be generated/imported, checked in, and covered by descriptor/importer tests. | Phase 2 | **Accepted; asset integration pending (owner, 2026-11-18)** |
 | D-10 | Runtime outline formats: TrueType `glyf` only; CFF stays on the prebaked path. The code enforces this (`checkFormat`). Variable fonts use their default instance. | Phase 0 exit; Phase 3 | Open |
@@ -363,17 +363,17 @@ A reviewed design decision record containing: supported font formats, font-sourc
 
 ### Needs — must implement
 
-- [ ] Introduce a common font handle/face abstraction that can represent bitmap, prebaked coverage, runtime outline, and MSDF sources. Blocked: D-01.
+- [~] Introduce a common font handle/face abstraction that can represent bitmap, prebaked coverage, runtime outline, and MSDF sources. Blocked: D-01. *(Partly, sandbox, 2026-11-18: `FontId`, `FontHandle`, and `Registry(T)` are in `src/engine/text/font_registry.zig`, with 8 Zig tests registered in `src/tests.zig`, and a C mirror at 41/41 in `checks/font_registry_RESULTS.txt`. Not done: the `FontResource` tagged union for the four providers, and `Canvas` still holds `*Font`. Zig is not compiled in the sandbox.)*
 - [ ] Define common font metrics and baseline conventions. Blocked: D-01.
-- [ ] Define the shaped-glyph and glyph-render-record contracts from Section 5. Blocked: D-03.
+- [~] Define the shaped-glyph and glyph-render-record contracts from Section 5. Blocked: D-03. *(Partly, sandbox, 2026-11-18: `ShapedRun.font_id` is added, and a Zig test in `shaper.zig` enforces that `Glyph` has no font id. The glyph cache key, `Cache.removeFont`, the resolver, `glyph_records.Options`, and `renderer/glyph_check.zig` now use `FontId` (`u64`), as D-02 specifies; the cache hash folds the high 32 bits in. Zig is not compiled in the sandbox. The C mirror is at 2199 checks, 22 of 22 mutants caught, and the parity map has 50 Zig tests, 47 mirrored. Not done: the `glyph_records` build still draws from a caller-supplied id rather than a registry handle, and nothing outside the text package holds a `FontHandle` yet.)*
 - [ ] Define text options for font, size/scale, color, line spacing, alignment, wrapping width, and optional direction/script/language overrides. Blocked: D-06.
 - [ ] Separate text measurement, layout, glyph resolution, and draw submission into distinct responsibilities.
 - [ ] Keep current `.bfnt` loading behind a legacy/prebaked coverage provider; do not rewrite the file format in this phase. Blocked: D-01.
 - [ ] Preserve the current `Canvas.text`, `Canvas.textWidth`, `Canvas.layoutText`, and `Canvas.drawTextLayout` behavior through wrappers or adapters where practical. Blocked: D-05.
 - [ ] Decouple solid-rectangle drawing from the white 2x2 texel embedded in the font atlas. Use a renderer-owned white texture or a primitive path so a font atlas is not required for rectangles. Blocked: D-04.
-- [ ] Define ownership rules: a queued draw cannot reference a font page that may be destroyed, repacked, or overwritten before submission completes.
+- [~] Define ownership rules: a queued draw cannot reference a font page that may be destroyed, repacked, or overwritten before submission completes. *(Partly, sandbox, 2026-11-18: the registry's rules are written in the `font_registry.zig` header: `Registry(T)` owns each value until `remove`, `deinit` frees only the table, `get` pointers are valid until the next `insert` or `remove`, and a handle is valid only for the registry that issued it. Not done: the queued-draw and atlas-page rule, which needs the GPU path and Phase 5's flush wiring.)*
 - [ ] Keep renderer-specific types out of the public text API.
-- [ ] One definition of the debug overlay font, 9 px mono (D-07, accepted by owner direction). The intended source of truth is `application.zig` (`default_debug_font_path`, `default_debug_font_px`), read by `src/game/config.zig`. The shipped path currently uses 9 px while the application default was 10 px; implementation must reconcile this to 9 px. The owner reports Phase 1 implementation has not started.
+- [x] One definition of the debug overlay font, 9 px mono (D-07, accepted by owner direction). The source of truth is `application.zig` (`default_debug_font_path`, `default_debug_font_px`), read by `src/game/config.zig`. Evidence (owner-confirmed 2026-11-18): `application.zig:40` is `default_debug_font_px: f32 = 9`, and `config.zig:108` reads it. The 10 px default described in earlier notes is not in this upload, so no reconciliation is needed.
 
 ### Wants — useful but not blocking
 
@@ -650,15 +650,38 @@ UI widgets, the developer console, and the debug overlay use the shared text sys
 
 The following implementation status is authoritative and overrides any implication elsewhere in this document that Phase 1 or Phase 2 code has already been written:
 
-- **Phase 1 implementation: not started.** D-01 through D-06 and D-07 are decisions, not completed code. The rectangle path and font identity work still need implementation. Preserve the 9 px debug-font default; the existing `config.zig` (9 px) and `application.zig` (10 px) disagreement must be reconciled to 9 px.
+- **Phase 1 implementation: not started.** D-01 through D-06 and D-07 are decisions, not completed code. The rectangle path and font identity work still need implementation. Preserve the 9 px debug-font default. The `config.zig` and `application.zig` disagreement is resolved in this upload: both are 9 px (owner-confirmed 2026-11-18).
 - **Phase 2 implementation: not started.** D-08 and D-09 are decisions only. The BMFont importer/descriptor validation and the selected 8×8 example asset still need to be created, registered, and tested.
 - **Phase 3:** tests and shaping code exist; the pinned cross-platform CI evidence is now recorded under E-01. This does not waive the formal phase-entry dependency on Phases 1 and 2.
 - **Phase 4:** CPU cache/atlas/resolver work exists. The GPU burst has not started; E-02 remains open. It must force at least one whole-page upload (`full pages > 0`) and finish with clean GPU validation.
 - **Phase 5:** flush wiring and call-site migration have not started. Remaining work includes atlas flush before sprite submission, the SDL3 2D flush path, `Canvas` migration, console/debug-overlay/widgets migration, and device checks. Console moves with the debug overlay/Canvas work.
 - **Sample scene migration:** N/A. `sample/main.zig` and `sample/benchmark.zig` draw textures only and call no text API.
-- **Findings:** (1) `build.zig` line 204 links HarfBuzz into the shipped engine module; the comment around line 595 saying only the test module links it is stale and should be corrected. (2) Debug font defaults disagree: `config.zig` is 9 px and `application.zig` is 10 px; the shipped path is 9 px, which remains the accepted value. (3) The sample scene has no text call sites, so there is nothing to migrate there.
+- **Findings:** (1) `build.zig` line 204 links HarfBuzz into the shipped engine module. The comment at line 595 already says the engine module links HarfBuzz as well (`configureEngineModule`), so no change is needed in this upload. Owner-confirmed 2026-11-18. (2) Debug font defaults: `config.zig` and `application.zig` are both 9 px in this upload, which is the accepted value. Owner-confirmed 2026-11-18. (3) The sample scene has no text call sites, so there is nothing to migrate there.
 
 These are status and scope corrections, not evidence that implementation work is complete.
+
+### Sandbox progress (2026-11-18): Phase 1 contract, partial
+
+This note records work done in the sandbox. It does not change the owner status above, and Phase 1 remains open until the owner accepts a status change and the Phase 1 exit gate passes.
+
+**Landed (CPU code, Zig not compiled in the sandbox):**
+- `src/engine/text/font_registry.zig` (new): `FontId` (`u64`, zero invalid, never reused, `FontIdExhausted` at the top of the range), `FontHandle`, and `Registry(T)` with insert, get, and remove. It imports only `std`. Eight Zig tests, registered in `src/tests.zig`.
+- `src/engine/text/shaper.zig`: `ShapedRun.font_id` (D-03), `Shaper.font_id`, and `Shaper.initWithFontId`. `Shaper.init` keeps its signature and delegates with the invalid id, so existing callers are unchanged. Three Zig tests.
+- `checks/font_registry_mirror.c` and `checks/font_registry_RESULTS.txt`: 41 of 41 checks pass under `-Werror`, ASan, and UBSan. Five planted bugs each fail the checks written for them. The mirror does not compile the Zig.
+- Font ids widened from `u32` to `FontId` (`u64`) in `glyph_cache.zig`, `glyph_resolver.zig`, `glyph_records.zig`, and `renderer/glyph_check.zig`. The cache hash folds the high 32 bits into the 32-bit mix, so ids that differ only above bit 31 still spread across slots. Equality compares the whole id. One new Zig test, mirrored in `checks/glyph_cache_mirror.c` (2199 checks, was 2191). 22 of 22 mirror mutants caught, including the new `MUT_FONT_TRUNCATED`. Parity: 50 Zig tests, 47 mirrored.
+
+**Verified in the sandbox, unchanged:**
+- The Phase 0 characterization harness: 70 of 70, no warnings.
+- `checks/glyph_cache_mirror.c`: 2191 checks, 0 failures, under ASan and UBSan.
+- `scripts/boundary_scan.py --fail`: 0 reachable violations. Its self-test: 3 of 3.
+- `scripts/check-dependency-pins.py`: fails only on the six `vendor/` entries absent from the upload, as documented in the Phase 1 notes above.
+
+**Not done, with the reason:**
+- **`FontResource` tagged union and the Canvas and UI migration (D-01, D-05).** These touch `ui.zig`, `imgui.c`, and `runtime.zig`. They need a compile and the E-03 screenshot baseline.
+- **Rectangle decoupling (D-04).** The 2×2 white block lives in every font atlas (`tools/assets/font_bake.c:205, 360`; `src/engine/text/text.c:200`). `Canvas.rect` (`src/engine/ui/ui.zig:141, 149`), the C widget path (`src/engine/ui/imgui.c:52`), and `queueQuads` all draw from the font texture. Decoupling needs a renderer-owned white texture on both SDL_GPU and the SDL3 2D path, and per-quad texture selection. Checking it needs a device (E-02, E-04).
+- **A Zig test for the registry's out-of-memory rule.** The mirror covers it: a failed insert still spends its id. The Zig test needs `std.testing.FailingAllocator`, whose API cannot be checked without a compiler.
+
+**Gates:** nothing here closes E-02, E-03, or E-04. The Zig half of this pass closes only when `zig build test` passes on the pinned E-01 toolchain.
 
 ---
 

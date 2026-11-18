@@ -133,3 +133,58 @@ Each mutant is built from the same file with one MUT_* macro defined, and run.
 What this does not show: that the Zig code compiles, or that its tests pass. Those are the owner's run
 (zig build test on Windows, Linux, and macOS). The GPU and 2D update paths are not run here, and Atlas.flush
 itself needs a device, so the flush is checked only through its model.
+
+
+=== FONT ID WIDTH: u32 -> FontId (u64), 2026-11-18 ===
+
+Scope. The font id that keys the glyph cache is widened from u32 to FontId (u64), as decision D-02 specifies.
+The change touches GlyphKey.font, Cache.removeFont, keyOf, the resolver (resolve, resolveWithFallback, warm),
+glyph_records.Options.font_id, and renderer/glyph_check.zig. The cache hash folds the high 32 bits into the
+32-bit mix (hash_font / hashFont), so ids that differ only above bit 31 still spread across slots. Equality
+compares the whole id, so a fold collision costs a probe and never a wrong hit.
+
+Mirror: 2191 checks before the change, 2199 after. The eight new checks are the eight CHECK calls of
+t_high_font_ids, the new mirror of the Zig test "fonts whose ids differ only above bit 31 are different fonts".
+Every earlier check passes unchanged.
+
+  gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
+      checks/glyph_cache_mirror.c -lm -o glyph_cache_mirror
+  ./glyph_cache_mirror
+  -> 2199 checks, 0 failures, PASSED
+
+New mutant, MUT_FONT_TRUNCATED: key_of keeps only the low 32 bits of the font id, so ids 1 and 1+2^32 collide.
+It fails four assertions of t_high_font_ids. Built alone, it exits 1.
+
+Mutant sweep. Every MUT_ macro in the mirror (22 real macros), each built alone with -DMUT_X, must exit 1:
+
+  MUT_BAD_STRIDE: exit=1  no FAIL line
+  MUT_DROP_ON_GROW: exit=1  FAIL: the table grows as entries are added, and every entry is still found afterwards: all 1000 entries found after growth (line 868)
+  MUT_FALLBACK_NO_COUNT: exit=1  FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: one missing glyph: got
+  MUT_FLUSH_GATED: exit=1  FAIL: the GPU step records the same regions whichever renderer is active (flush model): GPU mode: white block and the glyph are both recorde
+  MUT_FONT_TRUNCATED: exit=1  FAIL: fonts whose ids differ only above bit 31 are different fonts: the high id misses while only font 1 is cached (line 824)
+  MUT_LEAK_COVERAGE: exit=1  no FAIL line
+  MUT_MISSING_OFF_BY_ONE: exit=1  FAIL: a glyph past the end of the font draws the fallback glyph, counts one missing glyph, and stores nothing for it: fallback resolves: got
+  MUT_MODE_NOT_IN_EQ: exit=1  FAIL: a gray and a mono key that share a probe chain stay apart: mono misses in the gray key's probe chain (line 1087)
+  MUT_NOMISS: exit=1  FAIL: a glyph misses once, is inserted, and then hits, and a repeated insert returns the same entry: one miss: got 0, want 1 (line 666)
+  MUT_NOOVERFLOW: exit=1  FAIL: more changed glyphs than the pending list holds mark their page for a full upload: page 0 needs a full upload (line 885)
+  MUT_NOPAD: exit=1  FAIL: glyph rows are copied to the region the cache reports, and region coverage keeps the page stride: first glyph after white starts at x=
+  MUT_NOTOOLARGE_COUNT: exit=1  FAIL: a glyph wider than the page allows is refused and counted: one too_large: got 0, want 1 (line 775)
+  MUT_NOWRAP: exit=1  FAIL: a glyph that does not fit the shelf starts a new shelf below it: sixth glyph starts a new shelf at x=0: got 28, want 0 (line 739)
+  MUT_PLAN_KEEP: exit=1  FAIL: the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D: GPU mode, no copy
+  MUT_REMOVE_NOOP: exit=1  FAIL: removing a font forgets its glyphs and keeps the others: removed glyph misses (line 808)
+  MUT_RESOLVE_IGNORES_CACHE: exit=1  FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 2, want 1 (line 1141)
+  MUT_RESOLVE_NO_RASTER_COUNT: exit=1  FAIL: a repeated request for a glyph finds it, and rasterizes it only once: one rasterization: got 0, want 1 (line 1141)
+  MUT_TOMBSTONE_EMPTY: exit=1  FAIL: a removed entry does not hide the entries probed past it: second is still found past the tombstone (line 850)
+  MUT_UNSUPPORTED_AS_GRAY: exit=1  FAIL: an unsupported raster mode is refused before the cache is consulted: mono is refused: got error 0, want 7 (line 1231)
+  MUT_WARM_CONTINUES: exit=1  FAIL: warming stops at the first refused glyph and reports how far it got: the warm-up stops at A: got error 0, want 1 (line 1440)
+  MUT_WARM_NO_SUBST_COUNT: exit=1  FAIL: warming substitutes the fallback for glyphs past the end, counts each, and stores nothing for them: two requests drew the fallback: go
+  MUT_ZERO_IS_MISSING: exit=1  FAIL: glyph 0 is valid: it is drawn as itself, is cached like any glyph, and is never counted as missing: glyph 0 is not a substitute: got 1
+
+Result: 22 of 22 mutants exit 1. The unmutated run exits 0.
+
+Parity. checks/glyph_cache_parity.py was re-run. Zig tests: 50 (was 49). Mirrored: 47 (was 46). Zig only: 3.
+Unmapped: 0. The regenerated checks/glyph_cache_parity.txt is included in this change.
+
+Not checked here. The Zig does not compile in the sandbox, so the type changes and the new Zig test are unverified
+until zig build test runs on the pinned toolchain. The hash fold changes slot placement for every key. That is
+internal to the cache and changes no observable result, and the existing probe-chain checks pass after the change.

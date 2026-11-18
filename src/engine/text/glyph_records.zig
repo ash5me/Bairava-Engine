@@ -17,6 +17,8 @@ const std = @import("std");
 const glyph_cache = @import("glyph_cache.zig");
 const glyph_resolver = @import("glyph_resolver.zig");
 const runtime_font = @import("runtime_font.zig");
+const font_registry = @import("font_registry.zig");
+const FontId = font_registry.FontId;
 const shaped_layout = @import("shaped_layout.zig");
 
 pub const Error = glyph_resolver.Error || std.mem.Allocator.Error;
@@ -40,7 +42,7 @@ pub const Record = struct {
 
 pub const Options = struct {
     /// The caller's id for this font inside the cache. Two live fonts must not share one.
-    font_id: u32,
+    font_id: FontId,
     /// The glyph drawn for a glyph ID past the font's last glyph. The caller chooses it; see glyph_resolver.
     fallback_glyph_id: u32,
     mode: glyph_cache.RasterMode = .gray,
@@ -99,7 +101,7 @@ const testing = std.testing;
 const shaper = @import("shaper.zig");
 
 const font_path: [:0]const u8 = "assets/font.ttf";
-const font_id: u32 = 1;
+const font_id: FontId = 1;
 const test_line_height: f32 = 20;
 /// Arial 7.07's glyph index for 'A' and 'V', as the shaper and runtime font tests report them.
 const arial_glyph_a: u32 = 36;

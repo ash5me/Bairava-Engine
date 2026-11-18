@@ -19,7 +19,10 @@
 
 const std = @import("std");
 const runtime_font = @import("runtime_font.zig");
+const font_registry = @import("font_registry.zig");
 const hb = runtime_font.hb;
+
+const FontId = font_registry.FontId;
 
 pub const Error = error{
     OutOfMemory,
@@ -60,6 +63,9 @@ pub const ShapedRun = struct {
     glyphs: []Glyph,
     /// Sum of every glyph's x_advance: the pen position after the last glyph.
     width: f32,
+    /// The font this run was shaped with (D-03). It is stored once here, not on each glyph, until a fallback chain
+    /// needs per-glyph fonts. It is `invalid_font_id` when the shaper was made with `Shaper.init`.
+    font_id: FontId = font_registry.invalid_font_id,
 
     pub fn deinit(self: *ShapedRun) void {
         self.allocator.free(self.glyphs);
@@ -70,11 +76,20 @@ pub const ShapedRun = struct {
 pub const Shaper = struct {
     font: *const runtime_font.RuntimeFont,
     buffer: *hb.hb_buffer_t,
+    /// Stamped on every run this shaper returns.
+    font_id: FontId = font_registry.invalid_font_id,
 
-    /// Creates a shaper for `font`. The font must outlive the shaper.
+    /// Creates a shaper for `font` with no registry id, so its runs carry `invalid_font_id`. The font must outlive
+    /// the shaper.
     pub fn init(font: *const runtime_font.RuntimeFont) Error!Shaper {
+        return initWithFontId(font, font_registry.invalid_font_id);
+    }
+
+    /// Creates a shaper for `font` whose runs are stamped with `font_id`, the id the caller got from the font
+    /// registry. The font must outlive the shaper.
+    pub fn initWithFontId(font: *const runtime_font.RuntimeFont, font_id: FontId) Error!Shaper {
         const buffer = hb.hb_buffer_create() orelse return error.OutOfMemory;
-        return .{ .font = font, .buffer = buffer };
+        return .{ .font = font, .buffer = buffer, .font_id = font_id };
     }
 
     pub fn deinit(self: *Shaper) void {
@@ -98,7 +113,7 @@ pub const Shaper = struct {
             out.* = toGlyph(infos[i], positions[i]);
             width += out.x_advance;
         }
-        return .{ .allocator = allocator, .glyphs = glyphs, .width = width };
+        return .{ .allocator = allocator, .glyphs = glyphs, .width = width, .font_id = self.font_id };
     }
 
     /// Shapes `text` and returns only its width. It runs the same shaping and the same summation as `shape`, so the
@@ -415,4 +430,36 @@ test "a combining overline is a zero-advance glyph placed by its offset, and the
     try testing.expectEqual(@as(f32, -4.15625), run.glyphs[1].x_offset);
     try testing.expectEqual(@as(f32, 2.421875), run.glyphs[1].y_offset);
     try testing.expectEqual(@as(u32, 0), run.glyphs[1].cluster);
+}
+
+test "a run carries the id of the font it was shaped with" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var shaper = try Shaper.initWithFontId(&font, 42);
+    defer shaper.deinit();
+
+    var run = try shaper.shape(testing.allocator, "AV", .{});
+    defer run.deinit();
+    try testing.expectEqual(@as(FontId, 42), run.font_id);
+    try testing.expectEqual(@as(usize, 2), run.glyphs.len);
+}
+
+test "a shaper made with init stamps its runs with the invalid id" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    var shaper = try Shaper.init(&font);
+    defer shaper.deinit();
+
+    var run = try shaper.shape(testing.allocator, "A", .{});
+    defer run.deinit();
+    try testing.expectEqual(font_registry.invalid_font_id, run.font_id);
+}
+
+test "the font id is stored once on the run, not on each glyph" {
+    try testing.expect(@hasField(ShapedRun, "font_id"));
+    try testing.expect(!@hasField(Glyph, "font_id"));
 }

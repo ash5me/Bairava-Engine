@@ -32,7 +32,7 @@
 typedef struct { uint32_t page, x, y, w, h; } Region;
 typedef struct { float advance, xoff, yoff; uint32_t width, height; } Metrics;
 typedef enum { RASTER_GRAY = 0, RASTER_MONO = 1 } RasterMode;
-typedef struct { uint32_t font, glyph, size_bits; RasterMode mode; } GlyphKey;
+typedef struct { uint64_t font; uint32_t glyph, size_bits; RasterMode mode; } GlyphKey;
 typedef struct { Metrics metrics; Region region; } Entry;
 typedef struct {
     uint64_t hits, misses, inserts, empty_glyphs, cache_full, too_large;
@@ -113,7 +113,10 @@ static uint32_t size_bits_of(float pixel_height) {
     return bits;
 }
 
-static GlyphKey key_of(uint32_t font, uint32_t glyph) {
+static GlyphKey key_of(uint64_t font, uint32_t glyph) {
+#ifdef MUT_FONT_TRUNCATED
+    font = (uint64_t)(uint32_t)font; /* keeps only the low 32 bits of the font id: ids 1 and 1+2^32 collide */
+#endif
     GlyphKey k = { font, glyph, size_bits_of(16.0f), RASTER_GRAY };
     return k;
 }
@@ -147,8 +150,13 @@ static uint32_t mix(uint32_t value) {
     return h;
 }
 
+/* Folds a 64-bit font id into the 32 bits mix takes. Matches hashFont in glyph_cache.zig. */
+static uint32_t hash_font(uint64_t font) {
+    return (uint32_t)(font ^ (font >> 32));
+}
+
 static size_t hash_key(GlyphKey key) {
-    uint32_t h = mix(key.font);
+    uint32_t h = mix(hash_font(key.font));
     h = mix(h ^ key.glyph);
     h = mix(h ^ key.size_bits);
     h = mix(h ^ (uint32_t)key.mode);
@@ -398,7 +406,7 @@ static Err cache_insert(Cache *c, GlyphKey key, Metrics m, const uint8_t *covera
     return ERR_NONE;
 }
 
-static uint32_t cache_remove_font(Cache *c, uint32_t font) {
+static uint32_t cache_remove_font(Cache *c, uint64_t font) {
     uint32_t removed = 0;
     for (size_t i = 0; i < c->slot_len; i++) {
         Slot *s = &c->slots[i];
@@ -530,7 +538,7 @@ static void fake_coverage(uint32_t gid, uint32_t w, uint32_t h, uint8_t *out) {
 }
 
 /* Mirrors resolve() in glyph_resolver.zig: refuse the mode, look up, rasterize on a miss, count, insert. */
-static Err resolve(Cache *c, uint32_t font_id, const FakeFont *f, uint32_t gid, RasterMode mode, Entry *out) {
+static Err resolve(Cache *c, uint64_t font_id, const FakeFont *f, uint32_t gid, RasterMode mode, Entry *out) {
 #ifndef MUT_UNSUPPORTED_AS_GRAY
     if (mode != RASTER_GRAY) return ERR_UNSUPPORTED_MODE;
 #endif
@@ -559,7 +567,7 @@ static Err resolve(Cache *c, uint32_t font_id, const FakeFont *f, uint32_t gid, 
 }
 
 /* Mirrors resolveWithFallback() in glyph_resolver.zig. */
-static Err resolve_with_fallback(Cache *c, uint32_t font_id, const FakeFont *f, uint32_t gid, uint32_t fallback,
+static Err resolve_with_fallback(Cache *c, uint64_t font_id, const FakeFont *f, uint32_t gid, uint32_t fallback,
                                  RasterMode mode, Entry *out, int *substituted) {
 #ifndef MUT_UNSUPPORTED_AS_GRAY
     if (mode != RASTER_GRAY) {
@@ -593,7 +601,7 @@ typedef struct { uint32_t rasterized, already_cached, substituted; } WarmStats;
  * rasterized when the rasterization counter moved and as already cached when it did not. The first error stops the
  * run and is returned. MUT_WARM_CONTINUES plants a skip-and-go-on bug. MUT_WARM_NO_SUBST_COUNT plants a bug that
  * drops the substituted count. */
-static Err warm(Cache *c, uint32_t font_id, const FakeFont *f, const uint32_t *ids, size_t count, uint32_t fallback,
+static Err warm(Cache *c, uint64_t font_id, const FakeFont *f, const uint32_t *ids, size_t count, uint32_t fallback,
                 RasterMode mode, WarmStats *out) {
     memset(out, 0, sizeof *out);
     if (mode != RASTER_GRAY) return ERR_UNSUPPORTED_MODE;
@@ -802,6 +810,23 @@ static void t_remove_font(void) {
     Stats s = cache_snapshot(&c);
     CHECK_EQ(s.entries, 2, "two entries left");
     CHECK_EQ(s.removed, 3, "removed counter");
+    cache_deinit(&c);
+}
+
+static void t_high_font_ids(void) {
+    begin("fonts whose ids differ only above bit 31 are different fonts");
+    Cache c;
+    CHECK_ERR(cache_init(&c, 32, 2), ERR_NONE, "init");
+    uint8_t four[4] = { 9, 8, 7, 6 };
+    uint64_t high = 1 + ((uint64_t)1 << 32);
+    Entry e;
+    CHECK_ERR(cache_insert(&c, key_of(1, 5), metrics_of(2, 2), four, 4, &e), ERR_NONE, "font 1");
+    CHECK(!lookup(&c, key_of(high, 5), &e), "the high id misses while only font 1 is cached");
+    CHECK_ERR(cache_insert(&c, key_of(high, 5), metrics_of(2, 2), four, 4, &e), ERR_NONE, "high font");
+    CHECK(cache_snapshot(&c).entries == 2, "two entries: the fonts stay apart");
+    CHECK(cache_remove_font(&c, high) == 1, "removing the high id removes one entry");
+    CHECK(lookup(&c, key_of(1, 5), &e), "font 1 survives");
+    CHECK(!lookup(&c, key_of(high, 5), &e), "the high id is gone");
     cache_deinit(&c);
 }
 
@@ -1467,6 +1492,7 @@ int main(void) {
     t_too_large();
     t_bad_bitmap();
     t_remove_font();
+    t_high_font_ids();
     t_probe_chain();
     t_growth();
     t_pending_overflow();

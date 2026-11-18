@@ -10,6 +10,8 @@
 
 const glyph_cache = @import("glyph_cache.zig");
 const runtime_font = @import("runtime_font.zig");
+const font_registry = @import("font_registry.zig");
+const FontId = font_registry.FontId;
 
 pub const Error = runtime_font.Error || glyph_cache.Error || error{UnsupportedRasterMode};
 
@@ -41,7 +43,7 @@ pub fn supports(mode: glyph_cache.RasterMode) bool {
 /// no glyph is dropped silently.
 pub fn resolve(
     cache: *glyph_cache.Cache,
-    font_id: u32,
+    font_id: FontId,
     font: *const runtime_font.RuntimeFont,
     glyph_id: u32,
     mode: glyph_cache.RasterMode,
@@ -70,7 +72,7 @@ pub fn resolve(
 /// unsupported mode is refused first, so it counts nothing.
 pub fn resolveWithFallback(
     cache: *glyph_cache.Cache,
-    font_id: u32,
+    font_id: FontId,
     font: *const runtime_font.RuntimeFont,
     glyph_id: u32,
     fallback_glyph_id: u32,
@@ -105,7 +107,7 @@ pub const WarmStats = struct {
 /// An unsupported mode is refused before anything is cached.
 pub fn warm(
     cache: *glyph_cache.Cache,
-    font_id: u32,
+    font_id: FontId,
     font: *const runtime_font.RuntimeFont,
     glyph_ids: []const u32,
     fallback_glyph_id: u32,

@@ -26,6 +26,8 @@
 //! thread, but `insert` runs on the render thread.
 
 const std = @import("std");
+const font_registry = @import("font_registry.zig");
+const FontId = font_registry.FontId;
 
 pub const default_page_size: u32 = 1024;
 pub const default_page_count: u32 = 4;
@@ -60,7 +62,7 @@ pub const RasterMode = enum(u8) { gray = 0, mono = 1 };
 /// Identifies one rasterized glyph. `font` is chosen by the caller and must differ between live fonts. `size_bits` is
 /// the pixel height's bit pattern, so two heights that differ at all are different keys. `mode` defaults to gray.
 pub const GlyphKey = struct {
-    font: u32,
+    font: FontId,
     glyph: u32,
     size_bits: u32,
     mode: RasterMode = .gray,
@@ -268,7 +270,7 @@ pub const Cache = struct {
 
     /// Forgets every glyph of `font`. Their texels stay in their pages until `clear`. Returns how many entries were
     /// removed.
-    pub fn removeFont(self: *Cache, font: u32) u32 {
+    pub fn removeFont(self: *Cache, font: FontId) u32 {
         var removed: u32 = 0;
         for (self.slots) |*slot| {
             if (slot.state == .used and slot.key.font == font) {
@@ -480,8 +482,14 @@ fn mix(value: u32) u32 {
     return h;
 }
 
+/// Folds a font id into the 32 bits `mix` takes, so ids that differ only above bit 31 still spread across slots.
+/// Equality (`sameKey`) compares the whole id, so a fold collision costs a probe and never a wrong hit.
+fn hashFont(font: FontId) u32 {
+    return @truncate(font ^ (font >> 32));
+}
+
 fn hashKey(key: GlyphKey) usize {
-    var h = mix(key.font);
+    var h = mix(hashFont(key.font));
     h = mix(h ^ key.glyph);
     h = mix(h ^ key.size_bits);
     h = mix(h ^ @as(u32, @intFromEnum(key.mode)));
@@ -508,7 +516,7 @@ fn testMetrics(w: u32, h: u32) Metrics {
     return .{ .advance = @floatFromInt(w + 1), .xoff = 0, .yoff = -@as(f32, @floatFromInt(h)), .width = w, .height = h };
 }
 
-fn keyOf(font: u32, glyph: u32) GlyphKey {
+fn keyOf(font: FontId, glyph: u32) GlyphKey {
     return .{ .font = font, .glyph = glyph, .size_bits = sizeBits(16) };
 }
 
@@ -840,4 +848,18 @@ test "a gray and a mono key that share a probe chain stay apart" {
     _ = try cache.insert(gray, testMetrics(2, 2), &[_]u8{ 1, 2, 3, 4 });
     try testing.expect(cache.lookup(mono) == null);
     try testing.expect(cache.lookup(gray) != null);
+}
+
+test "fonts whose ids differ only above bit 31 are different fonts" {
+    var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 2 });
+    defer cache.deinit();
+    const coverage = [_]u8{ 9, 8, 7, 6 };
+    const high: FontId = 1 + (1 << 32);
+    _ = try cache.insert(keyOf(1, 5), testMetrics(2, 2), &coverage);
+    try testing.expect(cache.lookup(keyOf(high, 5)) == null);
+    _ = try cache.insert(keyOf(high, 5), testMetrics(2, 2), &coverage);
+    try testing.expectEqual(@as(u32, 2), cache.snapshot().entries);
+    try testing.expectEqual(@as(u32, 1), cache.removeFont(high));
+    try testing.expect(cache.lookup(keyOf(1, 5)) != null);
+    try testing.expect(cache.lookup(keyOf(high, 5)) == null);
 }

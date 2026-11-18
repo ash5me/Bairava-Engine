@@ -21,6 +21,7 @@ const staging = @import("../assets/staging.zig");
 const logging = @import("../logging/log.zig");
 const glyph_cache = @import("../text/glyph_cache.zig");
 const resolver = @import("../text/glyph_resolver.zig");
+const font_registry = @import("../text/font_registry.zig");
 const runtime_font = @import("../text/runtime_font.zig");
 const backend = @import("backends/sdl_gpu/backend.zig");
 const glyph_atlas = @import("glyph_atlas.zig");
@@ -36,7 +37,7 @@ pub const enabled: bool = false;
 /// If the log says FileNotFound, check where the font landed under zig-out\bin and change this path to match.
 const font_path = "assets/fonts/font.ttf";
 const pixel_height: f32 = 24;
-const font_id: u32 = 1;
+const font_id: font_registry.FontId = 1;
 
 /// The codepoint minus this is the glyph ID in the shipped Arial. Codepoints below it are not printable here.
 const glyph_offset: u32 = 29;

@@ -1,0 +1,70 @@
+font_registry: Phase 1 font identity contract (decisions D-01, D-02), and ShapedRun font identity (D-03)
+==========================================================================================================
+
+Date: 2026-11-18 (sandbox, Ubuntu 24.04, gcc 13.3.0)
+
+What this file records
+  checks/font_registry_mirror.c mirrors src/engine/text/font_registry.zig. It checks the control flow and the id
+  rules under AddressSanitizer and UBSan. It does NOT compile the Zig. The sandbox has no Zig toolchain, so
+  `zig build test` remains the first real check of font_registry.zig and of the D-03 change in shaper.zig.
+  This is sandbox evidence. It does not close any environment gate in section 6.4 of the plan.
+
+Build and run (the strict build the repository uses for its other mirrors)
+
+  gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
+      checks/font_registry_mirror.c -o font_registry_mirror
+  ./font_registry_mirror
+
+Result, unmutated build
+
+  font_registry mirror: Phase 1 contract (D-01, D-02)
+    random model: 200000 operations, 0 mismatches, 4095 live, 4096 removed
+    random model: 200000 operations, 0 mismatches, 4094 live, 4096 removed
+
+  41 checks, 0 failures
+  PASSED
+
+Mutation builds (one planted bug each; each run must fail)
+
+  Mutant                  Planted bug                                        Result     Checks that catch it
+  MUT_WRAP                issue() wraps to 1 at the top instead of failing   exit 1     6 failures (exhaustion checks,
+                                                                                        insert past the top)
+  MUT_ZERO_ISSUED         the counter starts at 0, so zero names a font       exit 1     12 failures (first id is 1,
+                                                                                        random model)
+  MUT_INVALID_IS_STALE    an id never issued is reported STALE               exit 1     3 failures (past next_id,
+                                                                                        random model)
+  MUT_STALE_IS_INVALID    a removed id is reported INVALID                   exit 1     6 failures (STALE on get and
+                                                                                        remove, random model)
+  MUT_REUSE_ID            remove() rewinds the counter, reissuing the last   exit 1     6 failures (removed id is
+                          id                                                            not reissued, random model)
+
+  Every mutant fails. Each one trips the checks written for its bug.
+
+Zig test to mirror check (parity map, font_registry.zig)
+
+  Zig test                                                             Mirror check
+  "the first id issued is 1, and zero is never issued"                 test_first_id_is_one
+  "exhaustion fails at the top of the range and leaves the counter..." test_exhaustion_at_top
+  "an inserted value is found by its handle"                           test_insert_then_get
+  "the invalid handle, and an id never issued, are InvalidHandle"      test_invalid_handles
+  "a removed font's handle is stale, and removing it again is stale"   test_removed_is_stale
+  "a removed id is never issued again"                                 test_removed_id_not_reissued
+  "removing one font leaves the other handles valid"                   test_remove_middle_keeps_others
+  "a registry at the top of the id range refuses insert without..."    test_insert_at_top
+
+  8 of 8 Zig tests have a mirror check with the same values.
+
+Mirror-only checks (no Zig test yet)
+
+  test_oom_spends_id      An insert whose table growth fails still spends its id, and the next insert gets a later
+                          id. The Zig code documents this in Registry.insert. No Zig test injects the failure yet.
+  test_random_model       200,000 random operations per run, against a reference model of live and removed handles,
+                          with allocation failures injected on about 1 insert in 16. It runs twice.
+
+Known gaps (recorded, not hidden)
+
+  - No Zig test covers the OOM rule. A std.testing.FailingAllocator test is the natural addition, but it was not
+    written here because the pinned Zig dev build's FailingAllocator API cannot be checked without a compiler.
+  - D-03 (ShapedRun.font_id, Shaper.initWithFontId) has Zig tests in shaper.zig and no C mirror. HarfBuzz is not
+    modeled in the sandbox. Those tests run only under `zig build test`.
+  - The mirror checks control flow. It is not evidence that the Zig compiles or that the Zig tests pass.

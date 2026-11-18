@@ -7,7 +7,7 @@ failures, the upload rectangle, and the fallback. It does NOT check values from 
 Zig compiler. A mirrored test passing shows the logic is the same as the Zig test's. The Zig test still has to
 pass in Zig before it counts.
 
-Zig tests: 49. Mirrored (logic checked in C): 46. Zig only: 3.
+Zig tests: 50. Mirrored (logic checked in C): 47. Zig only: 3.
 Mirror blocks with no Zig test of the same name: 1.
 
 Zig file                       | status | Zig test
@@ -37,6 +37,7 @@ glyph_cache.zig                | mirror | a failed allocation in init is reporte
 glyph_cache.zig                | mirror | a lookup table that cannot grow refuses the insert and keeps the entries it has
 glyph_cache.zig                | mirror | a key without a mode is gray, and gray is the zero value, so a zeroed mode is gray
 glyph_cache.zig                | mirror | a gray and a mono key that share a probe chain stay apart
+glyph_cache.zig                | mirror | fonts whose ids differ only above bit 31 are different fonts
 glyph_cache_font_test.zig      | ZIG    | the first glyphs of the shipped font enter one cache page, and each region holds its rasterized coverage
                                |        |   reason: reads the shipped font through HarfBuzz and rasterizes it with stb; the mirror has no font
 glyph_cache_font_test.zig      | ZIG    | a glyph the cache has not seen before is rasterized and stored on demand
