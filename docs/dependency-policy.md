@@ -15,6 +15,7 @@ and reflected in the version records that ship with release artifacts.
 | Slang compiler | Version in `.github/workflows/ci.yml`; per-platform archive digests in [`dependency-lock.json`](dependency-lock.json) |
 | cglm, FreeType, stb, log.c, Parson | Versions, upstream references, and source-tree SHA-256 values in [`dependency-lock.json`](dependency-lock.json) |
 | HarfBuzz | Version, upstream reference, and source-tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); vendored under `vendor/harfbuzz-15.1.0/` (`src/` and `COPYING`) |
+| Test font (Noto Sans Tamil) | Upstream commit and tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); files under `tests/fixtures/`, used only by `zig build test` |
 
 The lock file covers every file in the vendored dependency paths, not just
 version headers. It also mirrors the Zig, Slang, SDL, and ztracy pins. The
@@ -65,6 +66,16 @@ change history for rollback.
 - Each header offers two alternative licenses: MIT, and public domain (the Unlicense text). Use is permitted under either. This was checked for all four headers.
 - Upstream commit: `9600522de53973336fa033a289858a4354cbb04c`, recorded in the lock for `stb_truetype.h` 1.28. Check it with `git show 9600522de53973336fa033a289858a4354cbb04c:stb_truetype.h | sha256sum`. The result should be `428cfe93520f2aed5e413a220b0db5bba5b17e2ebe5a64e4a8efa9eeeb67ec5f` if your copy is byte-identical to the commit. The other stb files in the lock entry are not yet tied to a commit.
 - Change history for `stb_truetype.h`: version 1.26 (lock hash `bb97d75f…`) was replaced by upstream 1.28 (lock hash `6ad5c81a…`). The 1.26 pin is kept here for rollback. A locally edited 1.26 (hash `0a7a878f…`) was never recorded and is superseded by 1.28.
+
+## Test fixtures
+
+**Noto Sans Tamil** (`tests/fixtures/NotoSansTamil.ttf` and `tests/fixtures/NotoSansTamil-OFL.txt`)
+
+- Copyright 2022 The Noto Project Authors (https://github.com/notofonts/tamil). The font is variable TrueType outlines (`glyf`) with `GSUB` and `GPOS`. It is licensed under the SIL Open Font License, Version 1.1. The license text is in `NotoSansTamil-OFL.txt`, and the font also carries it in its name table.
+- Source: `ofl/notosanstamil/NotoSansTamil[wdth,wght].ttf` at the google/fonts commit `7af0d90b4d532ffa4b041937b560c6df4e7b1e95`. The repository copy is renamed to `NotoSansTamil.ttf`, and its bytes are unchanged (SHA-256 `aa3a9b321f4b0bb2c40203ffbde9af89713227866e0e13f76e5b9eeea727cf88`). `OFL.txt` at that commit is byte-identical to the copy kept here.
+- Used by `src/engine/text/shaper_tamil_test.zig` only. `scripts/package-release.ps1` copies a fixed list of files and does not copy `tests/`, so the font is not in release archives.
+- The lock records the tree hash of both files, and `scripts/check-dependency-pins.py` verifies it on every run.
+- Replace the font only as a reviewed change: a new pinned commit, new hashes, and the expected Tamil values in `shaper_tamil_test.zig` rechecked against it.
 
 ## Release record
 

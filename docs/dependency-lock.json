@@ -87,6 +87,18 @@
         "vendor/harfbuzz-15.1.0"
       ],
       "sha256": "6c1fac27a81a9728e7da272ce22a8cc1f1e79d5bd980f8b2aa97bd93cadfee0c"
+    },
+    {
+      "name": "Noto Sans Tamil (test fixture)",
+      "version": "variable TrueType (wdth, wght); Noto Sans Tamil, Copyright 2022 The Noto Project Authors",
+      "source": "https://github.com/google/fonts/tree/7af0d90b4d532ffa4b041937b560c6df4e7b1e95/ofl/notosanstamil",
+      "commit": "7af0d90b4d532ffa4b041937b560c6df4e7b1e95",
+      "license": "SIL Open Font License 1.1 (tests/fixtures/NotoSansTamil-OFL.txt)",
+      "paths": [
+        "tests/fixtures/NotoSansTamil.ttf",
+        "tests/fixtures/NotoSansTamil-OFL.txt"
+      ],
+      "sha256": "75c12e3d397b0f7abf68fec99befd428ae2bf638ecb2232fd1b106da7a4c5e15"
     }
   ]
 }

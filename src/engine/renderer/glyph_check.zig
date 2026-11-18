@@ -30,7 +30,7 @@ const elog = logging.scoped("glyph check");
 
 /// Set to true to run the check. The shipped engine has it off. lifecycle.zig reads this to decide whether to create
 /// the check at all.
-pub const enabled: bool = false;
+pub const enabled: bool = true;
 
 /// The packaged font, relative to the package folder. The manifest row for `ui_font_ttf` writes it under assets/fonts.
 /// If the log says FileNotFound, check where the font landed under zig-out\bin and change this path to match.

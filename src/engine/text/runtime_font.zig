@@ -20,7 +20,9 @@
 const std = @import("std");
 const staging = @import("../assets/staging.zig");
 
-const hb = @cImport({
+/// The HarfBuzz C API. shaper.zig imports it from here so both files name the same types; a second @cImport would
+/// produce distinct, incompatible HarfBuzz types. HarfBuzz types stay inside the text package.
+pub const hb = @cImport({
     @cInclude("hb.h");
 });
 

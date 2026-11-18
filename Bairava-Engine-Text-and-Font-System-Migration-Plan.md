@@ -497,23 +497,23 @@ Corrected: the frames-in-flight comments in `glyph_cache.zig` and `glyph_atlas.z
 
 ### Needs — must implement
 
-- [ ] Shape a complete text run before measuring it for line placement. Use shaped advances/offsets rather than summing codepoint widths.
-- [ ] Carry clusters through layout and only split lines at approved cluster/grapheme boundaries. Do not reuse the current codepoint-only long-word splitter for complex shaped runs.
-- [ ] Define line-break policy for the first release. Start with explicit newlines and supported whitespace breaks; add full Unicode line-break conformance only as a separately scoped capability.
-- [ ] Preserve baseline, ascent/descent, line height, blank-line, alignment, and pixel-snapping behavior for existing UI fonts.
-- [ ] Produce glyph render records from the appropriate provider after shaping/layout: bitmap mapping, static BFNT, or runtime coverage cache.
-- [ ] Add a common glyph-quad submission path supporting texture page, UV, plane bounds, tint/alpha, and render mode.
+- [x] Shape a complete text run before measuring it for line placement. Use shaped advances/offsets rather than summing codepoint widths. *(Done, CPU: `shaped_layout.zig` shapes each candidate line before measuring it, and keeps each line's own shaped glyphs. `shaper_tamil_test.zig` covers Tamil.)*
+- [x] Carry clusters through layout and only split lines at approved cluster/grapheme boundaries. Do not reuse the current codepoint-only long-word splitter for complex shaped runs. *(Done for shaped runs, CPU: a word splits only at cluster starts, and a ligature that spans graphemes is never split. `layout.zig` keeps the codepoint splitter for the BFNT path, which stays as it is.)*
+- [x] Define line-break policy for the first release. Start with explicit newlines and supported whitespace breaks; add full Unicode line-break conformance only as a separately scoped capability. *(Done: the policy is written in the `shaped_layout.zig` header. Known limit: a combining mark directly after a space.)*
+- [~] Preserve baseline, ascent/descent, line height, blank-line, alignment, and pixel-snapping behavior for existing UI fonts. *(Partly: `glyph_records.zig` uses the legacy formulas (rounded line top, rounded ascent, one rounding per glyph), and its tests check them for the runtime font. The existing UI fonts are not yet compared against screenshots, which needs a device.)*
+- [~] Produce glyph render records from the appropriate provider after shaping/layout: bitmap mapping, static BFNT, or runtime coverage cache. *(Partly: runtime coverage is done, through the Phase 4 cache. Bitmap and static BFNT providers are not done.)*
+- [~] Add a common glyph-quad submission path supporting texture page, UV, plane bounds, tint/alpha, and render mode. *(Partly: the CPU record carries page, texel rectangle, pixel rectangle, and mode, in `glyph_records.Record`. The sprite submission and the texture-page binding are not written.)*
 - [ ] Preserve or deliberately version `Canvas.text`, `textWidth`, `layoutText`, and `drawTextLayout` so game code does not have to manage glyph IDs or atlas pages.
 - [ ] Migrate the debug overlay, developer console, widgets, sample scene, and game-owned text call sites.
 - [ ] Preserve clipping, z-order, tint, alpha blending, pixel snapping, and integer viewport scaling.
 - [ ] Keep rectangle drawing independent from font resources.
-- [ ] Keep shaping, layout, and glyph cache tests separable from GPU visual tests.
+- [x] Keep shaping, layout, and glyph cache tests separable from GPU visual tests. *(Done: the three new modules import no renderer or platform module, and the harness compiles and runs them without SDL.)*
 
 ### Wants — useful but not blocking
 
 - [ ] Add text-run inspection to diagnostics: source range, glyph IDs, clusters, advances, selected font, and render mode.
 - [ ] Add baseline and line-box debug visualization.
-- [ ] Add an explicit text-measurement result that includes width, height, line count, and baseline-related metrics.
+- [~] Add an explicit text-measurement result that includes width, height, line count, and baseline-related metrics. *(Partly: `Layout` gives width, height, and line count. Baseline metrics are not yet exposed.)*
 
 ### Deliverable
 
@@ -522,11 +522,51 @@ The sample, UI widgets, developer console, and debug overlay use the shared text
 ### Exit gate — Phase 5 is complete only when
 
 - [ ] Existing text consumers work without importing private text/renderer internals.
-- [ ] Latin and Tamil reference strings render with correct glyph order, positioning, and cluster behavior.
-- [ ] Measurements and wrapping match rendered results.
-- [ ] Long strings, blank lines, missing glyphs, malformed UTF-8, and empty glyphs have deterministic behavior.
-- [ ] The old BFNT path still passes visual and compatibility tests.
+- [~] Latin and Tamil reference strings render with correct glyph order, positioning, and cluster behavior. *(Shaping and layout are CPU-verified for Latin and Tamil in the repo. The Tamil font was approved and checked in on 2026-11-18, and its tests are registered. Glyph order on screen is not verified.)*
+- [~] Measurements and wrapping match rendered results. *(CPU: width equals the sum of glyph advances, measure equals shape, and record pens use shaped advances. Rendered results need a device.)*
+- [x] Long strings, blank lines, missing glyphs, malformed UTF-8, and empty glyphs have deterministic behavior. *(Done, CPU-tested: long words, blank lines, glyph 0 for unmapped characters, malformed UTF-8, and zero-ink spaces.)*
+- [~] The old BFNT path still passes visual and compatibility tests. *(Partly: the Phase 0 characterization harness passes 70 of 70 against the unchanged `text.c`, with no warnings. Visual tests need a device.)*
 - [ ] Both existing renderer modes behave according to the agreed support matrix.
+
+### Status (2026-11-18): shaping, shaped layout, and glyph records
+
+**Legend:** as in Phase 4. Only CPU results are claimed here, and they were run in the sandbox against the code in this upload.
+
+**Landed (new files, CPU-only):**
+- `shaper.zig`: the shaping service of Phase 3. It runs HarfBuzz on the face a `RuntimeFont` owns, reuses one buffer per shaper, and returns engine-owned `Glyph` records (glyph ID, byte cluster, advances, offsets, in pixels). Script and language are explicit, defaulting to `Latn` and `en`, and never guessed. Direction is forced to left to right. A character the font does not map shapes to glyph 0. `measure` runs the same shaping and summation as `shape`, so the two widths match exactly.
+- `shaped_layout.zig`: wrapping and alignment over shaped runs. It keeps the line rules of `layout.zig`. Each candidate line is shaped before it is measured, so a line measures what it draws. A word wider than the line splits only at grapheme starts. Each glyph's cluster is an absolute byte offset in the source text.
+- `glyph_records.zig`: turns a layout into glyph render records, resolved through the Phase 4 cache and resolver. Placement follows `text.c`: a fractional pen moved by shaped advances, one rounding per glyph, a rounded baseline per line, and no record for a glyph without ink.
+- `runtime_font.zig`: the HarfBuzz `cImport` is now `pub`, so the shaper and the face name the same types. Nothing else in that file changed.
+- `tests.zig`: registers the three CPU test modules. The repo's own `zig build test` now runs them.
+- `shaper_tamil_test.zig`: five Tamil corpus tests, registered in `tests.zig`. They use `tests/fixtures/NotoSansTamil.ttf`, approved and recorded on 2026-11-18 (see Decisions below).
+
+**What was run, and with what:**
+- Toolchain: Zig 0.16.0 from PyPI (`ziglang==0.16.0`). The lock pins `0.16.0-dev.3142+5ccfeb926`, which is not on PyPI, so this is the nearest stable release, not the pinned build.
+- HarfBuzz 15.1.0 at commit `3df40d9…`, and stb at `9600522…`, both fetched from GitHub and compiled to a static library in a scratch directory. The repo's `vendor/` is not in the upload, so nothing was taken from it.
+- SDL is not built: `codeberg.org` is unreachable from the sandbox, and the real `zig build test` was not run. The harness compiles the text modules alone. It substitutes a stand-in for `assets/staging.zig`, which pulls in SDL. Two `packagedReader` tests therefore ran against that stand-in, not the platform file reader.
+- Results: 113 CPU tests pass under `std.testing.allocator` (leak-checked), in one run against the repo test modules. That is the 73 existing Phase 3 and 4 tests, now compiled for the first time, plus 40 new ones: 13 shaper, 12 shaped layout (one of them pins the combining-mark limit), 10 glyph records, and 5 Tamil. The Tamil tests read the repo fixture.
+- Mutation checks: one fault per mutant, seeded in the scratch copy and checked for a real assertion failure, not a compile error. Shaped layout: no cluster rebase (1 failure, `expected 3, found 0`), a boundary at every byte (1 failure), and an ignored fit check (2 failures). Glyph records: an unrounded ascent (1 failure, `expected 2, found 1.965`), an unkerned pen (2 failures, `expected 9, found 10`), and an unrounded line top (1 failure, `expected 3, found 2.6`). The repo copy was restored after each run.
+
+**Findings from running the code:**
+- The Phase 3 shaping service had not been built. Phase 5 needed it, so it was built here as the first step.
+- The Phase 4 Zig code had never been compiled. It compiles and passes under Zig 0.16.0 with the stand-in above.
+- With Noto Sans Tamil, the conjunct க்ஷ shapes to one ligature glyph with cluster 0, and that glyph spans two graphemes. Under `Latn` the same nine bytes give three glyphs. So the explicit script is what decides the shaping, and the Phase 0 decision not to guess is necessary.
+- With the same font, the vowel sign O on க gives three glyphs, all in one cluster. A Tamil word's clusters are exactly its grapheme starts.
+
+**Still open (Phase 5 is not complete):**
+- No Atlas flush call before the sprite upload, and no 2D flush call. Both are the Phase 4 hand-off, and they need a device run. Glyph records are not yet submitted to `SpriteBatch`.
+- `Canvas`, `Ui`, the debug overlay, the console, widgets, sample, and game call sites are still on the BFNT path. Nothing has been migrated.
+- `Canvas.rect` still samples the font's white texel, so rectangles depend on the font. This is a Phase 1 item that Phase 5 still needs.
+- The bitmap-font provider and the static BFNT provider are not written.
+- Visual checks (both renderer modes, reference screenshots, clipping and z-order) need a device.
+- `docs/text.md` is not rewritten. That belongs to Phase 8.
+- Shaping features are not configurable, and the Wants items are not started.
+
+**Decisions (approved by the owner, 2026-11-18):**
+1. **Tamil fixture: done.** `tests/fixtures/NotoSansTamil.ttf` and its OFL license file are checked in, from google/fonts commit `7af0d90b4d532ffa4b041937b560c6df4e7b1e95`, with bytes unchanged. The license is recorded in `docs/dependency-policy.md` ("Test fixtures"). The lock has a new entry with tree hash `75c12e3d397b0f7abf68fec99befd428ae2bf638ecb2232fd1b106da7a4c5e15`, and `scripts/check-dependency-pins.py` verifies it. `shaper_tamil_test.zig` is registered in `tests.zig`. In the upload, the checker still fails on the six `vendor/` entries, which are absent from the upload. Its output is otherwise identical to the original upload's.
+2. **Line-break policy: accepted,** including its limit. A combining mark directly after a space starts the next line. A test pins that behavior, so a change to it will be visible.
+3. **Glyph fallback: unchanged.** A glyph ID past the font's end still draws the fallback, as in Phase 4. Whether `?` maps through the character map is still a Phase 7 decision.
+4. **`zig build test` on Windows, Linux, and macOS: still open.** The owner approved this, but the sandbox cannot run it. `codeberg.org` is unreachable from it, and that is where the pinned SDL package is fetched. The upload also has no `vendor/` tree. Zig 0.16.0 from PyPI, which the sandbox could run, is also not the pinned `0.16.0-dev.3142+5ccfeb926`. The run must be done on the owner's machines with the pinned toolchain. The Linux, Windows, and macOS results need to be recorded here, and this item stays open until they are. What the sandbox did run is listed under "What was run" above, together with the boundary scan (`scripts/boundary_scan.py --fail`, zero reachable violations, the same result as the original upload).
 
 ---
 
