@@ -1,0 +1,11 @@
+PASS the shipped font has head and hhea tables
+PASS units per em is 2048 (got 2048)
+PASS hhea ascender is 1854 (got 1854)
+PASS hhea descender is -434 (got -434)
+PASS hhea line gap is 67 (got 67)
+PASS ascent at 16 px is 12.96503 (got 12.96503)
+PASS descent at 16 px is 3.03497 (got 3.03497)
+PASS line gap at 16 px is 0.46853 (got 0.46853)
+PASS natural line height at 16 px is 16.46853 (got 16.46853)
+PASS natural line height is the sum of its parts
+10 of 10 checks pass

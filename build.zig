@@ -610,6 +610,11 @@ pub fn build(b: *std.Build) void {
     test_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
     // The runtime font face (src/engine/text/runtime_font.zig) calls stb_truetype in the test binary.
     test_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
+    // font_resource.zig holds the BFNT provider, a font.zig Font. That type carries ui/c.zig's ui_font, which needs
+    // imgui.h from src/engine/ui, and its deinit calls text.c. configureEngineModule gives the engine both; the test
+    // binary needs the same include path and translation unit. text.c needs only libc, so nothing else is added.
+    test_module.addIncludePath(b.path("src/engine/ui"));
+    test_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
     addJobsAndScript(b, test_module);
     test_module.addImport("ztracy", ztracy.module("root"));
     const tests = b.addTest(.{ .root_module = test_module });

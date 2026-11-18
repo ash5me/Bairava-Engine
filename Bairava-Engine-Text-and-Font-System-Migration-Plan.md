@@ -288,6 +288,7 @@ Phase 1 decisions come first. They fix the font representation, the `Canvas` API
 | D-17 | MSDF generator. Candidate: `msdf-atlas-gen`, an offline tool built on `msdfgen`. Its license is not checked in this environment; check it at the pinned revision. | Phase 0 exit; Phase 6 | Open |
 | D-18 | MSDF on the SDL3 2D renderer: none. The 2D path uses a prebaked coverage fallback. | Phase 0 exit; Phase 6 | Open |
 | D-19 | The old C text path after cutover: keep it as a BFNT compatibility adapter, or remove it once every consumer has migrated. | Phase 8 | Open |
+| D-20 | BFNT metrics for `FontMetrics`: a BFNT font's descent is `line_height` minus `ascent`, and its line gap is zero, because the file stores neither. This changes no file format and only affects `FontMetrics`. | Phase 1 | **Accepted (owner, 2026-11-18)** |
 
 ## 6.3 Status markers
 
@@ -363,15 +364,15 @@ A reviewed design decision record containing: supported font formats, font-sourc
 
 ### Needs — must implement
 
-- [~] Introduce a common font handle/face abstraction that can represent bitmap, prebaked coverage, runtime outline, and MSDF sources. Blocked: D-01. *(Partly, sandbox, 2026-11-18: `FontId`, `FontHandle`, and `Registry(T)` are in `src/engine/text/font_registry.zig`, with 9 Zig tests registered in `src/tests.zig`, and a C mirror at 41/41 in `checks/font_registry_RESULTS.txt`. Not done: the `FontResource` tagged union for the four providers, and `Canvas` still holds `*Font`. Zig is not compiled in the sandbox.)*
-- [ ] Define common font metrics and baseline conventions. Blocked: D-01.
+- [~] Introduce a common font handle/face abstraction that can represent bitmap, prebaked coverage, runtime outline, and MSDF sources. *(Partly, sandbox, 2026-11-18: `FontId`, `FontHandle`, and `Registry(T)` are in `src/engine/text/font_registry.zig`, with 9 Zig tests registered in `src/tests.zig`, and a C mirror at 41/41 in `checks/font_registry_RESULTS.txt`. Second pass, same day: `FontResource` in `src/engine/text/font_resource.zig` is the tagged union over `bfnt_coverage` and `runtime_coverage`, held in `Resources = Registry(FontResource)`, with `metricsFor` and `release`. Not done: the `bitmap` variant (Phase 2) and the `msdf` variant (Phase 6), and `Canvas` still holds `*Font`. Zig is not compiled in the sandbox.)*
+- [~] Define common font metrics and baseline conventions. *(Sandbox, 2026-11-18: `FontMetrics` and `FontResource.metrics()` in `font_resource.zig` give ascent, descent, line gap, and natural line height in pixels for both providers. They are unrounded, and a BFNT descent is derived (D-20, accepted). Tests check a runtime face at 16 px against `checks/font_resource_RESULTS.txt`, and a constructed BFNT font. Rounding stays with the Phase 5 consumers, as `text.c` does it. Zig is not compiled in the sandbox.)*
 - [~] Define the shaped-glyph and glyph-render-record contracts from Section 5. Blocked: D-03. *(Partly, sandbox, 2026-11-18: `ShapedRun.font_id` is added, and a Zig test in `shaper.zig` enforces that `Glyph` has no font id. The glyph cache key, `Cache.removeFont`, the resolver, `glyph_records.Options`, and `renderer/glyph_check.zig` now use `FontId` (`u64`), as D-02 specifies; the cache hash folds the high 32 bits in. Zig is not compiled in the sandbox. The C mirror is at 2199 checks, 22 of 22 mutants caught, and the parity map has 50 Zig tests, 47 mirrored. Not done: the `glyph_records` build still draws from a caller-supplied id rather than a registry handle, and nothing outside the text package holds a `FontHandle` yet.)*
-- [ ] Define text options for font, size/scale, color, line spacing, alignment, wrapping width, and optional direction/script/language overrides. Blocked: D-06.
+- [~] Define text options for font, size/scale, color, line spacing, alignment, wrapping width, and optional direction/script/language overrides. *(Sandbox, 2026-11-18: `TextOptions` in `font_resource.zig`, with the D-06 defaults `Latn` and `en`, a one-value `Direction` for left to right only, and `shaperOptions()`. `scale`, `line_spacing`, and `color` are fields only. No consumer reads them until Phase 5.)*
 - [ ] Separate text measurement, layout, glyph resolution, and draw submission into distinct responsibilities.
-- [ ] Keep current `.bfnt` loading behind a legacy/prebaked coverage provider; do not rewrite the file format in this phase. Blocked: D-01.
-- [ ] Preserve the current `Canvas.text`, `Canvas.textWidth`, `Canvas.layoutText`, and `Canvas.drawTextLayout` behavior through wrappers or adapters where practical. Blocked: D-05.
+- [~] Keep current `.bfnt` loading behind a legacy/prebaked coverage provider; do not rewrite the file format in this phase. *(Sandbox, 2026-11-18: `FontResource.bfnt_coverage` wraps the unchanged `font.Font`. The loader in `font.zig` is not changed. Not done: nothing loads a BFNT through `Resources` yet, which waits on the Canvas migration.)*
+- [ ] Preserve the current `Canvas.text`, `Canvas.textWidth`, `Canvas.layoutText`, and `Canvas.drawTextLayout` behavior through wrappers or adapters where practical. Not started. D-05 is accepted, but the change touches `ui.zig` and needs a compile and E-03.
 - [~] Decouple solid-rectangle drawing from the white 2x2 texel embedded in the font atlas. Use a renderer-owned white texture or a primitive path so a font atlas is not required for rectangles. Blocked: D-04. *(Partly, sandbox, 2026-11-18, C side only: `ui_quad` has a `solid` flag. `ui_quad_push_solid` sets it, and `imgui.c` `fill()` is the only solid-fill call site. Glyphs set it to 0. `Canvas.rect` sets it to 1 in Zig. Behaviour is unchanged: the Zig backend still samples the font atlas, and `checks/ui_quad_dump.c` diffs identical against the original upload. Not done: the renderer-owned white texture on SDL_GPU and the SDL3 2D path, and the backend's use of the flag. That needs a device, E-02 and E-04.)*
-- [~] Define ownership rules: a queued draw cannot reference a font page that may be destroyed, repacked, or overwritten before submission completes. *(Partly, sandbox, 2026-11-18: the registry's rules are written in the `font_registry.zig` header: `Registry(T)` owns each value until `remove`, `deinit` frees only the table, `get` pointers are valid until the next `insert` or `remove`, and a handle is valid only for the registry that issued it. Not done: the queued-draw and atlas-page rule, which needs the GPU path and Phase 5's flush wiring.)*
+- [~] Define ownership rules: a queued draw cannot reference a font page that may be destroyed, repacked, or overwritten before submission completes. *(Partly, sandbox, 2026-11-18: the registry's rules are written in the `font_registry.zig` header: `Registry(T)` owns each value until `remove`, `deinit` frees only the table, `get` pointers are valid until the next `insert` or `remove`, and a handle is valid only for the registry that issued it. The `Resources` release and failed-insert rules are in the `font_resource.zig` header. Not done: the queued-draw and atlas-page rule, which needs the GPU path and Phase 5's flush wiring.)*
 - [ ] Keep renderer-specific types out of the public text API.
 - [x] One definition of the debug overlay font, 9 px mono (D-07, accepted by owner direction). The source of truth is `application.zig` (`default_debug_font_path`, `default_debug_font_px`), read by `src/game/config.zig`. Evidence (owner-confirmed 2026-11-18): `application.zig:40` is `default_debug_font_px: f32 = 9`, and `config.zig:108` reads it. The 10 px default described in earlier notes is not in this upload, so no reconciliation is needed.
 
@@ -685,6 +686,36 @@ This note records work done in the sandbox. It does not change the owner status 
 **Owner local run (2026-11-18): not a CI gate run.** Platform: Windows, in PowerShell at `D:\repo\Bairava-Engine`. Toolchain: `zig version` prints `0.16.0-dev.3142+5ccfeb926`, the pinned toolchain in section 6.4. Branch: `text-migration`, up to date with `origin/text-migration`. HEAD: reported as commit `9e8039d`. `git status` reports a clean working tree and `git diff --stat` is empty, so the tree that was built and tested is HEAD, and the changes in the zip are committed. Console results: `zig build test` succeeds (owner report), and `zig build test-ui` printed `imgui: all checks passed` and `text: all checks passed`. The `test-ui` run exercises the `solid` change in `imgui.c` and the unchanged text path, through the repository's own C UI tests with real fonts. This is a local record, not a CI run, and it does not close E-01, which is tied to commit `f4abef0`. Two things would make it gate evidence: a saved log of these commands, and a CI run for `9e8039d`. The branch is pushed, so CI may already have run on it. A link to a passing run for all three platforms would use the E-01 record format. Not yet reported: `scripts/check-dependency-pins.py`, `scripts/boundary_scan.py --fail`, and `zig build check-assets`.
 
 **Gates:** nothing here closes E-02, E-03, or E-04. The owner's local run above covers the Zig build, the Zig unit tests, and the C UI tests for this tree on the pinned toolchain. It does not close E-01, which is tied to commit `f4abef0`, or any device gate.
+
+### Sandbox progress (2026-11-18, second pass): FontResource, metrics, and TextOptions
+
+This note records the second pass on Phase 1 in the sandbox. The owner status above still governs, and the Phase 1 exit gate remains open.
+
+**Landed (CPU code; Zig not compiled in the sandbox):**
+- `src/engine/text/font_resource.zig` (new): `Provider`; `FontResource`, a tagged union over `bfnt_coverage` and `runtime_coverage` with `provider`, `deinit`, and `metrics`; `FontMetrics`; `Resources = Registry(FontResource)` with `metricsFor` and `release`; `Direction`, which has one value, `ltr` (D-06); and `TextOptions` with `shaperOptions()`. Seven Zig tests, registered in `src/tests.zig`.
+- `src/engine/text/runtime_font.zig`: `RuntimeFont.line_gap` stores the hhea line gap, in font units, for `FontMetrics`. No other field or behavior changed.
+- `build.zig`: the root test module gets the `src/engine/ui` include path and `src/engine/text/text.c`, so the BFNT provider's C import and its deinit link in `zig build test`.
+- `checks/font_resource_check.py` and `checks/font_resource_RESULTS.txt`: 10 of 10 checks pass. The script reads `assets/font.ttf` directly. It confirms the hhea values (ascender 1854, descender -434, line gap 67, 2048 units per em) and the values the Zig tests assert at 16 px: ascent 12.96503, descent 3.03497, line gap 0.46853, natural line height 16.46853.
+
+**Not done, with the reason:**
+- The `bitmap` and `msdf` variants. They belong to Phases 2 and 6, which have not started.
+- The `Canvas` and UI migration (D-05). It touches `ui.zig`, and it needs a compile and the E-03 baseline.
+- Rectangle decoupling, renderer half (D-04). It needs a device.
+- Loading into `Resources`. Nothing calls it yet. The first caller is the Canvas migration.
+- Rounding of metrics. `FontMetrics` is unrounded, and Phase 5 consumers round the way `text.c` does.
+
+**Convention (accepted by the owner, 2026-11-18, recorded as D-20):** a BFNT font's descent is derived as `line_height` minus `ascent`, and its line gap is zero, because the file stores neither. `bfntMetrics` in `font_resource.zig` already does this, so no code change follows from the decision.
+
+**Verification:** `python3 checks/font_resource_check.py` gives 10 of 10 (sandbox).
+
+**Owner local run (2026-11-18, Windows): `zig build test` FAILED.** The log shows 30 of 33 steps and 13 of 13 tests passing. The job, asset importer, imgui, text, and script tests passed. The root test module failed to compile with three errors: `src/engine/ui/c.zig` could not find `imgui.h`. It was reached from `src/engine/text/font_resource.zig`, which holds the BFNT provider, and from the BFNT metrics test. An earlier note recorded this run as a pass. That note was wrong, and it has been corrected here.
+
+**Fix:** `build.zig` gives the root test module the `src/engine/ui` include path and compiles `src/engine/text/text.c`, as `configureEngineModule` does for the engine. In gcc, `text.c` compiles with `-Wall -Wextra -pedantic` and needs only libc, and `imgui.h` parses as C with that include path.
+
+**Owner local rerun (2026-11-18, Windows): `zig build test` and `zig build` both reported as succeeding.** This is an owner report without a saved log or a commit hash, so it is recorded as reported and not as evidence. `zig build` does not compile `font_resource.zig`, which nothing in the application imports. That file is covered only by `zig build test`. To count as evidence, the run needs its commit hash and a saved log. Until then, the Phase 1 test gate stays open. This run does not close E-01, E-02, E-03, or E-04.
+
+The commit and a saved log have not been reported for any run. Until a passing log is recorded, the Phase 1 test gate stays open. These runs are not CI gate runs, and they do not close E-01, E-02, E-03, or E-04.
+
 
 ---
 

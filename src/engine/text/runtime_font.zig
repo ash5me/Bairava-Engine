@@ -85,6 +85,8 @@ pub const RuntimeFont = struct {
     upem: u32,
     ascent: c_int,
     descent: c_int,
+    /// hhea line gap, in font units. Kept for FontMetrics; the glyph path does not read it.
+    line_gap: c_int,
     glyph_count: u32,
 
     /// Copies `source`, so the caller may free it after this returns. The height and the format are
@@ -158,6 +160,7 @@ pub const RuntimeFont = struct {
             .upem = @intCast(upem),
             .ascent = ascent,
             .descent = descent,
+            .line_gap = line_gap,
             .glyph_count = @intCast(hb.hb_face_get_glyph_count(face)),
         };
     }
