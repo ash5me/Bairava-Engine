@@ -86,7 +86,8 @@
       "paths": [
         "vendor/harfbuzz-15.1.0"
       ],
-      "sha256": "6c1fac27a81a9728e7da272ce22a8cc1f1e79d5bd980f8b2aa97bd93cadfee0c"
+      "sha256": "6c1fac27a81a9728e7da272ce22a8cc1f1e79d5bd980f8b2aa97bd93cadfee0c",
+      "evidence": "checks/pinned_harfbuzz_15.1.0_dump.txt"
     },
     {
       "name": "Noto Sans Tamil (test fixture)",

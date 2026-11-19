@@ -563,7 +563,7 @@ Descriptor page resolution:
 
 ### Needs — must implement
 
-- [~] Pin HarfBuzz to an explicit version/commit and record it in dependency policy and lock data. Lock entry present: HarfBuzz 15.1.0, commit `3df40d9`, in `docs/dependency-lock.json`. The dependency-policy record matches the lock in this upload (HarfBuzz 15.1.0, commit `3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372`). The lock's SHA-256 check of the vendored tree could not be run here, because `vendor/` is not in the upload.
+- [~] Pin HarfBuzz to an explicit version/commit and record it in dependency policy and lock data. Lock entry present: HarfBuzz 15.1.0, commit `3df40d9`, in `docs/dependency-lock.json`, with evidence `checks/pinned_harfbuzz_15.1.0_dump.txt`. The dump uses the engine's LTR, explicit-script, explicit-language, default-feature, monotone-grapheme calls and `f32(units)/64` plus negated Y conversion. It includes Latin, Noto Sans Tamil, and Chemmozhi Paranar values. This evidence pins shaping values; it does not close the Phase 3 exit gate.
 - [~] Integrate HarfBuzz into Bairava's actual Zig/C/C++ build for Linux, Windows, and macOS. Do not copy another project's Zig build script or dependency versions blindly. Linked into the engine module (`build.zig`, `configureEngineModule`) and the test module. The pinned cross-platform build/test matrix now passes at E-01 commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`; phase completion still depends on the remaining Phase 3 code/test exit criteria and the Phase 1/2 entry gates.
 - [x] Reuse the existing `stb_truetype` source where suitable; do not add a duplicate copy. One `vendor/stb_truetype_impl.c` is shared by every module that uses it.
 - [x] Create a runtime outline-font face that owns or safely references the font bytes for as long as HarfBuzz and the rasterizer require them. `RuntimeFont` copies the bytes. Test: the font keeps its own copy.
@@ -572,7 +572,7 @@ Descriptor page resolution:
 - [~] Implement the shaping call with explicit direction, script, language, and feature handling. Provide sensible defaults but allow the caller or text system to set them deliberately. Script and language are caller-set. Direction is fixed to left to right (D-06). Features are HarfBuzz defaults (D-16).
 - [~] Return glyph IDs, clusters, advances, and offsets in an engine-owned shaped-run structure. Glyphs and width are returned. The run has no font identity (D-03) and no direction field.
 - [x] Handle empty strings, malformed UTF-8, zero-width/non-rendering glyphs, and missing-glyph results deterministically. Tests in `shaper.zig` and `shaped_layout.zig`.
-- [~] Test Latin kerning/GPOS behavior and Tamil shaping with fonts that contain the required OpenType tables. Kerning and Tamil clusters are tested. Six glyph-ID, advance, and offset tests were added in this pass, with values from HarfBuzz 8.3.0. Confirming them against the pinned 15.1.0 is Blocked: E-01.
+- [~] Test Latin kerning/GPOS behavior and Tamil shaping with fonts that contain the required OpenType tables. Kerning and Tamil clusters are tested. The combining-overline values and all five Noto numeric tests match the pinned 15.1.0 dump. Numeric Chemmozhi KSSA, Latn fallback, vowel O, anusvara, and word shapes are now pinned too. This verification does not depend on GPU output and does not close Phase 3; the Phase 1 and Phase 2 exit gates remain open.
 - [x] Keep shaping tests CPU-only; they must not require a GPU device or window.
 
 ### Font-format constraint

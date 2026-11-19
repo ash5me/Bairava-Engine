@@ -415,8 +415,8 @@ test "a combining overline is a zero-advance glyph placed by its offset, and the
     var shaper = try Shaper.init(&font);
     defer shaper.deinit();
 
-    // Glyph 68 is the Latin a. Glyph 2116 is uni0305, the combining overline. The values were read from HarfBuzz 8.3.0
-    // with this font at 16 px, and are not yet confirmed against the pinned 15.1.0. The y axis points down here, so a
+    // Glyph 68 is the Latin a. Glyph 2116 is uni0305, the combining overline. The values below are pinned HarfBuzz 15.1.0
+    // results for this font at 16 px, recorded in checks/pinned_harfbuzz_15.1.0_dump.txt. The y axis points down here, so a
     // positive y_offset moves the mark down onto the base: the overline's own outline sits high in the font.
     var run = try shaper.shape(testing.allocator, "a\u{305}", .{});
     defer run.deinit();

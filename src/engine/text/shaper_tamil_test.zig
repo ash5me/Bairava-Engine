@@ -121,9 +121,9 @@ test "Tamil words wrap at their space, and the conjunct on the second line keeps
     }
 }
 
-// The values in the tests below were read from HarfBuzz 8.3.0 (a system build), not from the pinned 15.1.0. The
-// expectations above reproduce on 8.3.0, which is why that build was used. The pinned run must confirm these values
-// before the Phase 3 gate closes. Glyph names are the font's own, from its post table.
+// The numeric values below were checked against HarfBuzz 15.1.0 from commit
+// 3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372. The pinned evidence is in
+// checks/pinned_harfbuzz_15.1.0_dump.txt. Glyph names are the font's own, from its post table.
 
 test "the KSSA ligature is glyph 76 (tchatamil), advance 23.890625 px, and it has no offset" {
     const bytes = try readFixture(testing.allocator, font_path);
