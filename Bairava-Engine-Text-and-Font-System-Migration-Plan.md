@@ -283,7 +283,7 @@ Phase 1 decisions come first. They fix the font representation, the `Canvas` API
 | D-10 | **Runtime outline formats: TrueType outlines only.** Runtime rasterization stays on the existing `stb_truetype` path. CFF/CFF2 outline rasterization is deferred. Unsupported outline formats are rejected with an explicit error (`UnsupportedFontFormat`), and the engine never substitutes a glyph silently. Variable fonts use their default instance. | Phase 0 exit; Phase 3 | **Accepted (2026-11-19)** |
 | D-11 | **FreeType is not a runtime dependency.** It is a build-time dependency only where the font asset pipeline requires it. The selected MSDF generator's font-import extension uses FreeType, so FreeType may be a toolchain dependency; it is not shipped or linked into the game runtime. | Phase 0 exit | **Accepted (2026-11-19)** |
 | D-12 | Scripts and test corpus: Latin and Tamil. **Chemmozhi Paranar may remain in the distributed repository only as a test fixture**, with its exact upstream license text/version, copyright and modification attribution, provenance, and hash retained. It must not be silently included in game assets, binaries, or release packages. Any downstream redistribution must comply with the actual GPL version attached to the font. | Phase 0 exit | **Accepted with test-only restriction (owner, 2026-11-18)** |
-| D-13 | Missing glyphs: a caller-supplied fallback glyph, with no font chain in the first release. Mapping `?` and font chains move to Phase 7. | Phase 0 exit; Phase 4 | **Accepted (2026-11-17)** |
+| D-13 | Missing runtime glyphs resolve once, after shaping, to the same face's recorded `?` glyph. If that face has no `?`, draw no ink. Do not add a font fallback chain unless real content requires a second face; any chain must preserve shaping clusters. | Phase 0 exit; Phase 4; Phase 7 | **Implemented per Phase 7 requirement; CPU tests cover unmapped codepoints, invalid glyph IDs, and no-`?` behavior.** |
 | D-14 | **Atlas memory ceiling: 4 MiB for the runtime coverage atlas per session**, as four 1024×1024 R8 pages. No automatic page growth beyond four, and no eviction. Exhaustion produces the existing explicit failure path (`AtlasFull`, counted). CPU staging and shadow copies are reported separately from the GPU figure. No additional 4 MiB allowance for SDL3 2D. No simultaneous duplicate atlas allocation for different renderers. A backend may use its own representation within the same ceiling, but separate backend resources must not coexist as duplicate full atlas copies. | Phase 0 exit; Phase 4; Phase 5 | **Accepted (2026-11-19; amended 2026-11-19)** |
 | D-15 | **Performance targets.** 60 FPS, a 16.67 ms frame. Text subsystem budget: ≤ 1.0 ms CPU time at p95 in a defined steady-state workload of 2,000 visible glyphs. No steady-state per-frame allocations. Batching avoids per-glyph draw calls. Cold glyph rasterization and atlas uploads are measured separately from steady-state submission. These are acceptance targets, not a claim that current hardware has passed them. | Phase 0 exit; Phase 7 | **Accepted (2026-11-19)** |
 | D-16 | **OpenType features: HarfBuzz's default feature set in the first release.** Script and language remain caller-configurable as designed. No feature-configuration API is added now. If feature configuration is needed later, it is added to the shaping options and does not change the glyph cache, atlas, `FontStore`, `SpriteBatch`, or renderer. This is a scope restriction, not an architectural reversal. | Phase 3 | **Accepted (2026-11-19)** |
@@ -985,11 +985,10 @@ An outline font can be generated offline into an MSDF asset, loaded at runtime, 
 
 ### Needs — must implement
 
-- [ ] Finalize missing-glyph behavior for each font provider: fallback glyph, explicit missing-glyph marker, or a reported unsupported character. Blocked: D-13 (fallback chain and `?`).
-- [ ] Add a basic ordered font fallback chain if multi-language game content requires more than one font. Fallback selection must preserve clusters and shaping correctness; do not split a shaping cluster across fonts blindly.
-- [ ] Define behavior for font unloading while text layouts or queued draws still reference it.
-- [ ] Define cache and atlas memory ceilings and observable failure behavior.
-- [ ] Test renderer/device recreation, texture upload failure, asset reload, repeated font load/unload, and shutdown ordering. Blocked: E-02, E-04.
+- [x] Finalize runtime missing-glyph behavior: resolve to the same face's `?` once after shaping, or draw no ink if absent. No font chain is added without a real string that needs a second face.
+- [x] Define unload behavior for queued draws: invalidate the handle immediately and retain the font allocation/resources until session shutdown after the GPU-idle wait.
+- [x] Preserve the fixed runtime atlas ceiling and explicit `AtlasFull` error; text quad-list exhaustion also returns `QuadListFull` instead of silently reporting success.
+- [ ] Test renderer/device recreation, upload failure, asset reload, repeated font load/unload, and shutdown ordering. CPU ownership and fallback tests pass, but device-backed cases remain blocked on E-02/E-04; `SDL_UploadToGPUTexture` does not return an upload status.
 - [ ] Ensure a cache miss cannot cause unsafe atlas mutation during a draw already submitted to the GPU.
 - [ ] Document that full bidi paragraph processing is separate from HarfBuzz shaping; add a bidi dependency/phase only if the engine's target language requirements need it.
 
@@ -1007,11 +1006,13 @@ A stable font runtime with predictable fallback, memory limits, lifetime behavio
 
 ### Exit gate — Phase 7 is complete only when
 
-- [ ] Missing glyph and fallback behavior is covered by automated tests.
+- [x] Missing glyph and fallback behavior is covered by automated tests.
 - [ ] Font and atlas lifetime tests pass under repeated load/unload and renderer shutdown/recreation.
-- [ ] Memory ceilings and cache exhaustion behavior are documented and observable.
+- [x] Memory ceilings and cache exhaustion behavior are documented and observable.
 - [ ] No known use-after-free or in-flight GPU resource hazard remains.
 - [ ] Any deferred Unicode/bidi/font-format limitations are documented in the public text guide.
+
+**Implementation note:** Runtime `?` fallback is tested for an unmapped codepoint, an out-of-range glyph id, and a font without `?`. `Context.unloadFont` retires resources until the session's shutdown idle wait; a CPU test verifies that the resource remains allocated after handle invalidation. Shutdown now waits for GPU idle before releasing GPU owners, including when no frame was submitted, then destroys batches and atlas textures before the remaining font/shaping objects. Device recreation, an injected upload failure, and display-backed lifetime validation are still open; do not treat this phase as complete.
 
 ---
 

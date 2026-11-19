@@ -33,10 +33,10 @@ pub const MsdfFont = struct {
     shaper: ?shaper.Shaper = null,
 
     pub fn deinit(self: *MsdfFont) void {
-        if (self.shaper) |*value| value.deinit();
-        self.face.deinit();
         self.msdf_texture.deinit();
         self.coverage_texture.deinit();
+        if (self.shaper) |*value| value.deinit();
+        self.face.deinit();
         c.ui_font_destroy(&self.baked);
         self.* = undefined;
     }

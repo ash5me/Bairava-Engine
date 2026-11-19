@@ -509,12 +509,18 @@ pub const Context = struct {
             const payload = bytes orelse return error.FileNotFound;
             staged = font.stage(payload, pixel_height) catch return error.FontLoadFailed;
         }
+
         const font_value = staged.upload(self.allocators.asset, contextGpuDevice(self));
         // The store releases the font itself when the insert fails, so nothing is left for this function to clean up.
         return font_store.insertBfnt(self.fonts, font_value) catch |err| switch (err) {
             error.OutOfMemory => error.OutOfMemory,
             error.FontIdExhausted => error.FontLoadFailed,
         };
+    }
+
+    /// Invalidates a font handle. Its texture resources remain alive until session shutdown so queued frame draws stay valid.
+    pub fn unloadFont(self: *const Context, font_handle: font_registry.FontHandle) font_store.UnloadError!void {
+        return font_store.unload(self.fonts, font_handle);
     }
 
     /// Loads an MFNT v1 asset baked at exactly `pixel_height`. GPU rendering uses its MSDF atlas; SDL3 2D

@@ -247,21 +247,13 @@ pub const Session = struct {
             self.audio.deinit();
             self.audio_created = false;
         }
+        if (self.gpu_created) {
+            // Shutdown can happen before the first frame or with an unflushed atlas; all GPU owners stay alive until idle.
+            self.gpu_wait_idle(self.gpu.device);
+        }
         if (self.post_chain_created) {
             self.post_chain.deinit();
             self.post_chain_created = false;
-        }
-        if (self.glyph_atlas_ready or self.glyph_check_state != null) {
-            // Both the production cache and the optional check's queued copies may still be read by frames in flight.
-            platform.gpu.waitIdle(self.gpu.device);
-        }
-        if (self.glyph_check_state) |*check| {
-            glyph_check.destroy(check);
-            self.glyph_check_state = null;
-        }
-        if (self.glyph_atlas_ready) {
-            self.glyph_atlas_state.deinit();
-            self.glyph_atlas_ready = false;
         }
         if (self.screen_batch_created) {
             self.screen_batch.deinit();
@@ -270,6 +262,14 @@ pub const Session = struct {
         if (self.world_batch_created) {
             self.world_batch.deinit();
             self.world_batch_created = false;
+        }
+        if (self.glyph_atlas_ready) {
+            self.glyph_atlas_state.deinit();
+            self.glyph_atlas_ready = false;
+        }
+        if (self.glyph_check_state) |*check| {
+            glyph_check.destroy(check);
+            self.glyph_check_state = null;
         }
         if (self.target_created) {
             self.target.deinit();
@@ -298,8 +298,6 @@ pub const Session = struct {
         }
         // Font resources can hold GPU textures, so they go before the device, after the game and overlay are gone.
         if (self.fonts_ready) {
-            // The fonts' GPU textures may still be read by frames in flight, so the GPU must be idle before they go.
-            self.gpu_wait_idle(self.gpu.device);
             const loaded = font_store.count(self.fonts);
             font_store.destroy(self.fonts);
             self.fonts_ready = false;

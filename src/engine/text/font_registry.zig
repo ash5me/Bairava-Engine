@@ -139,6 +139,14 @@ pub fn Registry(comptime T: type) type {
             return value;
         }
 
+        /// Removes a value without destroying its stable allocation. The caller must destroy the returned pointer after
+        /// any external references to the resource have expired.
+        pub fn detach(self: *Self, handle: FontHandle) LookupError!*T {
+            const index = try self.indexOf(handle);
+            const removed = self.entries.swapRemove(index);
+            return removed.value;
+        }
+
         fn indexOf(self: *const Self, handle: FontHandle) LookupError!usize {
             if (handle.id == invalid_font_id or handle.id >= self.next_id) return error.InvalidHandle;
             for (self.entries.items, 0..) |entry, index| {
@@ -222,6 +230,18 @@ test "a removed font's handle is stale, and removing it again is stale" {
     try testing.expectError(error.StaleHandle, reg.get(h));
     try testing.expectError(error.StaleHandle, reg.remove(h));
     try testing.expectEqual(@as(usize, 0), reg.count());
+}
+
+test "detaching retires a handle but preserves the resource allocation" {
+    var reg = Reg.init(testing.allocator);
+    defer reg.deinit();
+    const handle = try reg.insert(42);
+    const stored = try reg.get(handle);
+    const detached = try reg.detach(handle);
+    try testing.expect(stored == detached);
+    try testing.expectEqual(@as(u32, 42), detached.*);
+    try testing.expectError(error.StaleHandle, reg.get(handle));
+    testing.allocator.destroy(detached);
 }
 
 test "a removed id is never issued again" {

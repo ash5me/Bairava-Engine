@@ -88,6 +88,8 @@ pub const RuntimeFont = struct {
     /// hhea line gap, in font units. Kept for FontMetrics; the glyph path does not read it.
     line_gap: c_int,
     glyph_count: u32,
+    /// The font's '?' glyph for missing cmap entries and HarfBuzz .notdef output. Null when '?' is absent.
+    fallback_glyph_id: ?u32,
 
     /// Copies `source`, so the caller may free it after this returns. The height and the format are
     /// checked before the copy, so a rejected file costs no allocation.
@@ -144,6 +146,12 @@ pub const RuntimeFont = struct {
 
         const upem = hb.hb_face_get_upem(face);
         if (upem == 0) return error.InvalidFont;
+        const glyph_count: u32 = @intCast(hb.hb_face_get_glyph_count(face));
+        const question_mark = stb.stbtt_FindGlyphIndex(&info, '?');
+        const fallback_glyph_id: ?u32 = if (question_mark > 0 and @as(u32, @intCast(question_mark)) < glyph_count)
+            @intCast(question_mark)
+        else
+            null;
         const em_px = pixel_height * @as(f32, @floatFromInt(upem)) / @as(f32, @floatFromInt(ascent - descent));
         const hb_scale: c_int = @intFromFloat(@round(em_px * 64.0));
         hb.hb_font_set_scale(font, hb_scale, hb_scale);
@@ -161,7 +169,8 @@ pub const RuntimeFont = struct {
             .ascent = ascent,
             .descent = descent,
             .line_gap = line_gap,
-            .glyph_count = @intCast(hb.hb_face_get_glyph_count(face)),
+            .glyph_count = glyph_count,
+            .fallback_glyph_id = fallback_glyph_id,
         };
     }
 

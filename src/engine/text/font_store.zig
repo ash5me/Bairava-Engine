@@ -30,7 +30,8 @@ const Texture = @import("../renderer/texture.zig").Texture;
 pub const FontHandle = font_registry.FontHandle;
 pub const InsertError = font_registry.InsertError;
 pub const LayoutError = shaped_layout.LayoutError;
-pub const DrawError = error{ RuntimeDrawingUnavailable, LayoutFontMismatch } || glyph_records.Error || LayoutError;
+pub const DrawError = error{ RuntimeDrawingUnavailable, LayoutFontMismatch, QuadListFull } || glyph_records.Error || LayoutError;
+pub const UnloadError = font_registry.LookupError || std.mem.Allocator.Error;
 
 /// The fonts the store holds, counted by how they are drawn. Plain numbers, so game code reads them without any engine type.
 pub const Stats = struct {
@@ -65,6 +66,7 @@ const State = struct {
     resources: font_resource.Resources,
     release: Release,
     atlas: ?*glyph_atlas.Atlas = null,
+    retired: std.ArrayList(*font_resource.FontResource) = .empty,
 };
 
 /// The session's fonts, as game-facing code sees them. Opaque, so its state is reachable only from this file.
@@ -92,7 +94,7 @@ pub const FontStore = opaque {
         switch (resourceOf(stateOf(self), handle).*) {
             .bfnt_coverage => |*font_value| drawBfntText(font_value, list, x, y, str, color),
             .msdf => |*font_value| try drawMsdfText(stateOf(self), handle, font_value, list, x, y, str, color),
-            .bitmap => |*font_value| drawBitmapText(&font_value.descriptor, list, x, y, str, color),
+            .bitmap => |*font_value| try drawBitmapText(&font_value.descriptor, list, x, y, str, color),
             .runtime_coverage => |*font_value| try drawRuntimeText(
                 stateOf(self),
                 handle,
@@ -323,7 +325,22 @@ pub fn destroy(store: *FontStore) void {
     const state = stateOf(store);
     const allocator = state.allocator;
     state.resources.deinitWith(state.release);
+    for (state.retired.items) |resource| {
+        state.release(resource);
+        allocator.destroy(resource);
+    }
+    state.retired.deinit(allocator);
     allocator.destroy(state);
+}
+
+/// Invalidates a font handle immediately and defers releasing its resource until store destruction, after the session's
+/// GPU-idle wait. This keeps any texture pointers already queued in the current frame valid.
+pub fn unload(store: *FontStore, handle: FontHandle) UnloadError!void {
+    const state = stateOf(store);
+    try state.retired.ensureUnusedCapacity(state.allocator, 1);
+    const resource = try state.resources.detach(handle);
+    state.retired.appendAssumeCapacity(resource);
+    if (state.atlas) |atlas| _ = atlas.cache.removeFont(handle.id);
 }
 
 /// Frees the store without releasing its fonts. Tests use this for fonts that have no GPU object to release.
@@ -331,6 +348,8 @@ pub fn discard(store: *FontStore) void {
     const state = stateOf(store);
     const allocator = state.allocator;
     state.resources.deinit();
+    for (state.retired.items) |resource| allocator.destroy(resource);
+    state.retired.deinit(allocator);
     allocator.destroy(state);
 }
 
@@ -457,7 +476,7 @@ fn appendMsdfRecords(
             const height: f32 = @floatFromInt(record.y1 - record.y0);
             if (width > 0 and height > 0) {
                 if (list.count >= c.UI_MAX_QUADS) {
-                    list.dropped += 1;
+                    return error.QuadListFull;
                 } else {
                     list.items[@intCast(list.count)] = .{
                         .dst = .{
@@ -505,12 +524,11 @@ fn appendRuntimeRecords(
         layout,
         x,
         y,
-        .{ .font_id = handle.id, .fallback_glyph_id = 0 },
+        .{ .font_id = handle.id, .fallback_glyph_id = font_value.face.fallback_glyph_id },
     );
     for (records.items) |record| {
         if (list.count >= c.UI_MAX_QUADS) {
-            list.dropped += 1;
-            continue;
+            return error.QuadListFull;
         }
         list.items[@intCast(list.count)] = .{
             .dst = .{ .x = record.dst_x, .y = record.dst_y, .w = record.dst_w, .h = record.dst_h },
@@ -533,14 +551,13 @@ fn bitmapWidth(font_value: *const @import("bmfont.zig").Font, str: []const u8) f
     return mapper.width();
 }
 
-fn drawBitmapText(font_value: *const @import("bmfont.zig").Font, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) void {
+fn drawBitmapText(font_value: *const @import("bmfont.zig").Font, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) DrawError!void {
     var mapper = bitmap_mapper.Mapper.init(font_value, str);
     while (mapper.next()) |mapped| {
         const glyph = mapped.glyph;
         if (glyph.width == 0 or glyph.height == 0) continue;
         if (list.count >= c.UI_MAX_QUADS) {
-            list.dropped += 1;
-            continue;
+            return error.QuadListFull;
         }
         list.items[@intCast(list.count)] = .{
             .dst = .{
@@ -899,6 +916,21 @@ test "destroy releases each stored font exactly once, and nothing before it" {
     try testing.expectEqual(@as(usize, 1), releasesOf(21));
     try testing.expectEqual(@as(usize, 1), releasesOf(22));
     try testing.expectEqual(@as(usize, 1), releasesOf(23));
+}
+
+test "unloading invalidates the handle but retains font storage until destroy" {
+    const store = try countingStore(testing.allocator);
+    const handle = try insertBfnt(store, markedFont(33));
+    const stored = try stateOf(store).resources.get(handle);
+
+    try unload(store, handle);
+    try testing.expectEqual(@as(usize, 0), released_count);
+    try testing.expectEqual(@as(c_int, 33), stored.bfnt_coverage.baked.line_height);
+    try testing.expectError(error.StaleHandle, stateOf(store).resources.get(handle));
+
+    destroy(store);
+    try testing.expectEqual(@as(usize, 1), released_count);
+    try testing.expectEqual(@as(usize, 1), releasesOf(33));
 }
 
 test "an insert that fails to allocate releases the new font once, and stores nothing" {

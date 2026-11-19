@@ -3,8 +3,8 @@
 //! that RuntimeFont owns and needs no GPU, atlas, or window, so every test here is CPU-only.
 //!
 //! What the shaper returns, and what it leaves to its callers:
-//! - Glyph IDs are the font's own IDs. A character the font does not map shapes to glyph 0 (.notdef). That glyph is
-//!   real, so the glyph cache draws it like any other rather than dropping it.
+//! - Glyph IDs are the font's own IDs. A character the font does not map shapes to glyph 0 (.notdef); the
+//!   draw-record stage substitutes the font's recorded '?' glyph, or skips ink when the font has no '?'.
 //! - A cluster is the byte offset, in the text given to `shape`, where a grapheme starts. Glyphs of one grapheme (a base
 //!   character and its marks, for instance) share a cluster. Clusters never decrease, because the shaper runs left to
 //!   right only.

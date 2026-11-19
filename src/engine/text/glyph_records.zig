@@ -42,8 +42,8 @@ pub const Record = struct {
 pub const Options = struct {
     /// The caller's id for this font inside the cache. Two live fonts must not share one.
     font_id: FontId,
-    /// The glyph drawn for a glyph ID past the font's last glyph. The caller chooses it; see glyph_resolver.
-    fallback_glyph_id: u32,
+    /// The font's recorded '?' glyph, or null when the font has no fallback.
+    fallback_glyph_id: ?u32,
     mode: glyph_cache.RasterMode = .gray,
 };
 
@@ -66,32 +66,45 @@ pub fn build(
         const baseline = @round(line_top) + ascent_px;
         var pen = x + line.x_offset;
         for (shaped_layout.glyphsOf(lay, index)) |glyph| {
-            const resolved = try glyph_resolver.resolveWithFallback(
-                cache,
-                options.font_id,
-                font,
-                glyph.glyph_id,
-                options.fallback_glyph_id,
-                options.mode,
-            );
-            const entry = resolved.entry;
-            if (entry.metrics.width > 0 and entry.metrics.height > 0) {
+            const entry = try resolveRecordGlyph(cache, options.font_id, font, glyph.glyph_id, options.fallback_glyph_id, options.mode);
+            if (entry == null) {
+                pen += glyph.x_advance;
+                continue;
+            }
+            const resolved = entry.?;
+            if (resolved.metrics.width > 0 and resolved.metrics.height > 0) {
                 try out.append(allocator, .{
-                    .page = entry.region.page,
-                    .src_x = entry.region.x,
-                    .src_y = entry.region.y,
-                    .src_w = entry.region.w,
-                    .src_h = entry.region.h,
-                    .dst_x = @round(pen + glyph.x_offset + entry.metrics.xoff),
-                    .dst_y = baseline + @round(glyph.y_offset + entry.metrics.yoff),
-                    .dst_w = @floatFromInt(entry.metrics.width),
-                    .dst_h = @floatFromInt(entry.metrics.height),
+                    .page = resolved.region.page,
+                    .src_x = resolved.region.x,
+                    .src_y = resolved.region.y,
+                    .src_w = resolved.region.w,
+                    .src_h = resolved.region.h,
+                    .dst_x = @round(pen + glyph.x_offset + resolved.metrics.xoff),
+                    .dst_y = baseline + @round(glyph.y_offset + resolved.metrics.yoff),
+                    .dst_w = @floatFromInt(resolved.metrics.width),
+                    .dst_h = @floatFromInt(resolved.metrics.height),
                     .mode = options.mode,
                 });
             }
             pen += glyph.x_advance;
         }
     }
+}
+
+fn resolveRecordGlyph(
+    cache: *glyph_cache.Cache,
+    id: FontId,
+    font: *const runtime_font.RuntimeFont,
+    glyph_id: u32,
+    fallback_glyph_id: ?u32,
+    mode: glyph_cache.RasterMode,
+) Error!?glyph_cache.Entry {
+    const missing = glyph_id == 0 or glyph_id >= font.glyph_count;
+    if (!missing) return try glyph_resolver.resolve(cache, id, font, glyph_id, mode);
+    cache.noteMissingGlyph();
+    const fallback = fallback_glyph_id orelse return null;
+    if (fallback == 0 or fallback >= font.glyph_count) return null;
+    return try glyph_resolver.resolve(cache, id, font, fallback, mode);
 }
 
 // ---- tests -----------------------------------------------------------------
@@ -189,6 +202,55 @@ test "a space moves the pen and draws nothing" {
     const b_metrics = try font.glyphMetrics(glyphs[2].glyph_id);
     const b_pen = glyphs[0].x_advance + glyphs[1].x_advance;
     try testing.expectEqual(@round(b_pen + glyphs[2].x_offset + b_metrics.xoff), records.items[1].dst_x);
+}
+
+test "missing runtime glyphs use this face's question mark once or draw nothing when it is absent" {
+    const bytes = try readFixture(testing.allocator, font_path);
+    defer testing.allocator.free(bytes);
+    var font = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
+    defer font.deinit();
+    const fallback = font.fallback_glyph_id orelse return error.TestUnexpectedResult;
+    try testing.expect(fallback != 0);
+
+    var sh = try shaper.Shaper.init(&font);
+    defer sh.deinit();
+    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
+    defer cache.deinit();
+    var lay = try shaped_layout.layout(testing.allocator, &sh, "\u{10ffff}", 1000, test_line_height, .left, .{});
+    defer lay.deinit();
+    try testing.expectEqual(@as(u32, 0), shaped_layout.glyphsOf(&lay, 0)[0].glyph_id);
+
+    var records: std.ArrayList(Record) = .empty;
+    defer records.deinit(testing.allocator);
+    try build(testing.allocator, &records, &cache, &font, &lay, 0, 0, .{
+        .font_id = font_id,
+        .fallback_glyph_id = font.fallback_glyph_id,
+    });
+    try testing.expectEqual(@as(usize, 1), records.items.len);
+    try testing.expectEqual(@as(u64, 1), cache.stats.missing_glyphs);
+    const fallback_key = glyph_cache.GlyphKey{
+        .font = font_id,
+        .glyph = fallback,
+        .size_bits = glyph_cache.sizeBits(font.pixel_height),
+        .mode = .gray,
+    };
+    const fallback_entry = cache.lookup(fallback_key) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(fallback_entry.region.x, records.items[0].src_x);
+    try testing.expectEqual(fallback_entry.region.y, records.items[0].src_y);
+
+    const invalid_id_entry = try resolveRecordGlyph(&cache, font_id, &font, font.glyph_count + 10, font.fallback_glyph_id, .gray);
+    try testing.expect(invalid_id_entry != null);
+    try testing.expectEqual(fallback_entry.region, invalid_id_entry.?.region);
+    try testing.expectEqual(@as(u64, 2), cache.stats.missing_glyphs);
+
+    font.fallback_glyph_id = null;
+    records.clearRetainingCapacity();
+    try build(testing.allocator, &records, &cache, &font, &lay, 0, 0, .{
+        .font_id = font_id,
+        .fallback_glyph_id = font.fallback_glyph_id,
+    });
+    try testing.expectEqual(@as(usize, 0), records.items.len);
+    try testing.expectEqual(@as(u64, 3), cache.stats.missing_glyphs);
 }
 
 test "a repeated glyph is rasterized once across two builds, and both builds draw the same rectangles" {
