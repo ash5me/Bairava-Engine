@@ -142,5 +142,12 @@ jobs:
         if: runner.os == 'macOS'
         run: zig build -Dmetal=true
 
-      - name: Run unit and UI tests
+      - name: Build DXIL shaders on Windows
+        if: runner.os == 'Windows'
+        run: zig build -Ddxil=true
+
+      - name: Run engine tests
         run: zig build test
+
+      - name: Run UI tests directly
+        run: zig build test-ui

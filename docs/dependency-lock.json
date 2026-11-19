@@ -99,7 +99,9 @@
       "version": "1.13.0",
       "source": "https://github.com/Chlumsky/msdfgen",
       "commit": "1874bcf7d9624ccc85b4bc9a85d78116f690f35b",
-      "license": "MIT (vendor/msdfgen-1.13/LICENSE.txt)",
+      "license": "MIT",
+      "license_notice": "Copyright (c) 2014 - 2025 Viktor Chlumsky; full notice in vendor/msdfgen-1.13/LICENSE.txt",
+      "usage": "Asset builder only; not linked into the game runtime.",
       "paths": [
         "vendor/msdfgen-1.13"
       ],

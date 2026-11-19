@@ -153,3 +153,51 @@ fn fromBaked(allocator: std.mem.Allocator, device: *platform.gpu.Device, baked: 
     c.ui_font_release_atlas(&owned);
     return .{ .baked = owned, .texture = atlas };
 }
+
+test "MFNT v1 descriptors load at their baked pixel height" {
+    const testing = std.testing;
+    const data = try testing.allocator.alloc(u8, 64 + 28 + 1 + 4 + 1);
+    defer testing.allocator.free(data);
+    @memset(data, 0);
+    @memcpy(data[0..4], "MFNT");
+    putU16Le(data, 4, 1);
+    putU16Le(data, 6, 64);
+    putF32Le(data, 8, 16);
+    putF32Le(data, 12, 4);
+    putU32Le(data, 16, 1);
+    putU32Le(data, 20, '?');
+    putU32Le(data, 24, 0);
+    putF32Le(data, 28, 12);
+    putF32Le(data, 32, 16);
+    putU32Le(data, 36, 1);
+    putU32Le(data, 40, 1);
+    putU32Le(data, 44, 1);
+    putU32Le(data, 48, 1);
+    putU32Le(data, 52, 4);
+    putU32Le(data, 56, 28);
+    putF32Le(data, 64 + 24, 8);
+    data[data.len - 1] = 1;
+
+    try testing.expectError(error.InvalidFont, stageMsdf(data, 15));
+    var staged = try stageMsdf(data, 16);
+    defer staged.deinit();
+    try testing.expectEqual(@as(c_int, 1), staged.baked.is_msdf);
+    try testing.expectEqual(@as(f32, 4), staged.baked.px_range);
+    try testing.expectEqual(@as(c_int, 1), staged.baked.count);
+}
+
+fn putU16Le(data: []u8, offset: usize, value: u16) void {
+    data[offset] = @truncate(value);
+    data[offset + 1] = @truncate(value >> 8);
+}
+
+fn putU32Le(data: []u8, offset: usize, value: u32) void {
+    data[offset] = @truncate(value);
+    data[offset + 1] = @truncate(value >> 8);
+    data[offset + 2] = @truncate(value >> 16);
+    data[offset + 3] = @truncate(value >> 24);
+}
+
+fn putF32Le(data: []u8, offset: usize, value: f32) void {
+    putU32Le(data, offset, @bitCast(value));
+}

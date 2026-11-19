@@ -12,11 +12,10 @@ and reflected in the version records that ship with release artifacts.
 | Zig | `minimum_zig_version` in `build.zig.zon`; CI installs that exact version |
 | SDL | Full Git commit and Zig package content hash in `build.zig.zon` |
 | ztracy | Full Git commit and Zig package content hash in `build.zig.zon` |
-| msdfgen | Full Git commit and Zig package content hash in `build.zig.zon`; source-tree hash and license in [`dependency-lock.json`](dependency-lock.json); linked only into the host asset builder |
+| msdfgen | Version 1.13.0, full Git commit and Zig package content hash in `build.zig.zon`; source-tree hash, MIT notice, and asset-builder-only scope in [`dependency-lock.json`](dependency-lock.json); linked only into the host asset builder |
 | Slang compiler | Version in `.github/workflows/ci.yml`; per-platform archive digests in [`dependency-lock.json`](dependency-lock.json) |
 | cglm, FreeType, stb, log.c, Parson | Versions, upstream references, and source-tree SHA-256 values in [`dependency-lock.json`](dependency-lock.json) |
 | HarfBuzz | Version, upstream reference, and source-tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); vendored under `vendor/harfbuzz-15.1.0/` (`src/` and `COPYING`) |
-| msdfgen | Version 1.13.0, commit `1874bcf7d9624ccc85b4bc9a85d78116f690f35b`, MIT license, and source-tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); vendored under `vendor/msdfgen-1.13/` |
 | Test font (Noto Sans Tamil) | Upstream commit and tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); files under `tests/fixtures/`, used only by `zig build test` |
 | Test font (Chemmozhi Paranar) | SHA-256 in [`dependency-lock.json`](dependency-lock.json); file under `tests/fixtures/`, used only by `zig build test`. License accepted by the owner (see "Test fixtures") |
 
@@ -55,7 +54,7 @@ the full platform matrix. Security fixes should be prioritized; otherwise
 review pinned dependency updates at least quarterly. Keep the prior pin in the
 change history for rollback.
 
-## Licenses and change history for HarfBuzz and stb
+## Licenses and change history for HarfBuzz, msdfgen, and stb
 
 **HarfBuzz 15.1.0** (`vendor/harfbuzz-15.1.0/`)
 
@@ -63,6 +62,13 @@ change history for rollback.
 - `src/ms-use/COPYING` is the MIT License, copyright Microsoft Corporation. The default build compiles only `src/harfbuzz.cc`, which does not include that code.
 - The build compiles HarfBuzz as C++11 with `-fno-exceptions -fno-rtti` and links the C++ runtime. These match upstream's build settings.
 - Upstream commit: `3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372`, recorded in the lock. Before release, check it against the vendored tree. Export it with `git archive 3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372 src COPYING`, place the output under `vendor/harfbuzz-15.1.0/`, and compare the two. If the commit does not track `src/hb-version.h`, that file is generated and should be recorded as such, not as upstream source.
+
+**msdfgen 1.13.0** (`vendor/msdfgen-1.13/`)
+
+- Pinned to commit `1874bcf7d9624ccc85b4bc9a85d78116f690f35b`; its Zig package hash and vendored source-tree SHA-256 are in `build.zig.zon` and [`dependency-lock.json`](dependency-lock.json).
+- The vendored `LICENSE.txt` is the MIT license and must ship with the source. It identifies Copyright (c) 2014 - 2025 Viktor Chlumsky; preserve the full upstream notice when redistributing the vendored source.
+- **Asset builder only:** msdfgen is linked only into the host-side offline asset builder. The game runtime does not link or call msdfgen. FreeType is used by this offline generator for font import; runtime coverage rasterization remains separate.
+- The build disables SVG and PNG support and does not link TinyXML2, libpng, Skia, or OpenMP.
 
 **stb** (`stb_image.h` 2.30, `stb_image_write.h` 1.16, `stb_rect_pack.h` 1.01, `stb_truetype.h` 1.28)
 

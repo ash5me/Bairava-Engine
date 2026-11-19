@@ -34,7 +34,7 @@ Optional tools and targets:
 - GPU validation: build with `-Dgpu-debug=true`
 - ASTC textures: install Arm `astcenc` on `PATH`
 
-SDL3 3.4.2, ztracy, msdfgen 1.13.0, stb_image, stb_image_write, stb_rect_pack, stb_truetype, FreeType, cglm, Parson, and log.c are pinned or vendored. stb_truetype, FreeType, and msdfgen are linked only into offline asset tooling and UI tests, never into the game. See the [dependency policy](docs/dependency-policy.md) and [dependency lock](docs/dependency-lock.json) before updating them.
+SDL3 3.4.2, ztracy, msdfgen 1.13.0, stb_image, stb_image_write, stb_rect_pack, stb_truetype, FreeType, cglm, Parson, and log.c are pinned or vendored. msdfgen and FreeType are used by the offline asset builder only; the game runtime does not link them. `stb_truetype` also rasterizes runtime coverage glyphs. See the [dependency policy](docs/dependency-policy.md) and [dependency lock](docs/dependency-lock.json) before updating them.
 
 ## Quick start
 
@@ -136,7 +136,7 @@ Import names must be unique and use lowercase letters, digits, `_`, or `-`. The 
 
 For texture formats, the runtime prefers a format supported by the active GPU device. It falls back through ASTC, BC3, BC1, prebuilt RGBA8, or source-image decoding as capabilities allow. The asset build emits RGBA8 plus BC1/BC3 variants and ASTC variants when `astcenc` is available.
 
-Font rows bake a bitmap atlas offline into a `.bfnt` v4 file, with configurable codepoint ranges, kerning metadata, and a recorded fallback glyph. A row can be anti-aliased (gray, the default) or one-bit and hinted at its size (mono), which keeps small UI text crisp. Each size is its own row and file, and the game loads a font only at the size it was baked at. Characters outside the baked range draw the font's fallback, normally `?`; nothing is rasterized at runtime. See [text and prebaked fonts](docs/text.md). Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
+Font assets can be prebaked BFNT coverage, authored bitmap coverage, runtime TrueType coverage, or offline-baked MSDF. BFNT and MSDF use the exact baked `pixel_height`; runtime outline faces fix their size at load. Missing runtime glyphs use `?` from that face, with no fallback chain. The asset builder pins msdfgen 1.13.0 for MSDF generation; it is not linked into the game. See [text and fonts](docs/text.md). Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
 
 ## Requirements status
 

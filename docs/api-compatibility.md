@@ -50,3 +50,22 @@ the engine API version. Each reader must continue to accept documented compatibl
 explicitly reject unsupported or malformed data; it must not silently interpret an unknown format
 as the current one. A release may change the API without changing formats, or change a format
 without changing the public API.
+
+## Text and font compatibility
+
+The public text methods continue to accept a `FontHandle`; provider and renderer
+details are internal. The supported load paths are documented in
+[`text.md`](text.md): prebaked BFNT coverage, runtime TrueType coverage, and
+offline MSDF, with authored bitmap descriptors sharing the coverage rendering
+path. Existing BFNT assets remain supported through the compatibility adapter.
+The loader accepts the documented BFNT v1, v2, and v4 formats and explicitly
+rejects BFNT v3; MSDF uses the separate MFNT v1 format.
+
+The MSDF generator is pinned to msdfgen 1.13.0, commit
+`1874bcf7d9624ccc85b4bc9a85d78116f690f35b`. It is **asset builder only** and
+is not a game-runtime dependency. Its vendored MIT license and required notice
+are in `vendor/msdfgen-1.13/LICENSE.txt`; pin, hash, and scope are recorded in
+[`dependency-lock.json`](dependency-lock.json) and
+[`dependency-policy.md`](dependency-policy.md). Updating this tool does not
+change the source-level `bairava` API, but changes to generated MFNT assets
+must preserve the format's versioning and loading rules.

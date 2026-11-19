@@ -180,9 +180,9 @@ Shaping provides logical glyph identity and positioning. Layout decides line pla
 | Font path | Glyph source | Shared behavior (both renderers) | SDL_GPU behavior | SDL3 2D behavior | Limits and unsupported features |
 |---|---|---|---|---|---|
 | Hand-authored bitmap (pixel-art fonts) | Imported atlas and BMFont-style descriptor (D-08, D-09). The original bitmap is kept and is never converted to MSDF. | Codepoint mapping through the descriptor; metrics, kerning, and fallback from the descriptor; nearest sampling; common text API and `SpriteBatch` submission. | Coverage or RGBA pipeline by atlas type, nearest sampling. | Same texture path with nearest sampling. No GPU-only feature is used. | Basic mapper only: no ligatures or complex-script shaping. No MSDF. |
-| Existing `.bfnt`, as a BFNT compatibility adapter (temporary, D-19) | Prebaked R8 coverage atlas loaded from file. | Loaded as a provider in the unified `FontResource` model; the file format is unchanged. Measurement routes through the Zig port `bfnt_measure.zig`, parity-checked against text.c (uncompiled in the sandbox). Drawing still runs in text.c (in progress, see Phase 5). | Nearest coverage pipeline, static atlas (not the dynamic cache). | Same R8 coverage page through the ordinary texture path. | Legacy mapping during transition. The adapter is removed in a later, separate cleanup. |
-| Runtime outline coverage (dynamic text, scalable outline fonts) | TrueType `glyf` face (D-10), rasterized on demand per glyph ID with `stb_truetype`. | HarfBuzz shaping with default features (D-16); shaped layout; glyph cache keyed by font ID, glyph ID, size, and mode; the four-page R8 atlas (D-14). | Dynamic coverage pages uploaded to an SDL_GPU texture, with flush before sprite submission. | The same R8 pages in the 2D backend's own texture form, one resource only (D-14); flush on the 2D frame path (Phase 5). | No CFF or CFF2 (D-10). No runtime FreeType (D-11). Horizontal LTR only (D-06). Missing glyphs use the caller's fallback (D-13). No fallback chain and no eviction. |
-| MSDF (scalable outline fonts, UI) | Offline msdfgen (target 1.13.1, pin OPEN, D-17) output from vector outlines (D-17, D-24, D-25). Not derived from the coverage asset or from any bitmap. | The same shaped glyph IDs and layout positions as the coverage path; descriptor metrics; common text API. | MSDF fragment shader (median of RGB), with linear sampling set per texture. | Not rendered. The 2D path uses the coverage or bitmap asset generated from the same source font (D-18, D-24). | SDL_GPU only (D-18). No runtime MSDF generation. No bitmap-to-vector conversion. The MSDF atlas memory limit is not yet decided (D-14 covers only the runtime coverage atlas). |
+| Existing `.bfnt`, as a BFNT compatibility adapter (temporary, D-19) | Prebaked R8 coverage atlas loaded from file. | Loaded as a provider in `FontResource`; measurement and drawing use the shared text surface and quad submission, with the old C implementation retained as a private compatibility adapter. | Nearest coverage pipeline, static atlas (not the dynamic cache). | Same coverage page through the ordinary texture path. | The adapter remains until a later, separate cleanup after every legacy consumer has migrated. |
+| Runtime outline coverage (dynamic text, scalable outline fonts) | TrueType `glyf` face (D-10), rasterized on demand per glyph ID with `stb_truetype`. | HarfBuzz shaping with default features (D-16); shaped layout; glyph cache keyed by font ID, glyph ID, size, and mode; four-page R8 atlas (D-14). | Dynamic coverage pages uploaded with one frame flush before sprite submission. | The same coverage pages synchronize before 2D draws. | No CFF/CFF2 (D-10), runtime FreeType (D-11), or paragraph bidi (D-06). Missing glyphs resolve once after shaping to the same face's `?`, otherwise draw no ink. No fallback chain or eviction. |
+| MSDF (scalable outline fonts, UI) | Offline msdfgen 1.13.0 at commit `1874bcf7d9624ccc85b4bc9a85d78116f690f35b` (D-17, D-25), baked as MFNT v1 from vector outlines. It is not derived from the coverage asset or a bitmap. | Same shaped glyph IDs and layout positions as the coverage path; baked metrics; common text surface. | MSDF fragment shader (median of RGB), with a clamp-to-edge linear sampler selected per texture. | Draws the coverage sibling baked from the same source font (D-18, D-24), never the raw distance field. | No runtime MSDF generation or bitmap-to-vector conversion. 1024×1024 per-font cap (D-26); the msdfgen dependency is asset-builder-only. |
 
 **Important terminology:** the existing `.bfnt` file is a prebaked coverage atlas generated from an outline font. It is not the same source type as an artist-authored bitmap font atlas. Both may look pixel-oriented, but they have different import and metadata needs.
 
@@ -340,7 +340,7 @@ Two kinds appear here, and they are kept apart.
 - [x] Decide the initial runtime outline-font support matrix. `stb_truetype` is already present, but CFF support is currently handled by the offline FreeType bake path; do not silently regress it. → D-10. *(Done: D-10 accepted 2026-11-19. TrueType outlines only at runtime, on `stb_truetype`. CFF/CFF2 rasterization is deferred. Unsupported formats return `UnsupportedFontFormat`.)*
 - [x] Decide whether runtime rasterization supports TrueType `glyf` only initially, or whether FreeType must also move into the runtime for CFF. → D-10, D-11. *(Done: D-10 and D-11 accepted 2026-11-19. TrueType `glyf` only, and FreeType is not a runtime dependency. `build.zig` links FreeType only into the asset builder and the UI test harness.)*
 - [x] Decide the bitmap descriptor format: AngelCode BMFont text descriptor, normalized into Bairava-owned structures (D-08).
-- [~] Decide which MSDF generator will be used, its license, version pin, supported font formats, output metadata, and asset-builder integration. → D-17. *(Partly: D-17 accepted 2026-11-19, msdfgen target 1.13.1 (pin OPEN, D-17); v1.13 is a research reference only. Still open: the license check at the pinned revision, the supported font formats, the output metadata, and the asset-builder integration. The sandbox cannot fetch the source.)*
+- [x] Decide which MSDF generator will be used, its license, version pin, supported font formats, output metadata, and asset-builder integration. → D-17/D-25. msdfgen 1.13.0 is pinned at the reviewed commit, its MIT notice is vendored, and the TrueType import path emits MFNT v1 plus a coverage sibling. Visual/device validation remains in Phase 6/8.
 - [x] Decide fallback behavior for missing glyphs and whether font fallback chains are part of the first release or a later phase. → D-13. *(Done: D-13 accepted 2026-11-17. Caller-supplied fallback glyph; no font chain in the first release; mapping `?` and font chains move to Phase 7.)*
 - [x] Decide the initial renderer policy for MSDF. Recommended: SDL_GPU first; the SDL3 2D renderer uses a matching prebaked coverage/bitmap fallback until it has an equivalent shader path. → D-18. *(Done: D-18 accepted 2026-11-19. No MSDF on the SDL3 2D path; coverage or bitmap glyphs there; MSDF is SDL_GPU-only.)*
 - [x] Define atlas growth, maximum pages, memory budget, and whether eviction is required for the first release. → D-14. *(Done: D-14 accepted 2026-11-19. Four 1024 by 1024 R8 pages, 4 MiB; no growth beyond four; no eviction. `max_page_count` is lowered to four in `glyph_cache.zig` and the C mirror, with refusal checks.)*
@@ -359,7 +359,7 @@ A reviewed design decision record containing: supported font formats, font-sourc
 
 - [x] Every required font source has an agreed import/runtime path. *(Evidence: D-08 for bitmap fonts; D-10 and D-11 for runtime TrueType; the existing `.bfnt` prebaked path; D-17 and D-18 for offline MSDF on SDL_GPU only.)*
 - [x] TrueType/CFF behavior is explicitly decided (D-10 and D-11 accepted 2026-11-19).
-- [~] HarfBuzz and MSDF dependency/tooling choices are explicit and licensable. *(HarfBuzz 15.1.0 is locked at commit `3df40d9`. MSDF target is msdfgen 1.13.1 (D-17, pin OPEN). Its license is MIT per the upstream license text and package metadata (2026-11-19). The 1.13.1 tag's `LICENSE.txt`, the API, the CMake options, and the dependency graph are still to be confirmed. v1.13 is a research reference only.)*
+- [x] HarfBuzz and MSDF dependency/tooling choices are explicit and licensable. HarfBuzz 15.1.0 is locked at commit `3df40d9`; msdfgen 1.13.0 is locked at commit `1874bcf7d9624ccc85b4bc9a85d78116f690f35b`. The vendored msdfgen MIT notice and asset-builder-only boundary are recorded in the lock and dependency policy.
 - [x] SDL_GPU and SDL3 2D behavior for every rendering mode is documented.
 - [ ] Existing behavior has baseline tests or screenshots (E-03 is done with caveat by owner waiver, 2026-11-19; see section 6.4).
 - [x] No unresolved design question would force a data-format or public-API rewrite in a later phase. All Phase 0 decisions are accepted (D-01 to D-06, D-08, D-10 to D-15, D-17, D-18, D-12, D-13). D-16 and D-19 were accepted on 2026-11-19 as a scope restriction and a temporary adapter, and neither forces a data-format or public-API rewrite.
@@ -941,20 +941,17 @@ The owner's `zig build test` at `D:\repo\Bairava-Engine` (Zig `0.16.0-dev.3142+5
 
 **Decisions:** D-17, D-18. **Entry:** Phase 5 closed. **Environment:** E-01 (SPIR-V, DXIL, and MSL builds), E-04.
 
-### Needs — must implement
+### Needs — implementation status
 
-- [ ] Integrate the selected MSDF generator as an offline asset-build tool, with a pinned version and reviewed license. D-17 is accepted (2026-11-19). Target msdfgen 1.13.1 (D-17, pin OPEN). License: MIT per the upstream master text (2026-11-19); the 1.13.1 tag's `LICENSE.txt` still needs confirming. Blocked: the 1.13.1 tag's API, CMake options, and dependency graph, and the vendored source (D-25). Open: the final pixel format and packer (D-26). Its output is the SDL_GPU asset under D-24.
-- [ ] Define a versioned MSDF asset descriptor containing font identity/metrics, glyph IDs, atlas page, atlas bounds, plane bounds, pixel range/distance range, and any generator parameters required at runtime.
-- [ ] Generate MSDF from supported vector outlines. Do not make bitmap-to-vector conversion part of the normal asset pipeline.
-- [ ] Validate the generator's handling of corners, small counters, thin strokes, punctuation, and the chosen font corpus.
-- [ ] Add an MSDF font importer/loader that returns the same glyph-render-record interface as the bitmap and coverage providers.
-- [ ] Add an MSDF fragment shader using the selected distance-field interpretation and correct screen-space range calculation.
-- [ ] Extend the GPU sprite pipeline/run classification so normal sprites, coverage glyphs, and MSDF glyphs select the correct shader. A single `coverage: bool` is insufficient once MSDF is added; use an explicit render/material mode.
-- [ ] Add per-texture sampling policy. The current global nearest sampler should remain for pixel art; MSDF assets need their validated sampling mode (normally linear) without changing unrelated textures.
-- [ ] Extend shader generation/embedding for SPIR-V and the optional DXIL/MSL targets.
-- [ ] Define SDL3 2D renderer behavior. Recommended initial policy: MSDF is rendered on SDL_GPU; an MSDF asset also supplies a prebaked coverage/bitmap fallback for the SDL3 2D renderer. If no fallback exists, report the unsupported mode clearly rather than sampling MSDF as ordinary RGBA. Blocked: D-18. D-18 (accepted 2026-11-19) rules out MSDF on this path, so coverage or bitmap glyphs are used there. Resolved by D-24: the coverage/bitmap fallback is generated separately from the same source font, never from the MSDF texture.
-- [ ] Test the same outline font through runtime coverage and MSDF at small, medium, and large sizes. Blocked: E-02, E-04.
-- [ ] Keep pixel fonts on the bitmap path even when their style resembles a vector outline.
+- [x] Pin msdfgen 1.13.0 and its MIT license; link it only into the offline asset builder (D-17, D-25).
+- [x] Define and load MFNT v1 with metrics, glyph IDs, fallback, plane bounds, UVs, `pixel_height`, and `pxRange`.
+- [x] Generate MSDF from supported outlines and bake the coverage sibling separately. Reject assets exceeding the 1024×1024 per-font cap.
+- [x] Submit MSDF records through the shared text API and use the median shader with screen-space range calculation.
+- [x] Use a per-texture clamp-to-edge linear sampler only for MSDF; coverage, pixel art, and unrelated textures remain nearest-filtered.
+- [x] Compile/embed SPIR-V by default and optional DXIL/MSL when selected.
+- [x] SDL3 2D draws the coverage sibling generated from the same source font. It never samples raw MSDF channels.
+- [ ] Visually validate corners, counters, thin strokes, punctuation, and enlarged MSDF against coverage references on both renderer paths (E-03/E-04).
+- [x] Keep hand-authored pixel fonts on their bitmap/coverage path; do not vectorize them.
 
 ### Wants — useful but not blocking
 
@@ -966,14 +963,9 @@ The owner's `zig build test` at `D:\repo\Bairava-Engine` (Zig `0.16.0-dev.3142+5
 
 An outline font can be generated offline into an MSDF asset, loaded at runtime, shaped by HarfBuzz, and drawn by the SDL_GPU MSDF pipeline. The secondary renderer has an explicit fallback behavior.
 
-### Exit gate — Phase 6 is complete only when
+### Exit gate — Phase 6
 
-- [ ] The same shaped glyph IDs and layout positions are used by coverage and MSDF paths.
-- [ ] MSDF text remains visually stable across the agreed size range and avoids unacceptable corner/detail artifacts.
-- [ ] MSDF sampling is configured independently from pixel-art nearest sampling.
-- [ ] SPIR-V builds pass and optional DXIL/MSL shader paths compile where supported.
-- [ ] SDL3 2D renderer fallback behavior is tested and documented.
-- [ ] Hand-authored bitmap fonts are not modified or vectorized to use MSDF.
+The implementation and CPU/build pieces are in place, but the phase remains open until display-backed references verify MSDF at native and enlarged sizes on SDL_GPU and its coverage sibling on SDL3 2D. CI is configured to compile SPIR-V on every platform, DXIL on Windows, and MSL on macOS; successful matrix runs remain required evidence.
 
 ---
 
@@ -1024,17 +1016,18 @@ A stable font runtime with predictable fallback, memory limits, lifetime behavio
 
 ### Needs — must complete
 
-- [ ] Run the full test suite: `zig build test`, `zig build test-ui`, `zig build check-assets`, and the repository's boundary/dependency checks. Blocked: E-01, E-03.
-- [ ] Run asset-builder tests for bitmap, BFNT, and MSDF inputs, including malformed and unsupported assets.
-- [ ] Run CI on Linux, Windows, and macOS; verify the supported shader targets and C/C++ dependency linkage. Blocked: E-01.
-- [ ] Compare screenshots against Phase 0 baselines for existing UI, debug overlay, console, and widgets. Blocked: E-03, E-04.
-- [ ] Add visual reference tests for bitmap fonts, Latin shaping, Tamil shaping, and MSDF at multiple sizes.
+- [x] Run `zig build test`, `zig build test-ui`, `zig build check-assets`, and the repository boundary/dependency checks on the current Windows worktree (2026-11-20). See the Phase 8 implementation note below; cross-platform CI remains open.
+- [x] Run asset-builder tests for bitmap, BFNT, and MSDF inputs, including malformed and unsupported assets, via `zig build test`.
+- [ ] Pass CI on Linux, Windows, and macOS; verify SPIR-V on every job, DXIL on Windows, MSL on macOS, and C/C++ dependency linkage. The workflow now requests these target builds, but no new three-platform run is recorded yet.
+- [ ] Compare screenshots against Phase 0 baselines for existing UI, debug overlay, console, and widgets. E-03 is only a waiver, not screenshot evidence; SDL3 2D device validation (E-04) remains open.
+- [ ] Capture visual references for mono bitmap, gray BFNT, shaped Latin, shaped Tamil (vowel signs and conjuncts), and MSDF at 1× and enlarged scales. Verify coverage aliasing versus MSDF smoothness, the SDL_GPU median shader, the SDL3 2D coverage sibling, and that a non-font texture remains nearest-filtered.
 - [ ] Profile cold-cache and warm-cache text workloads: shaping time, rasterization count, upload cost, cache hit rate, draw calls, memory, and frame time. Blocked: E-02.
-- [ ] Rewrite `docs/text.md` to explain font formats, asset authoring, rendering modes, supported shaping, sampling, fallback, and limitations.
-- [ ] Update README asset-pipeline notes and public API documentation.
-- [ ] Update dependency policy/lock records for HarfBuzz and the MSDF generator (and runtime FreeType if selected).
+- [x] Rewrite `docs/text.md` to explain coverage, runtime coverage, and MSDF rendering; bitmap import; asset authoring; `pixel_height`; `pxRange`; sampling; shaping; fallback; 2D behavior; and limitations.
+- [x] Update README asset-pipeline notes and `docs/api-compatibility.md`.
+- [x] Record the msdfgen pin, full MIT notice location, and asset-builder-only boundary in the dependency lock and policy.
 - [x] Decide the status of old C text code: keep it as a BFNT compatibility adapter or remove it only after all consumers have migrated and compatibility tests prove it is unused. → D-19. Accepted 2026-11-19: kept temporarily as a BFNT compatibility adapter. Removal is a later, separate cleanup once every consumer and asset has migrated.
-- [ ] Preserve old `.bfnt` assets or provide a deterministic migration tool before changing/removing a format. *(Under D-19, BFNT loading is kept, so the format does not change. A migration tool is needed only if the format is changed.)*
+- [x] Preserve BFNT compatibility: automated tests verify BFNT v1/v2/v4 loading and v3 rejection. MFNT v1 loading is covered by a new parser test; asset-tool tests verify its generated descriptor.
+- [x] Keep linear sampling isolated to MSDF textures; backend selection uses the texture's MSDF sampler while ordinary RGBA and coverage textures remain nearest-filtered. Visual confirmation remains open above.
 
 ### Wants — useful but not blocking
 
@@ -1047,12 +1040,14 @@ A documented, tested, multi-source text/font system with an explicit supported-f
 
 ### Exit gate — migration is complete only when
 
-- [ ] All required CI jobs pass.
+- [ ] All required CI jobs pass on Linux, Windows, and macOS.
 - [ ] All Phase 0 visual baselines are accepted or intentional differences are documented.
 - [ ] All four required font paths work through the same public text API.
 - [ ] Runtime text works with unseen glyphs and repeated cache hits.
 - [ ] No renderer replacement or unrelated rendering subsystem rewrite was needed.
-- [ ] Documentation and dependency records match the actual implementation.
+- [ ] Documentation and dependency records match the actual implementation and visual/device acceptance has been recorded.
+
+**Phase 8 implementation note (2026-11-20):** The docs, API compatibility note, README, lock/policy records, platform-specific shader CI steps, and MFNT v1 loader test are updated. The current Windows run passed `zig build`, `zig build test` (767 tests), `zig build test-ui`, `zig build check-assets`, and `zig build asset-build`. `zig build -Ddxil=true -Dmetal=true` compiled optional DXIL and MSL alongside default SPIR-V. The boundary scan, dependency-pin check, and `git diff --check` also passed. The configured CI matrix still needs fresh Linux/Windows/macOS results. No display-backed captures were made in this environment, so visual acceptance, both-renderer proof, and scale comparisons remain open; the Phase 8 exit gate is not closed.
 
 ---
 
