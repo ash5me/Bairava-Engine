@@ -82,6 +82,8 @@ pub const CoverageRegion = struct {
     h: u32,
     stride: u32,
     coverage: []const u8,
+    /// Ask SDL to cycle the destination texture for a full-page rewrite that may overlap in-flight sampling.
+    cycle: bool = false,
 };
 
 /// Records copies of `regions` into `cmd` outside a render pass. The copies run before any draw recorded after them in
@@ -142,7 +144,7 @@ pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, 
             .h = region.h,
             .d = 1,
         };
-        c.SDL_UploadToGPUTexture(copy_pass, &src, &dst, false);
+        c.SDL_UploadToGPUTexture(copy_pass, &src, &dst, region.cycle);
         offset += @as(usize, region.w) * @as(usize, region.h);
     }
     c.SDL_EndGPUCopyPass(copy_pass);

@@ -12,9 +12,8 @@
 //!   right and bottom edges. Sampling is nearest, so the padding keeps a sampled texel from ever
 //!   reaching the neighbouring glyph.
 //! - No eviction. A glyph's texels are written once and never move. A frame still in flight may read
-//!   them. Region uploads never touch them again. A whole-page upload, forced when the pending list
-//!   overflows, rewrites them with the same bytes. That path is not covered by this argument, and the
-//!   Phase 4 status in the text plan lists it as an open GPU-sync item.
+//!   them. Region uploads never touch them again. Changed regions beyond the fixed pending list spill
+//!   into an allocator-backed list and are still uploaded as regions.
 //!   When every page is full, insert returns AtlasFull and counts it in `cache_full`. The caller
 //!   draws the fallback glyph, so no glyph is dropped silently.
 //! - Page 0 starts with a solid 2 by 2 white block at its origin. Filled rectangles sample it, as the
@@ -38,8 +37,7 @@ pub const max_page_count: u32 = 4;
 pub const padding: u32 = 1;
 /// Side of the solid white block at the origin of page 0.
 pub const white_size: u32 = 2;
-/// Changed regions remembered between two flushes. Past this count, the page of the next region is marked for a
-/// whole-page upload instead, so the list never grows.
+/// Changed regions remembered in the fixed portion between two flushes. Further regions spill without rewriting pages.
 pub const max_pending: usize = 512;
 const initial_slots: usize = 256;
 
@@ -187,6 +185,7 @@ pub const Cache = struct {
     tombstones: usize = 0,
     pending: [max_pending]Region = undefined,
     pending_count: usize = 0,
+    pending_spill: std.ArrayList(Region) = .empty,
     stats: Stats = .{},
 
     /// Builds the cache and writes the white block into page 0. The block is listed as a pending region, so the
@@ -226,6 +225,7 @@ pub const Cache = struct {
         for (self.pages) |page| self.allocator.free(page.pixels);
         self.allocator.free(self.pages);
         self.allocator.free(self.slots);
+        self.pending_spill.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -261,6 +261,7 @@ pub const Cache = struct {
             }
             if (coverage.len != @as(usize, metrics.width) * @as(usize, metrics.height)) return error.InvalidBitmap;
             try self.ensureRoom();
+            try self.ensurePendingRoom();
             entry.region = try self.place(metrics.width, metrics.height);
             self.blit(entry.region, coverage);
         }
@@ -300,6 +301,7 @@ pub const Cache = struct {
             page.dirty_all = true;
         }
         self.pending_count = 0;
+        self.pending_spill.clearRetainingCapacity();
         self.reserveWhite();
     }
 
@@ -307,6 +309,7 @@ pub const Cache = struct {
     /// textures, so the new textures receive the whole cache.
     pub fn markAllDirty(self: *Cache) void {
         self.pending_count = 0;
+        self.pending_spill.clearRetainingCapacity();
         for (self.pages) |*page| page.dirty_all = true;
     }
 
@@ -344,6 +347,11 @@ pub const Cache = struct {
         return self.pending[0..self.pending_count];
     }
 
+    /// Regions beyond the fixed pending list, retained until the next flush.
+    pub fn pendingSpill(self: *const Cache) []const Region {
+        return self.pending_spill.items;
+    }
+
     /// True once the page holds the white block or a glyph. A page that is not in use has no sprites and needs no 2D
     /// copy.
     pub fn pageInUse(self: *const Cache, page: u32) bool {
@@ -369,6 +377,7 @@ pub const Cache = struct {
     /// Forgets the pending list and the full-page flags. Call after the renderer has uploaded them.
     pub fn clearPending(self: *Cache) void {
         self.pending_count = 0;
+        self.pending_spill.clearRetainingCapacity();
         for (self.pages) |*page| page.dirty_all = false;
     }
 
@@ -411,12 +420,16 @@ pub const Cache = struct {
         self.markPending(region);
     }
 
+    fn ensurePendingRoom(self: *Cache) std.mem.Allocator.Error!void {
+        if (self.pending_count == max_pending) try self.pending_spill.ensureUnusedCapacity(self.allocator, 1);
+    }
+
     fn markPending(self: *Cache, region: Region) void {
         if (self.pending_count < max_pending) {
             self.pending[self.pending_count] = region;
             self.pending_count += 1;
         } else {
-            self.pages[region.page].dirty_all = true;
+            self.pending_spill.appendAssumeCapacity(region);
         }
     }
 
@@ -707,18 +720,21 @@ test "the table grows as entries are added, and every entry is still found after
     try testing.expectEqual(@as(u64, 3), stats.rehashes);
 }
 
-test "more changed glyphs than the pending list holds mark their page for a full upload" {
+test "more changed glyphs than the fixed pending list spill without dirtying the page" {
     var cache = try Cache.init(testing.allocator, .{});
     defer cache.deinit();
+    cache.clearPending();
     var glyph: u32 = 0;
     while (glyph < 600) : (glyph += 1) {
         _ = try cache.insert(keyOf(1, glyph), testMetrics(1, 1), &.{5});
     }
     try testing.expectEqual(max_pending, cache.pendingRegions().len);
-    try testing.expect(cache.pageNeedsFullUpload(0));
+    try testing.expectEqual(@as(usize, 88), cache.pendingSpill().len);
+    try testing.expect(!cache.pageNeedsFullUpload(0));
     try testing.expect(!cache.pageNeedsFullUpload(1));
     cache.clearPending();
     try testing.expectEqual(@as(usize, 0), cache.pendingRegions().len);
+    try testing.expectEqual(@as(usize, 0), cache.pendingSpill().len);
     try testing.expect(!cache.pageNeedsFullUpload(0));
 }
 

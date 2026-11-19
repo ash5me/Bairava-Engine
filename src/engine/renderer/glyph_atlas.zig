@@ -2,7 +2,7 @@
 //! renderer is active, a 2D copy of each page. Phase 3 of the rendering migration plan. Decisions P3-1, P3-2, P3-10, and
 //! P3-11 are recorded in docs/Bairava_Phase0/Bairava-Engine-Rendering-Migration-Plan.phase0-status.md, section 21.
 //!
-//! Frame use (Phase 5 wires this in; see the insertion point in section 21):
+//! Frame use (wired in the runtime frame loop):
 //!   1. Text draws call `lookup` on the cache. On a miss they rasterize the glyph and call `insert`.
 //!   2. After all of the frame's text is queued, and before the SDL2D branch and the sprite upload, call
 //!      `flush(frame.cmd, ctx.renderer == .sdl2d)`. The flush has two steps, described on `flush`.
@@ -10,8 +10,8 @@
 //!
 //! Why this is safe with frames in flight:
 //!   - A glyph's texels are written once and never move (see glyph_cache.zig). A frame still in flight may read
-//!     them. Region uploads never touch them again. A whole-page upload, forced when the pending list overflows,
-//!     rewrites them with the same bytes. The GPU-sync argument for that path is still open (Phase 4 status).
+//!     them. Region uploads never touch them again. Overflow regions spill into a frame's upload scratch; they never
+//!     force a rewrite of live page texels.
 //!   - The GPU copies are recorded into the same command buffer as the sprite draws that sample them, before those draws,
 //!     which is the same order the sprite vertex upload relies on.
 //!   - A 2D copy is only made, updated, or released in `flush`, which runs before any 2D draw of the frame. Queued sprites
@@ -53,19 +53,32 @@ pub fn plan2d(sdl2d_active: bool, valid: bool, in_use: bool, changed: bool) Acti
     return if (changed) .update_regions else .none;
 }
 
-/// The changed regions of one page, as CoverageRegions: one whole-page region if the page needs a full upload, or else
-/// one region per changed glyph. Returns the number written to `out`, which needs room for `glyph_cache.max_pending`.
-/// It takes no renderer state, so the GPU copies it feeds do not depend on the renderer.
-pub fn gatherPage(cache: *const glyph_cache.Cache, page: u32, out: []texture.CoverageRegion) usize {
+pub const GatherCounts = struct {
+    fixed: usize = 0,
+    spill: usize = 0,
+
+    pub fn total(self: GatherCounts) usize {
+        return self.fixed + self.spill;
+    }
+};
+
+/// Gathers one page's changed regions into fixed-size and spill buffers. A full-page region is reserved for explicit
+/// cache resets/rebuilds; overflow glyph writes stay as individual regions.
+pub fn gatherPage(
+    cache: *const glyph_cache.Cache,
+    page: u32,
+    out: []texture.CoverageRegion,
+    spill_out: []texture.CoverageRegion,
+) GatherCounts {
     const size = cache.page_size;
     if (cache.pageNeedsFullUpload(page)) {
-        out[0] = .{ .x = 0, .y = 0, .w = size, .h = size, .stride = size, .coverage = cache.pagePixels(page) };
-        return 1;
+        out[0] = .{ .x = 0, .y = 0, .w = size, .h = size, .stride = size, .coverage = cache.pagePixels(page), .cycle = true };
+        return .{ .fixed = 1 };
     }
-    var count: usize = 0;
+    var counts = GatherCounts{};
     for (cache.pendingRegions()) |region| {
         if (region.page != page) continue;
-        out[count] = .{
+        out[counts.fixed] = .{
             .x = region.x,
             .y = region.y,
             .w = region.w,
@@ -73,9 +86,21 @@ pub fn gatherPage(cache: *const glyph_cache.Cache, page: u32, out: []texture.Cov
             .stride = size,
             .coverage = cache.regionCoverage(region),
         };
-        count += 1;
+        counts.fixed += 1;
     }
-    return count;
+    for (cache.pendingSpill()) |region| {
+        if (region.page != page) continue;
+        spill_out[counts.spill] = .{
+            .x = region.x,
+            .y = region.y,
+            .w = region.w,
+            .h = region.h,
+            .stride = size,
+            .coverage = cache.regionCoverage(region),
+        };
+        counts.spill += 1;
+    }
+    return counts;
 }
 
 /// Counters for diagnostics and for the first SDL2D run (section 21). They are cumulative since `init`.
@@ -104,6 +129,8 @@ pub const Atlas = struct {
     cache: glyph_cache.Cache,
     /// One GPU coverage texture per cache page. Created once by `init`, so every sprite's page pointer stays valid.
     pages: []Texture,
+    /// Reused only during flush to convert cache spill regions into renderer upload regions.
+    spill_regions: std.ArrayList(texture.CoverageRegion) = .empty,
     flush_stats: FlushStats = .{},
 
     /// Builds the cache and one GPU coverage texture per page. Every page starts blank on the GPU, and the cache lists the
@@ -133,6 +160,7 @@ pub const Atlas = struct {
     pub fn deinit(self: *Atlas) void {
         for (self.pages) |*page| page.deinit();
         self.allocator.free(self.pages);
+        self.spill_regions.deinit(self.allocator);
         self.cache.deinit();
         self.* = undefined;
     }
@@ -165,20 +193,27 @@ pub const Atlas = struct {
     ///   2. 2D, only the 2D copy. `plan2d` reads `sdl2d_active` and decides whether the copy is made, updated, or released.
     ///      A GPU-only frame releases any copy and writes nothing to it.
     /// The changed list is cleared after both steps for every page. Clearing it does not depend on the renderer either.
-    pub fn flush(self: *Atlas, cmd: *backend.CommandBuffer, sdl2d_active: bool) void {
+    pub fn flush(self: *Atlas, cmd: *backend.CommandBuffer, sdl2d_active: bool) std.mem.Allocator.Error!void {
         const size = self.cache.page_size;
         const stats = &self.flush_stats;
         stats.flushes += 1;
         var regions: [glyph_cache.max_pending]texture.CoverageRegion = undefined;
+        try self.spill_regions.resize(self.allocator, self.cache.pendingSpill().len);
         var recorded_any = false;
 
         for (self.pages, 0..) |*page_texture, index| {
             const page: u32 = @intCast(index);
 
             // Step 1, GPU: unconditional.
-            const count = gatherPage(&self.cache, page, &regions);
+            const gathered = gatherPage(&self.cache, page, &regions, self.spill_regions.items);
+            const count = gathered.total();
             if (count > 0) {
-                texture.recordCoverageGpu(page_texture, cmd, regions[0..count]);
+                if (gathered.fixed > 0) {
+                    texture.recordCoverageGpu(page_texture, cmd, regions[0..gathered.fixed]);
+                }
+                if (gathered.spill > 0) {
+                    texture.recordCoverageGpu(page_texture, cmd, self.spill_regions.items[0..gathered.spill]);
+                }
                 recorded_any = true;
                 stats.gpu_regions += count;
                 if (self.cache.pageNeedsFullUpload(page)) stats.gpu_full_pages += 1;
@@ -194,7 +229,12 @@ pub const Atlas = struct {
                     stats.sdl2d_syncs += 1;
                 },
                 .update_regions => {
-                    texture.updateCoverage2d(self.allocator, page_texture, regions[0..count]);
+                    if (gathered.fixed > 0) {
+                        texture.updateCoverage2d(self.allocator, page_texture, regions[0..gathered.fixed]);
+                    }
+                    if (gathered.spill > 0) {
+                        texture.updateCoverage2d(self.allocator, page_texture, self.spill_regions.items[0..gathered.spill]);
+                    }
                     stats.sdl2d_region_updates += count;
                 },
                 .release => {
@@ -215,11 +255,12 @@ test "a page's changed regions are gathered once, and an unchanged page gathers 
     defer cache.deinit();
     var out: [glyph_cache.max_pending]texture.CoverageRegion = undefined;
     // The white block is the only change so far.
-    try testing.expectEqual(@as(usize, 1), gatherPage(&cache, 0, &out));
-    try testing.expectEqual(@as(usize, 0), gatherPage(&cache, 1, &out));
+    var spill: [0]texture.CoverageRegion = .{};
+    try testing.expectEqual(@as(usize, 1), gatherPage(&cache, 0, &out, &spill).total());
+    try testing.expectEqual(@as(usize, 0), gatherPage(&cache, 1, &out, &spill).total());
     cache.clearPending();
     // Nothing changed since the last flush, so nothing is uploaded.
-    try testing.expectEqual(@as(usize, 0), gatherPage(&cache, 0, &out));
+    try testing.expectEqual(@as(usize, 0), gatherPage(&cache, 0, &out, &spill).total());
 }
 
 test "a glyph's region is gathered with the page stride, and a whole-page upload is one region" {
@@ -237,16 +278,43 @@ test "a glyph's region is gathered with the page stride, and a whole-page upload
         &[_]u8{ 5, 6, 7, 8 },
     );
     var out: [glyph_cache.max_pending]texture.CoverageRegion = undefined;
-    try testing.expectEqual(@as(usize, 1), gatherPage(&cache, 0, &out));
+    var spill: [0]texture.CoverageRegion = .{};
+    try testing.expectEqual(@as(usize, 1), gatherPage(&cache, 0, &out, &spill).total());
     try testing.expectEqual(@as(u32, 2), out[0].w);
     try testing.expectEqual(@as(u32, 32), out[0].stride);
     // The second glyph sits at x = 6: the first glyph is at 3..4 and its padding is texel 5. Its first texel is 5.
     try testing.expectEqual(@as(u8, 5), out[0].coverage[0]);
     cache.clearPending();
     cache.markAllDirty();
-    try testing.expectEqual(@as(usize, 1), gatherPage(&cache, 0, &out));
+    const full = gatherPage(&cache, 0, &out, &spill);
+    try testing.expectEqual(@as(usize, 1), full.total());
     try testing.expectEqual(@as(u32, 32), out[0].w);
     try testing.expectEqual(@as(u32, 32), out[0].h);
+    try testing.expect(out[0].cycle);
+}
+
+test "overflow regions gather into spill output instead of a cycling whole-page upload" {
+    var cache = try glyph_cache.Cache.init(testing.allocator, .{});
+    defer cache.deinit();
+    cache.clearPending();
+    var glyph: u32 = 0;
+    while (glyph < glyph_cache.max_pending + 88) : (glyph += 1) {
+        _ = try cache.insert(
+            .{ .font = 1, .glyph = glyph, .size_bits = glyph_cache.sizeBits(16) },
+            .{ .advance = 2, .xoff = 0, .yoff = -2, .width = 1, .height = 1 },
+            &.{5},
+        );
+    }
+
+    var fixed: [glyph_cache.max_pending]texture.CoverageRegion = undefined;
+    var spilled = try testing.allocator.alloc(texture.CoverageRegion, cache.pendingSpill().len);
+    defer testing.allocator.free(spilled);
+    const counts = gatherPage(&cache, 0, &fixed, spilled);
+    try testing.expectEqual(glyph_cache.max_pending, counts.fixed);
+    try testing.expectEqual(@as(usize, 88), counts.spill);
+    try testing.expect(!cache.pageNeedsFullUpload(0));
+    for (fixed[0..counts.fixed]) |region| try testing.expect(!region.cycle);
+    for (spilled[0..counts.spill]) |region| try testing.expect(!region.cycle);
 }
 
 test "the 2D copy follows the renderer: made when a used page is drawn, updated while changed, released when it leaves 2D" {

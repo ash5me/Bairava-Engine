@@ -21,11 +21,14 @@ const runtime_font = @import("runtime_font.zig");
 const shaper = @import("shaper.zig");
 const bitmap_mapper = @import("bitmap_mapper.zig");
 const bfnt_measure = @import("bfnt_measure.zig");
+const shaped_layout = @import("shaped_layout.zig");
+const glyph_records = @import("glyph_records.zig");
+const glyph_atlas = @import("../renderer/glyph_atlas.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 
 pub const FontHandle = font_registry.FontHandle;
 pub const InsertError = font_registry.InsertError;
-pub const DrawError = error{RuntimeDrawingUnavailable};
+pub const DrawError = error{RuntimeDrawingUnavailable} || glyph_records.Error || shaped_layout.LayoutError;
 
 /// The fonts the store holds, counted by how they are drawn. Plain numbers, so game code reads them without any engine type.
 pub const Stats = struct {
@@ -59,6 +62,7 @@ const State = struct {
     allocator: std.mem.Allocator,
     resources: font_resource.Resources,
     release: Release,
+    atlas: ?*glyph_atlas.Atlas = null,
 };
 
 /// The session's fonts, as game-facing code sees them. Opaque, so its state is reachable only from this file.
@@ -78,13 +82,22 @@ pub const FontStore = opaque {
         };
     }
 
-    /// Adds `str` to `list` with its top-left corner at (x, y), in pixels, in the font `handle` names. Runtime glyph
-    /// submission remains unavailable until the renderer has a page-aware atlas upload and binding hook.
+    /// Adds `str` to `list` with its top-left corner at (x, y), in pixels, in the font `handle` names. Runtime glyphs
+    /// use the session atlas; the runtime flushes it before either renderer path submits the batch.
     pub fn drawText(self: *FontStore, handle: FontHandle, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) DrawError!void {
         switch (resourceOf(stateOf(self), handle).*) {
             .bfnt_coverage => |*font_value| drawBfntText(font_value, list, x, y, str, color),
             .bitmap => |*font_value| drawBitmapText(&font_value.descriptor, list, x, y, str, color),
-            .runtime_coverage => return error.RuntimeDrawingUnavailable,
+            .runtime_coverage => |*font_value| try drawRuntimeText(
+                stateOf(self),
+                handle,
+                font_value,
+                list,
+                x,
+                y,
+                str,
+                color,
+            ),
         }
     }
 
@@ -124,6 +137,18 @@ pub fn createWithRelease(allocator: std.mem.Allocator, release: Release) std.mem
     return @ptrCast(state);
 }
 
+/// Creates the production store with the session-owned runtime glyph atlas.
+pub fn createWithAtlas(allocator: std.mem.Allocator, atlas: *glyph_atlas.Atlas) std.mem.Allocator.Error!*FontStore {
+    const state = try allocator.create(State);
+    state.* = .{
+        .allocator = allocator,
+        .resources = font_resource.Resources.init(allocator),
+        .release = &font_resource.FontResource.deinit,
+        .atlas = atlas,
+    };
+    return @ptrCast(state);
+}
+
 /// The number of fonts stored.
 pub fn count(store: *const FontStore) usize {
     return stateOfConst(store).resources.count();
@@ -144,7 +169,11 @@ pub fn glyphTextureForPageOf(store: *FontStore, handle: FontHandle, page: u32) *
             &font_value.pages[@intCast(page)]
         else
             std.debug.panic("bitmap font has no page {d}", .{page}),
-        .runtime_coverage => std.debug.panic("runtime glyph pages are submitted by the runtime atlas hook", .{}),
+        .runtime_coverage => |*font_value| blk: {
+            const atlas = stateOf(store).atlas orelse std.debug.panic("runtime glyph atlas is unavailable", .{});
+            _ = font_value;
+            break :blk atlas.pageTexture(page);
+        },
     };
 }
 
@@ -225,6 +254,61 @@ fn runtimeShaper(font_value: *font_resource.RuntimeCoverage) *shaper.Shaper {
 
 fn drawBfntText(font_value: *font_mod.Font, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) void {
     c.ui_font_draw_text(&font_value.baked, list, x, y, str.ptr, str.len, color);
+}
+
+fn drawRuntimeText(
+    state: *State,
+    handle: FontHandle,
+    font_value: *font_resource.RuntimeCoverage,
+    list: *c.ui_quad_list,
+    x: f32,
+    y: f32,
+    str: []const u8,
+    color: c.ui_color,
+) DrawError!void {
+    const atlas = state.atlas orelse return error.RuntimeDrawingUnavailable;
+    var layout = try shaped_layout.layout(
+        state.allocator,
+        runtimeShaper(font_value),
+        str,
+        std.math.floatMax(f32),
+        resourceOf(state, handle).metrics().line_height,
+        .left,
+        .{},
+    );
+    defer layout.deinit();
+
+    var records: std.ArrayList(glyph_records.Record) = .empty;
+    defer records.deinit(state.allocator);
+    try glyph_records.build(
+        state.allocator,
+        &records,
+        &atlas.cache,
+        &font_value.face,
+        &layout,
+        x,
+        y,
+        .{ .font_id = handle.id, .fallback_glyph_id = 0 },
+    );
+    for (records.items) |record| {
+        if (list.count >= c.UI_MAX_QUADS) {
+            list.dropped += 1;
+            continue;
+        }
+        list.items[@intCast(list.count)] = .{
+            .dst = .{ .x = record.dst_x, .y = record.dst_y, .w = record.dst_w, .h = record.dst_h },
+            .src = .{
+                .x = @floatFromInt(record.src_x),
+                .y = @floatFromInt(record.src_y),
+                .w = @floatFromInt(record.src_w),
+                .h = @floatFromInt(record.src_h),
+            },
+            .color = color,
+            .page = record.page,
+            .solid = 0,
+        };
+        list.count += 1;
+    }
 }
 
 fn bitmapWidth(font_value: *const @import("bmfont.zig").Font, str: []const u8) f32 {

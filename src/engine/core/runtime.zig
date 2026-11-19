@@ -418,9 +418,10 @@ pub fn run(comptime Game: type, config: Config) !void {
             defer overlay_zone.End();
             overlay.draw(&session.world_batch, view_wf, view_hf, collector, &dev_console);
         }
-        // The glyph atlas check, when it is on. It queues its text and flushes the atlas here: after the game and the
-        // overlay have queued their sprites, and before the sprite upload, outside any render pass.
-        if (session.glyph_check_state) |*check| glyph_check.frame(check, &session.world_batch, frame.cmd, ctx.renderer == .sdl2d);
+        // All outline glyphs for this frame, including the optional diagnostic burst, are queued before this one flush.
+        if (session.glyph_check_state) |*check| glyph_check.frame(check, &session.world_batch);
+        try session.glyph_atlas_state.flush(frame.cmd, ctx.renderer == .sdl2d);
+        if (session.glyph_check_state) |*check| glyph_check.afterFlush(check);
         if (ctx.renderer == .sdl2d) {
             session.renderer2d.clear(
                 @intFromFloat(black.r * 255),

@@ -5,15 +5,15 @@
 //!   - every glyph is uploaded before a draw samples it, while new glyphs keep arriving (each new phrase brings glyphs
 //!     the cache has not seen, so uploads keep happening while earlier frames are still in flight);
 //!   - the counters match the picture: misses stop once a phrase is warm, and `sdl2d copies missing` stays 0.
-//!   - the whole-page path runs: on frame 60 a burst of new glyphs overflows the pending list, and the log must report
-//!     one whole-page upload for that flush.
+//!   - on frame 60, a burst of 600 new glyphs overflows the fixed pending list and the log reports region uploads with
+//!     no whole-page rewrite.
 //!
-//! The shipped engine has it off. `enabled` below is on for the GPU run, so set it to false before you ship. To run it,
-//! run `zig build run -Dgpu-debug=true` and watch the log for "glyph check" lines and for validation errors.
+//! The shipped engine has it off. Temporarily set `enabled` below to true for the GPU run, then restore false. Run
+//! `zig build run -Dgpu-debug=true` and watch the log for "glyph check" lines and for validation errors.
 //!
 //! The text uses the codepoint minus 29 as the glyph ID. That is the Arial layout this project ships: A is 36, V is 57,
 //! T is 55, and R is 53, as checks/hb_linux_RESULTS.txt measured. The check skips shaping, so kerning is not applied.
-//! It tests the atlas, not the text API. Phase 5 replaces this mapping with shaping.
+//! It tests the atlas, not the text API.
 
 const std = @import("std");
 
@@ -23,21 +23,19 @@ const glyph_cache = @import("../text/glyph_cache.zig");
 const resolver = @import("../text/glyph_resolver.zig");
 const font_registry = @import("../text/font_registry.zig");
 const runtime_font = @import("../text/runtime_font.zig");
-const backend = @import("backends/sdl_gpu/backend.zig");
 const glyph_atlas = @import("glyph_atlas.zig");
 const sprite = @import("sprite.zig");
 
 const elog = logging.scoped("glyph check");
 
-/// Set to true to run the check. The shipped engine has it off. lifecycle.zig reads this to decide whether to create
-/// the check at all.
+/// Set to true only for the requested GPU validation run. Restore false afterward; production text uses the same atlas.
 pub const enabled: bool = false;
 
 /// The packaged font, relative to the package folder. The manifest row for `ui_font_ttf` writes it under assets/fonts.
 /// If the log says FileNotFound, check where the font landed under zig-out\bin and change this path to match.
 const font_path = "assets/fonts/font.ttf";
 const pixel_height: f32 = 24;
-const font_id: font_registry.FontId = 1;
+const font_id: font_registry.FontId = 0xFFFF_FFFF_FFFF_FFFE;
 
 /// The codepoint minus this is the glyph ID in the shipped Arial. Codepoints below it are not printable here.
 const glyph_offset: u32 = 29;
@@ -57,10 +55,7 @@ const report_every: u64 = 240;
 const pen_start_x: f32 = 4;
 const baseline_y: f32 = 24;
 
-/// The burst: on `burst_frame`, the check queues `burst_size` glyphs that have ink, and the frame flushes them all at
-/// once. Each new glyph is one pending region, so more than `glyph_cache.max_pending` of them overflow the list, and
-/// the page takes a whole-page upload. The burst's glyphs are drawn too, so their samples come after that upload in
-/// the same frame.
+/// The burst queues enough new glyphs to overflow the fixed pending list. Those writes must stay region uploads.
 const burst_size: usize = 600;
 /// The phrases use glyph IDs 3 to 97, so the burst starts above them and every burst glyph is new to the cache.
 const burst_first_glyph: u32 = 200;
@@ -74,45 +69,51 @@ comptime {
 }
 
 pub const State = struct {
-    atlas: glyph_atlas.Atlas,
+    atlas: *glyph_atlas.Atlas,
     font: runtime_font.RuntimeFont,
     frame_count: u64 = 0,
+    burst_pending: bool = false,
+    burst_regions_before: u64 = 0,
+    burst_full_pages_before: u64 = 0,
     /// Glyphs that could not be drawn at all, such as AtlasFull. A fallback is not a failure, so it does not count.
     failures: u64 = 0,
 };
 
-/// Loads the font and builds the atlas. The caller destroys the state with `destroy` once the GPU is idle.
-pub fn create(allocator: std.mem.Allocator, device: *backend.Device) !State {
+/// Loads the check font and borrows the session's shared atlas.
+pub fn create(allocator: std.mem.Allocator, atlas: *glyph_atlas.Atlas) !State {
     var font = runtime_font.RuntimeFont.loadPackaged(allocator, staging.packagedReader(), font_path, pixel_height) catch |err| {
         elog.err("could not load {s}: {s}", .{ font_path, @errorName(err) });
         return err;
     };
     errdefer font.deinit();
-    var atlas = try glyph_atlas.Atlas.init(allocator, device, .{});
-    errdefer atlas.deinit();
     elog.info("on: {s} at {d} px, {d} glyphs, atlas of {d} pages, {d}x{d} texels", .{
         font_path, pixel_height, font.glyph_count, atlas.cache.pages.len, atlas.cache.page_size, atlas.cache.page_size,
     });
     return .{ .atlas = atlas, .font = font };
 }
 
-/// Releases the atlas and the font. The GPU must be idle first, because the atlas owns GPU textures.
+/// Releases the check font. The Session owns the shared atlas.
 pub fn destroy(state: *State) void {
-    state.atlas.deinit();
     state.font.deinit();
 }
 
-/// Queues this frame's phrase and flushes the atlas. Call it after the game has queued its sprites, and before the
-/// sprite upload, outside any render pass. `sdl2d_active` is the renderer that draws this frame.
-pub fn frame(state: *State, batch: *sprite.SpriteBatch, cmd: *backend.CommandBuffer, sdl2d_active: bool) void {
+/// Queues this frame's phrase. The runtime performs the single atlas flush after this returns.
+pub fn frame(state: *State, batch: *sprite.SpriteBatch) void {
     const index = (state.frame_count / frames_per_phrase) % phrases.len;
     queuePhrase(state, batch, phrases[index]);
     const burst_now = state.frame_count == burst_frame;
-    if (burst_now) queueBurst(state, batch);
-    // The whole-page count is read before the flush, so only this flush's whole-page uploads are counted.
-    const full_pages_before = state.atlas.flushStats().gpu_full_pages;
-    state.atlas.flush(cmd, sdl2d_active);
-    if (burst_now) reportBurst(state, full_pages_before);
+    state.burst_pending = burst_now;
+    if (burst_now) {
+        state.burst_regions_before = state.atlas.flushStats().gpu_regions;
+        state.burst_full_pages_before = state.atlas.flushStats().gpu_full_pages;
+        queueBurst(state, batch);
+    }
+}
+
+/// Reports work from the runtime's shared flush, then advances the diagnostic frame.
+pub fn afterFlush(state: *State) void {
+    if (state.burst_pending) reportBurst(state);
+    state.burst_pending = false;
     state.frame_count += 1;
     if (state.frame_count % report_every == 0) report(state);
 }
@@ -182,14 +183,17 @@ fn queueBurst(state: *State, batch: *sprite.SpriteBatch) void {
     });
 }
 
-/// Reports whether the burst's flush made a whole-page upload. A burst that does not overflow the pending list leaves the
-/// page on incremental uploads, and the check would then miss the path it exists to test.
-fn reportBurst(state: *State, full_pages_before: u64) void {
-    const full_pages = state.atlas.flushStats().gpu_full_pages - full_pages_before;
-    if (full_pages > 0) {
-        elog.info("burst: whole-page upload in the burst's flush, as expected: {d} page(s)", .{full_pages});
+/// Reports whether the burst was uploaded as regions without rewriting live page texels.
+fn reportBurst(state: *State) void {
+    const flush = state.atlas.flushStats();
+    const regions = flush.gpu_regions - state.burst_regions_before;
+    const full_pages = flush.gpu_full_pages - state.burst_full_pages_before;
+    if (full_pages == 0 and regions >= burst_size) {
+        elog.info("burst: overflow spill uploaded as {d} regions, no whole-page rewrite", .{regions});
     } else {
-        elog.err("burst: no whole-page upload in the burst's flush, so the overflow path did not run", .{});
+        elog.err("burst: expected at least {d} region uploads and no whole-page rewrite, got {d} regions and {d} full pages", .{
+            burst_size, regions, full_pages,
+        });
     }
 }
 

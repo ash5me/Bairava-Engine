@@ -29,6 +29,7 @@ const jobs = @import("../jobs/jobs.zig");
 const staging = @import("../assets/staging.zig");
 const texture_stream = @import("texture_stream.zig");
 const glyph_check = @import("../renderer/glyph_check.zig");
+const glyph_atlas = @import("../renderer/glyph_atlas.zig");
 const font_store = @import("../text/font_store.zig");
 
 /// The most jobs the pool queues before a submit runs its job on the calling thread instead.
@@ -67,6 +68,9 @@ pub const Session = struct {
     target: Texture = undefined,
     world_batch: SpriteBatch = undefined,
     screen_batch: SpriteBatch = undefined,
+    /// One dynamic glyph atlas shared by production outline text and the optional glyph check.
+    glyph_atlas_state: glyph_atlas.Atlas = undefined,
+    glyph_atlas_ready: bool = false,
     /// The glyph atlas check. Null unless `glyph_check.enabled` is set (renderer/glyph_check.zig).
     glyph_check_state: ?glyph_check.State = null,
     /// The effects that run between the world pass and the present pass. Empty unless the config names effects.
@@ -167,12 +171,14 @@ pub const Session = struct {
         self.stage = .targets;
         self.target = texture.createTarget(self.engine_allocator, self.gpu.device, config.native_w, config.native_h, self.format);
         self.target_created = true;
+        self.glyph_atlas_state = try glyph_atlas.Atlas.init(self.engine_allocator, self.gpu.device, .{});
+        self.glyph_atlas_ready = true;
         self.world_batch = sprite.create(self.engine_allocator, self.gpu.device, self.format);
         self.world_batch_created = true;
         self.screen_batch = sprite.create(self.engine_allocator, self.gpu.device, self.format);
         self.screen_batch_created = true;
-        // The glyph check is off unless its flag is set. When off, this branch is not compiled into a call.
-        self.glyph_check_state = if (glyph_check.enabled) try glyph_check.create(self.engine_allocator, self.gpu.device) else null;
+        // The glyph check borrows the production atlas and is off unless its flag is set.
+        self.glyph_check_state = if (glyph_check.enabled) try glyph_check.create(self.engine_allocator, &self.glyph_atlas_state) else null;
         // Effects are sized like the world target, and an empty list makes no GPU objects.
         self.post_chain = post.Chain.init(self.engine_allocator, self.gpu.device, self.format, config.post_effects, config.post_params, config.native_w, config.native_h);
         self.post_chain_created = true;
@@ -185,7 +191,7 @@ pub const Session = struct {
         // textures through the context, so the store is set up once the context exists.
         self.stage = .textures;
         self.textures = try self.engine_allocator.create(context.TextureStore);
-        self.fonts = try font_store.create(self.engine_allocator);
+        self.fonts = try font_store.createWithAtlas(self.engine_allocator, &self.glyph_atlas_state);
         self.fonts_ready = true;
         self.reloads.stat = hotReloadStamp;
         if (application.resolveRenderer(config.renderer) != config.renderer) {
@@ -245,11 +251,17 @@ pub const Session = struct {
             self.post_chain.deinit();
             self.post_chain_created = false;
         }
-        if (self.glyph_check_state) |*check| {
-            // The atlas owns GPU textures, so the GPU must be idle before they are released.
+        if (self.glyph_atlas_ready or self.glyph_check_state != null) {
+            // Both the production cache and the optional check's queued copies may still be read by frames in flight.
             platform.gpu.waitIdle(self.gpu.device);
+        }
+        if (self.glyph_check_state) |*check| {
             glyph_check.destroy(check);
             self.glyph_check_state = null;
+        }
+        if (self.glyph_atlas_ready) {
+            self.glyph_atlas_state.deinit();
+            self.glyph_atlas_ready = false;
         }
         if (self.screen_batch_created) {
             self.screen_batch.deinit();

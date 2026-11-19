@@ -1,0 +1,68 @@
+[       0ms] INFO  engine: log file D:\repo\Bairava-Engine\zig-out\bin\Semkootru.log
+
+[       2ms] INFO  engine: build profile development
+[       2ms] INFO  engine: profiling zones off
+[       2ms] INFO  engine: development tools on
+[       3ms] INFO  engine: gpu timing off
+[       4ms] INFO  engine: no settings file at D:\repo\Bairava-Engine\zig-out\bin\settings.txt, so the defaults are
+used
+[     413ms] INFO  engine: job system: 2 worker thread(s)
+[     511ms] INFO  engine: window 960x540, native view 320x180, 60 update steps per second
+[    1516ms] INFO  engine: vsync on
+[    1516ms] INFO  engine: GPU device ready, validation on, swapchain format 12
+[    1613ms] INFO  glyph check: on: assets/fonts/font.ttf at 24 px, 4652 glyphs, atlas of 4 pages, 1024x1024 texels
+[    2322ms] INFO  audio: playback device open: 48000 Hz, 2 channels
+[    2330ms] DEBUG engine: loaded texture assets/atlas.png.rgba (512x512)
+[    2337ms] INFO  game: atlas 512x512 with 2 sprites
+[    2341ms] INFO  game: map 40x24 tiles, player starts on tile (20, 12)
+[    2341ms] INFO  game: 3 placed entities spawned from the level metadata
+[    3265ms] INFO  game: script 'assets/scripts/game.bs' loaded
+[    4307ms] INFO  glyph check: burst: 600 glyphs with ink queued, 600 new to the cache, against a pending limit of 512
+[    4322ms] INFO  glyph check: burst: overflow spill uploaded as 600 regions, no whole-page rewrite
+[    7299ms] INFO  glyph check: frame 240: hits 5842 misses 638 rasterized 638 missing 0 entries 638 pages 1 bytes
+4268032 | flushes 240 gpu regions 638 full pages 0 idle 237 sdl2d copies missing 0 | failures 0
+[   11303ms] INFO  glyph check: frame 480: hits 11807 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 480 gpu regions 673 full pages 0 idle 475 sdl2d copies missing 0 | failures 0
+[   15306ms] INFO  glyph check: frame 720: hits 17687 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 720 gpu regions 673 full pages 0 idle 715 sdl2d copies missing 0 | failures 0
+[   19309ms] INFO  glyph check: frame 960: hits 23687 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 960 gpu regions 673 full pages 0 idle 955 sdl2d copies missing 0 | failures 0
+[   22485ms] DEBUG engine: native target is now 384x198 at 5.00 scale (integer)
+[   22629ms] DEBUG engine: 6 update steps in one frame, so the frame took 100.0 ms
+[   23512ms] INFO  glyph check: frame 1200: hits 29567 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 1200 gpu regions 673 full pages 0 idle 1195 sdl2d copies missing 0 | failures 0
+[   27515ms] INFO  glyph check: frame 1440: hits 35567 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 1440 gpu regions 673 full pages 0 idle 1435 sdl2d copies missing 0 | failures 0
+[   31519ms] INFO  glyph check: frame 1680: hits 41447 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 1680 gpu regions 673 full pages 0 idle 1675 sdl2d copies missing 0 | failures 0
+[   35522ms] INFO  glyph check: frame 1920: hits 47447 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 1920 gpu regions 673 full pages 0 idle 1915 sdl2d copies missing 0 | failures 0
+[   39526ms] INFO  glyph check: frame 2160: hits 53327 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 2160 gpu regions 673 full pages 0 idle 2155 sdl2d copies missing 0 | failures 0
+[   43512ms] INFO  glyph check: frame 2400: hits 59327 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 2400 gpu regions 673 full pages 0 idle 2395 sdl2d copies missing 0 | failures 0
+[   47515ms] INFO  glyph check: frame 2640: hits 65207 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 2640 gpu regions 673 full pages 0 idle 2635 sdl2d copies missing 0 | failures 0
+[   51518ms] INFO  glyph check: frame 2880: hits 71207 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 2880 gpu regions 673 full pages 0 idle 2875 sdl2d copies missing 0 | failures 0
+[   55522ms] INFO  glyph check: frame 3120: hits 77087 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 3120 gpu regions 673 full pages 0 idle 3115 sdl2d copies missing 0 | failures 0
+[   59525ms] INFO  glyph check: frame 3360: hits 83087 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 3360 gpu regions 673 full pages 0 idle 3355 sdl2d copies missing 0 | failures 0
+[   63531ms] INFO  glyph check: frame 3600: hits 88967 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 3600 gpu regions 673 full pages 0 idle 3595 sdl2d copies missing 0 | failures 0
+[   67531ms] INFO  glyph check: frame 3840: hits 94967 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 3840 gpu regions 673 full pages 0 idle 3835 sdl2d copies missing 0 | failures 0
+[   71534ms] INFO  glyph check: frame 4080: hits 100847 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 4080 gpu regions 673 full pages 0 idle 4075 sdl2d copies missing 0 | failures 0
+[   75538ms] INFO  glyph check: frame 4320: hits 106847 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 4320 gpu regions 673 full pages 0 idle 4315 sdl2d copies missing 0 | failures 0
+[   79543ms] INFO  glyph check: frame 4560: hits 112727 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 4560 gpu regions 673 full pages 0 idle 4555 sdl2d copies missing 0 | failures 0
+[   83545ms] INFO  glyph check: frame 4800: hits 118727 misses 673 rasterized 673 missing 0 entries 673 pages 1 bytes
+4268032 | flushes 4800 gpu regions 673 full pages 0 idle 4795 sdl2d copies missing 0 | failures 0
+[   86381ms] INFO  engine: quit requested by the window
+[   86398ms] INFO  engine: main loop ended after 4971 frames
+[   86440ms] INFO  engine: texture store at shutdown: 0 hits, 0 misses, 0 failed loads, 0 still loaded
+[   86443ms] INFO  engine: font registry at shutdown: 2 font(s) released
+[       0ms] INFO  engine: arena shutdown outstanding allocations: engine 0/0 B, game 0/0 B, asset 0/0 B, frame 0/0 B
