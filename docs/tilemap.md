@@ -14,6 +14,7 @@ version 1
 size 40 24
 tileset 220
 solid 1
+oneway 5 6
 layer ground
 1 1 1 ...
 ...
@@ -28,6 +29,9 @@ layer foreground
   every tile and collision ID must be less than the count.
 - `solid` lists the tile IDs that block movement. A cell is solid if any layer has a listed ID;
   cells outside the map are solid.
+- `oneway` lists tile IDs that block only downward movement at the cell's top edge. A one-way-only
+  cell is not solid for overlap checks or line of sight. A solid ID cannot also be declared one-way;
+  if different layers put solid and one-way tiles in the same cell, solid collision takes precedence.
 - Layers are `ground`, `decoration`, and `foreground`. Each may occur at most once; omitted layers
   are empty. Each declared layer has exactly `size` rows, each with exactly `size` entries.
 - Entries are tile IDs from 0 through 254, or `.` for an empty cell. IDs address tiles left to
@@ -43,7 +47,10 @@ so a stale map cannot silently sample unrelated texture data.
 ## Inspection
 
 `engine.tilemap.TileMap.idAt(layer, col, row)` returns the selected layer's tile ID or null for an
-empty/out-of-bounds cell. `engine.tilemap.TileMap.isSolid(col, row)` reports collision metadata.
+empty/out-of-bounds cell. `engine.tilemap.TileMap.isSolid(col, row)` reports full-block metadata,
+and `isOneWay(col, row)` reports one-way cells that are not overridden by a solid tile.
+`moveBox` honors one-way tops; `moveBoxIgnoringOneWay` provides a one-slide drop-through operation
+while continuing to honor solid tiles and the map border.
 With development diagnostics enabled, F4 toggles the collision-cell and tile-grid overlays. The F2
 console's `tile` command reports the ground tile and solidity under the cursor, and `layer NAME
 on|off|toggle` controls visibility of the three tile layers. The engine-facing debug geometry API

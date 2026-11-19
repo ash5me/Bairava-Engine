@@ -165,6 +165,15 @@ pub const Index = struct {
     /// Moves `box` by (dx, dy), resolving X before Y like the slice-based query. Only colliders
     /// intersecting the swept bounds enter the narrow phase.
     pub fn moveBox(self: *Index, box: Box, dx: f32, dy: f32, mask: u32) Point {
+        return self.moveBoxWithOneWay(box, dx, dy, mask, false);
+    }
+
+    /// Moves like `moveBox`, but ignores axis-aligned one-way tops for this slide only.
+    pub fn moveBoxIgnoringOneWay(self: *Index, box: Box, dx: f32, dy: f32, mask: u32) Point {
+        return self.moveBoxWithOneWay(box, dx, dy, mask, true);
+    }
+
+    fn moveBoxWithOneWay(self: *Index, box: Box, dx: f32, dy: f32, mask: u32, ignore_one_way: bool) Point {
         const safe_dx = if (std.math.isFinite(dx)) dx else 0;
         const safe_dy = if (std.math.isFinite(dy)) dy else 0;
         const swept = Box{
@@ -176,7 +185,7 @@ pub const Index = struct {
         const count = self.collectBox(swept);
         const candidates = self.candidates[0..count];
         const x = slideX(self.colliders, candidates, box, dx, mask);
-        const y = slideY(self.colliders, candidates, .{ .x = x, .y = box.y, .w = box.w, .h = box.h }, dy, mask);
+        const y = slideY(self.colliders, candidates, .{ .x = x, .y = box.y, .w = box.w, .h = box.h }, dy, mask, ignore_one_way);
         return .{ .x = x, .y = y };
     }
 
@@ -257,6 +266,7 @@ fn slideX(colliders: []const Collider, candidates: []const usize, box: Box, dx: 
     for (candidates) |index| {
         const collider = colliders[index];
         if (!collider.enabled or !hits(collider, mask) or collision.isEmptyBox(collider.box)) continue;
+        if (collider.one_way and collider.rotation == 0) continue;
         if (collider.rotation != 0) {
             const c_box = OrientedBox{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation };
             const start_box = OrientedBox{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
@@ -309,7 +319,7 @@ fn slideX(colliders: []const Collider, candidates: []const usize, box: Box, dx: 
     return result;
 }
 
-fn slideY(colliders: []const Collider, candidates: []const usize, box: Box, dy: f32, mask: u32) f32 {
+fn slideY(colliders: []const Collider, candidates: []const usize, box: Box, dy: f32, mask: u32, ignore_one_way: bool) f32 {
     if (!std.math.isFinite(dy) or dy == 0) return box.y;
     const target = box.y + dy;
     if (collision.isEmptyBox(box)) return target;
@@ -317,6 +327,7 @@ fn slideY(colliders: []const Collider, candidates: []const usize, box: Box, dy: 
     for (candidates) |index| {
         const collider = colliders[index];
         if (!collider.enabled or !hits(collider, mask) or collision.isEmptyBox(collider.box)) continue;
+        if (collider.one_way and collider.rotation == 0 and (dy < 0 or ignore_one_way)) continue;
         if (collider.rotation != 0) {
             const c_box = OrientedBox{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation };
             const start_box = OrientedBox{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
@@ -481,4 +492,23 @@ test "indexed movement matches linear movement for diagonal motion and layer mas
     const actual = index.moveBox(box, 100, 100, 1);
     try std.testing.expectEqual(expected.x, actual.x);
     try std.testing.expectEqual(expected.y, actual.y);
+}
+
+test "indexed movement matches linear one-way collider behavior" {
+    const linear = @import("queries.zig");
+    const colliders = [_]Collider{
+        .{ .box = .{ .x = 20, .y = 50, .w = 20, .h = 10 }, .layer = 1, .one_way = true },
+        .{ .box = .{ .x = 20, .y = 80, .w = 20, .h = 10 }, .layer = 1 },
+    };
+    var index = try Index.init(std.testing.allocator, &colliders, 8);
+    defer index.deinit();
+    const box = Box{ .x = 25, .y = 30, .w = 10, .h = 20 };
+    const expected = linear.moveBox(&colliders, box, 0, 80, 1);
+    const actual = index.moveBox(box, 0, 80, 1);
+    try std.testing.expectEqual(expected.x, actual.x);
+    try std.testing.expectEqual(expected.y, actual.y);
+    const drop_expected = linear.moveBoxIgnoringOneWay(&colliders, box, 0, 80, 1);
+    const drop_actual = index.moveBoxIgnoringOneWay(box, 0, 80, 1);
+    try std.testing.expectEqual(drop_expected.x, drop_actual.x);
+    try std.testing.expectEqual(drop_expected.y, drop_actual.y);
 }

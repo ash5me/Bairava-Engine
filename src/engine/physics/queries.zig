@@ -88,8 +88,17 @@ pub fn queryRegion(colliders: []const Collider, region: Box, mask: u32, out: []u
 
 /// Moves `box` by (dx, dy) and returns its new top-left corner. Only colliders the mask hits can stop it.
 pub fn moveBox(colliders: []const Collider, box: Box, dx: f32, dy: f32, mask: u32) Point {
+    return moveBoxWithOneWay(colliders, box, dx, dy, mask, false);
+}
+
+/// Moves like `moveBox`, but ignores axis-aligned one-way tops for this slide only.
+pub fn moveBoxIgnoringOneWay(colliders: []const Collider, box: Box, dx: f32, dy: f32, mask: u32) Point {
+    return moveBoxWithOneWay(colliders, box, dx, dy, mask, true);
+}
+
+fn moveBoxWithOneWay(colliders: []const Collider, box: Box, dx: f32, dy: f32, mask: u32, ignore_one_way: bool) Point {
     const x = slideX(colliders, box, dx, mask);
-    const y = slideY(colliders, .{ .x = x, .y = box.y, .w = box.w, .h = box.h }, dy, mask);
+    const y = slideY(colliders, .{ .x = x, .y = box.y, .w = box.w, .h = box.h }, dy, mask, ignore_one_way);
     return .{ .x = x, .y = y };
 }
 
@@ -101,6 +110,7 @@ fn slideX(colliders: []const Collider, box: Box, dx: f32, mask: u32) f32 {
     var result = target;
     for (colliders) |c| {
         if (!c.enabled or !hits(c, mask) or collision.isEmptyBox(c.box)) continue;
+        if (c.one_way and c.rotation == 0) continue;
         if (c.rotation != 0) {
             const c_box = OrientedBox{ .x = c.box.x, .y = c.box.y, .w = c.box.w, .h = c.box.h, .rotation = c.rotation };
             const start_box = OrientedBox{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
@@ -158,13 +168,14 @@ fn slideX(colliders: []const Collider, box: Box, dx: f32, mask: u32) f32 {
 }
 
 /// The Y position after moving `box` by `dy`, stopped flush against the nearest blocker ahead.
-fn slideY(colliders: []const Collider, box: Box, dy: f32, mask: u32) f32 {
+fn slideY(colliders: []const Collider, box: Box, dy: f32, mask: u32, ignore_one_way: bool) f32 {
     if (!std.math.isFinite(dy) or dy == 0) return box.y;
     const target = box.y + dy;
     if (collision.isEmptyBox(box)) return target;
     var result = target;
     for (colliders) |c| {
         if (!c.enabled or !hits(c, mask) or collision.isEmptyBox(c.box)) continue;
+        if (c.one_way and c.rotation == 0 and (dy < 0 or ignore_one_way)) continue;
         if (c.rotation != 0) {
             const c_box = OrientedBox{ .x = c.box.x, .y = c.box.y, .w = c.box.w, .h = c.box.h, .rotation = c.rotation };
             const start_box = OrientedBox{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 };
@@ -280,6 +291,47 @@ test "moveBox stops flush against the nearest wall on each side" {
     try std.testing.expectApproxEqAbs(@as(f32, 80), down.y, 1e-4);
     const up = moveBox(&walls, b, 0, -200, all_layers);
     try std.testing.expectApproxEqAbs(@as(f32, 0), up.y, 1e-4);
+}
+
+test "one-way colliders block only downward top-edge motion" {
+    const platforms = [_]Collider{
+        .{ .box = .{ .x = 20, .y = 50, .w = 20, .h = 10 }, .layer = 1, .one_way = true },
+    };
+    const above = Box{ .x = 25, .y = 30, .w = 10, .h = 20 };
+    try expectEqual(@as(f32, 30), moveBox(&platforms, above, 0, 40, all_layers).y);
+    try expectEqual(@as(f32, 20), moveBox(&platforms, .{ .x = 25, .y = 60, .w = 10, .h = 10 }, 0, -40, all_layers).y);
+    try expectEqual(@as(f32, 30), moveBox(&platforms, .{ .x = 0, .y = 52, .w = 10, .h = 5 }, 30, 0, all_layers).x);
+    try expectEqual(@as(f32, -10), moveBox(&platforms, .{ .x = 40, .y = 52, .w = 10, .h = 5 }, -50, 0, all_layers).x);
+    try expectEqual(@as(f32, 40), moveBox(&platforms, .{ .x = 25, .y = 40, .w = 10, .h = 10 }, 0, 1, all_layers).y);
+    try expectEqual(@as(f32, 55), moveBox(&platforms, .{ .x = 25, .y = 45, .w = 10, .h = 10 }, 0, 10, all_layers).y);
+    try expectEqual(@as(?usize, 0), firstOverlap(&platforms, .{ .x = 25, .y = 52, .w = 2, .h = 2 }, all_layers));
+}
+
+test "drop-through ignores one-way tops but not solid colliders" {
+    const platforms = [_]Collider{
+        .{ .box = .{ .x = 20, .y = 50, .w = 20, .h = 10 }, .layer = 1, .one_way = true },
+        .{ .box = .{ .x = 20, .y = 80, .w = 20, .h = 10 }, .layer = 1 },
+    };
+    const box = Box{ .x = 25, .y = 30, .w = 10, .h = 20 };
+    try expectEqual(@as(f32, 60), moveBoxIgnoringOneWay(&platforms, box, 0, 80, all_layers).y);
+}
+
+test "a rotated one-way collider remains a full block" {
+    const platforms = [_]Collider{
+        .{
+            .box = .{ .x = 40, .y = 40, .w = 20, .h = 20 },
+            .layer = 1,
+            .rotation = std.math.pi / 4.0,
+            .one_way = true,
+        },
+    };
+    const mover = Box{ .x = 45, .y = 0, .w = 10, .h = 10 };
+    const moved = moveBox(&platforms, mover, 0, 100, all_layers);
+    try std.testing.expect(moved.y < 100);
+    try std.testing.expect(!collision.orientedBoxesOverlap(
+        .{ .x = platforms[0].box.x, .y = platforms[0].box.y, .w = platforms[0].box.w, .h = platforms[0].box.h, .rotation = platforms[0].rotation },
+        .{ .x = mover.x, .y = moved.y, .w = mover.w, .h = mover.h, .rotation = 0 },
+    ));
 }
 
 test "the nearest collider stops a move no matter what order the list is in" {

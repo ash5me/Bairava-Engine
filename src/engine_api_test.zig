@@ -38,13 +38,14 @@ test "the public engine version is the initial semantic API version" {
 
 test "ECS collision components collect into collider slices under both layouts" {
     const Row = struct { collision: bairava.physics.collision.Component };
-    inline for (.{bairava.entity.Layout.aos, bairava.entity.Layout.soa}) |layout| {
+    inline for (.{ bairava.entity.Layout.aos, bairava.entity.Layout.soa }) |layout| {
         var world = bairava.entity.World(Row, layout).init(std.testing.allocator);
         defer world.deinit();
         _ = try world.spawn(.{ .collision = .{
             .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
             .layer = 1,
             .mask = 2,
+            .one_way = true,
         } });
         _ = try world.spawn(.{ .collision = .{
             .box = .{ .x = 20, .y = 20, .w = 5, .h = 5 },
@@ -55,6 +56,7 @@ test "ECS collision components collect into collider slices under both layouts" 
         const count = bairava.physics.collision.collidersFromWorld(&world, &colliders);
         try std.testing.expectEqual(@as(usize, 1), count);
         try std.testing.expectEqual(@as(u32, 1), colliders[0].layer);
+        try std.testing.expect(colliders[0].one_way);
     }
 }
 

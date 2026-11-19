@@ -5,8 +5,8 @@ The engine provides SDL-free shape and collision helpers in `engine.physics`.
 ## Shapes and colliders
 
 `Collider` and `collision.Component` support an axis-aligned or rotated rectangle, an enabled flag,
-one or more collision layers, and a query mask. Components can be attached to dense ECS rows and
-copied into collider slices with `collision.collidersFromWorld`.
+one or more collision layers, a query mask, and an opt-in `one_way` flag. Components can be attached
+to dense ECS rows and copied into collider slices with `collision.collidersFromWorld`.
 
 ```zig
 const wall = engine.physics.collision.Component{
@@ -18,6 +18,9 @@ const wall = engine.physics.collision.Component{
 
 Rotation is stored in radians and turns clockwise around the rectangle's center in screen space.
 Collider half-open edges follow box semantics: right and bottom edges are outside the shape.
+An axis-aligned collider with `one_way = true` blocks only downward movement at its top edge.
+Horizontal and upward movement pass through it. A rotated collider remains a full block even when
+flagged one-way.
 
 ## Detection
 
@@ -47,11 +50,17 @@ if (grid.firstAtPoint(.{ .x = 48, .y = 20 }, engine.physics.queries.all_layers))
 const end = grid.moveBox(mover, dx, dy, engine.physics.queries.all_layers);
 ```
 
+`queries.moveBoxIgnoringOneWay` and `Index.moveBoxIgnoringOneWay` provide a one-slide drop-through
+operation. They skip axis-aligned one-way tops while retaining solid and rotated-collider response.
+
 ## Movement
 
 Linear and grid movement resolve X before Y, preserve movement that starts inside an overlapping
 collider as escape movement, and stop at blockers when exact overlap first appears. Rotated
 candidates use exact narrow-phase overlap checks.
+
+One-way response is optional and does not change existing colliders: the default `one_way = false`
+keeps them fully solid.
 
 The movement implementation is axis-based: it does not rotate the moving box. Swept rotated-box
 response, complete rotated shape resolution, and rotation of the mover are outside the current

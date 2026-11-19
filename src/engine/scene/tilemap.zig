@@ -13,10 +13,11 @@
 //!     size <cols> <rows>          required, both at least 1
 //!     tileset <count>             optional; IDs must be less than this count
 //!     solid <id> [<id> ...]       optional, any number of lines; these IDs block movement
+//!     oneway <id> [<id> ...]      optional, IDs that block downward movement at their top edge
 //!     layer <name>                ground, decoration, or foreground; each name at most once
 //!     <entry> <entry> ...         one line per row, each with exactly <cols> entries
 //!
-//! The header lines (`version`, `size`, `tileset`, `solid`) come before the first `layer` line. Every row line
+//! The header lines (`version`, `size`, `tileset`, `solid`, `oneway`) come before the first `layer` line. Every row line
 //! belongs to the `layer` line above it. Layers may appear in any order. A layer the file leaves
 //! out is empty, but the file needs at least one layer. An entry is a tile ID from 0 to 254, which
 //! picks a tile from the tile texture, or `.` for a cell with no tile on that layer.
@@ -47,7 +48,7 @@ pub const all_layers = [_]Layer{ .ground, .decoration, .foreground };
 pub const layer_count: usize = all_layers.len;
 
 pub const ParseError = error{
-    /// A line has an unknown keyword, the wrong number of values, an empty `solid` list, or a
+    /// A line has an unknown keyword, the wrong number of values, an empty collision-ID list, or a
     /// layer name that is unknown or repeated.
     BadHeader,
     /// A value is not a number, an ID is above 255, or an ID is 255, which means an empty cell.
@@ -86,7 +87,9 @@ pub const TileMap = struct {
     /// `deinit` frees them.
     tiles: []u8,
     /// Which IDs block movement, indexed by ID.
-    solid: [256]bool,
+    solid: [256]bool = [_]bool{false} ** 256,
+    /// Which IDs block only downward movement at their top edge, indexed by ID.
+    one_way: [256]bool = [_]bool{false} ** 256,
     /// Expected number of cells in the tileset, when declared by the file.
     tileset_count: ?u32 = null,
     /// Parses the text of a map file. The returned map owns its tiles and must be freed with `deinit`.
@@ -96,6 +99,7 @@ pub const TileMap = struct {
             .rows = 0,
             .tiles = undefined,
             .solid = [_]bool{false} ** 256,
+            .one_way = [_]bool{false} ** 256,
         };
         var have_size = false;
         var have_version = false;
@@ -157,6 +161,13 @@ pub const TileMap = struct {
                     any = true;
                 }
                 if (!any) return error.BadHeader;
+            } else if (std.mem.eql(u8, keyword, "oneway")) {
+                var any = false;
+                while (words.next()) |word| {
+                    map.one_way[try parseId(word)] = true;
+                    any = true;
+                }
+                if (!any) return error.BadHeader;
             } else if (std.mem.eql(u8, keyword, "tileset")) {
                 if (have_tileset) return error.BadHeader;
                 const count = try parseCount(words.next());
@@ -193,6 +204,12 @@ pub const TileMap = struct {
             for (map.solid, 0..) |is_solid, id| {
                 if (is_solid and id >= @as(usize, count)) return error.TileOutsideTileset;
             }
+            for (map.one_way, 0..) |is_one_way, id| {
+                if (is_one_way and id >= @as(usize, count)) return error.TileOutsideTileset;
+            }
+        }
+        for (map.solid, map.one_way) |is_solid, is_one_way| {
+            if (is_solid and is_one_way) return error.BadHeader;
         }
         map.tiles = storage;
         return map;
@@ -229,6 +246,19 @@ pub const TileMap = struct {
         return false;
     }
 
+    /// True when a cell contains a one-way tile and no solid tile. Out-of-map cells are ordinary walls.
+    pub fn isOneWay(self: *const TileMap, col: i32, row: i32) bool {
+        if (col < 0 or row < 0) return false;
+        const c: u32 = @intCast(col);
+        const r: u32 = @intCast(row);
+        if (c >= self.cols or r >= self.rows or self.isSolid(col, row)) return false;
+        for (all_layers) |layer| {
+            const id = self.tiles[storageIndex(layer, self.cols, self.rows, c, r)];
+            if (id != empty and self.one_way[id]) return true;
+        }
+        return false;
+    }
+
     /// The largest tile ID in the map, ignoring empty cells. The game compares it with its tileset,
     /// to catch IDs that name no tile.
     pub fn largestId(self: *const TileMap) u8 {
@@ -257,8 +287,17 @@ pub const TileMap = struct {
     /// the box on the axis it blocks, so the box slides along a wall. A box that already overlaps a
     /// solid cell can still move out of it.
     pub fn moveBox(self: *const TileMap, box: Box, dx: f32, dy: f32) Point {
+        return self.moveBoxWithOneWay(box, dx, dy, false);
+    }
+
+    /// Moves like `moveBox`, but ignores axis-aligned one-way tops for this slide only.
+    pub fn moveBoxIgnoringOneWay(self: *const TileMap, box: Box, dx: f32, dy: f32) Point {
+        return self.moveBoxWithOneWay(box, dx, dy, true);
+    }
+
+    fn moveBoxWithOneWay(self: *const TileMap, box: Box, dx: f32, dy: f32, ignore_one_way: bool) Point {
         const x = self.slideX(box, dx);
-        const y = self.slideY(.{ .x = x, .y = box.y, .w = box.w, .h = box.h }, dy);
+        const y = self.slideY(.{ .x = x, .y = box.y, .w = box.w, .h = box.h }, dy, ignore_one_way);
         return .{ .x = x, .y = y };
     }
 
@@ -289,7 +328,7 @@ pub const TileMap = struct {
     }
 
     /// The Y position after moving `box` by `dy`, stopped before the first solid cell in its way.
-    fn slideY(self: *const TileMap, box: Box, dy: f32) f32 {
+    fn slideY(self: *const TileMap, box: Box, dy: f32, ignore_one_way: bool) f32 {
         const target = box.y + dy;
         const left = floorIndex(box.x);
         const right = ceilIndex(box.x + box.w) - 1;
@@ -298,7 +337,7 @@ pub const TileMap = struct {
             const last = ceilIndex(target + box.h) - 1;
             var row = first;
             while (row <= last) : (row += 1) {
-                if (self.anySolidInRow(row, left, right)) return tileEdge(row) - box.h;
+                if (self.anyBlockingDownInRow(row, left, right, ignore_one_way)) return tileEdge(row) - box.h;
             }
         } else if (dy < 0) {
             const first = floorIndex(target);
@@ -322,6 +361,14 @@ pub const TileMap = struct {
         var col = left;
         while (col <= right) : (col += 1) {
             if (self.isSolid(col, row)) return true;
+        }
+        return false;
+    }
+
+    fn anyBlockingDownInRow(self: *const TileMap, row: i32, left: i32, right: i32, ignore_one_way: bool) bool {
+        var col = left;
+        while (col <= right) : (col += 1) {
+            if (self.isSolid(col, row) or (!ignore_one_way and self.isOneWay(col, row))) return true;
         }
         return false;
     }

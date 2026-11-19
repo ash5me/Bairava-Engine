@@ -20,6 +20,7 @@ pub const Collider = struct {
     layer: u32,
     mask: u32 = std.math.maxInt(u32),
     rotation: f32 = 0,
+    one_way: bool = false,
     enabled: bool = true,
 };
 
@@ -31,6 +32,7 @@ pub const Component = struct {
     layer: u32 = 0,
     mask: u32 = std.math.maxInt(u32),
     rotation: f32 = 0,
+    one_way: bool = false,
     enabled: bool = true,
 
     pub fn collider(self: Component) Collider {
@@ -39,6 +41,7 @@ pub const Component = struct {
             .layer = self.layer,
             .mask = self.mask,
             .rotation = self.rotation,
+            .one_way = self.one_way,
             .enabled = self.enabled,
         };
     }

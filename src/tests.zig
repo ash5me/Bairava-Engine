@@ -659,6 +659,20 @@ test "versioned maps validate tile IDs against the declared tileset" {
     );
 }
 
+test "one-way headers validate IDs and reject conflicts with solid IDs" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, "version 1\nsize 1 1\ntileset 3\noneway 2\nlayer ground\n2\n");
+    defer map.deinit(allocator);
+    try std.testing.expect(map.one_way[2]);
+    try std.testing.expect(!map.isSolid(0, 0));
+    try std.testing.expect(map.isOneWay(0, 0));
+    try std.testing.expect(!map.isOneWay(-1, 0));
+    try std.testing.expectError(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\noneway\nlayer ground\n0\n"));
+    try std.testing.expectError(error.BadNumber, tilemap.TileMap.parse(allocator, "size 1 1\noneway 255\nlayer ground\n0\n"));
+    try std.testing.expectError(error.TileOutsideTileset, tilemap.TileMap.parse(allocator, "size 1 1\ntileset 2\noneway 2\nlayer ground\n0\n"));
+    try std.testing.expectError(error.BadHeader, tilemap.TileMap.parse(allocator, "size 1 1\nsolid 2\noneway 2\nlayer ground\n0\n"));
+}
+
 test "each layer keeps its own tiles, in any order, and a dot is an empty cell" {
     const allocator = std.testing.allocator;
     const text =
@@ -692,6 +706,17 @@ test "a solid tile on any layer blocks its cell" {
     try std.testing.expect(!map.isSolid(0, 0));
     try std.testing.expect(map.isSolid(1, 0));
     try std.testing.expect(!map.isSolid(2, 0));
+}
+
+test "solid wins over a different one-way tile in the same cell" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(
+        allocator,
+        "size 1 1\nsolid 1\noneway 2\nlayer ground\n1\nlayer decoration\n2\n",
+    );
+    defer map.deinit(allocator);
+    try std.testing.expect(map.isSolid(0, 0));
+    try std.testing.expect(!map.isOneWay(0, 0));
 }
 
 test "parse rejects malformed maps, and frees what it had allocated" {
@@ -783,6 +808,59 @@ test "a box moving down stops flush above a wall" {
     defer map.deinit(allocator);
     const moved = map.moveBox(.{ .x = 16, .y = 48, .w = 16, .h = 16 }, 0, 100);
     try std.testing.expectApproxEqAbs(@as(f32, 64), moved.y, 1e-4);
+}
+
+test "one-way tiles stop downward movement only at their top edge" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(
+        allocator,
+        "size 5 5\nsolid 1\noneway 2\nlayer ground\n1 1 1 1 1\n1 0 0 0 1\n1 0 2 0 1\n1 0 1 0 1\n1 1 1 1 1\n",
+    );
+    defer map.deinit(allocator);
+    const above = tilemap.Box{ .x = 32, .y = 16, .w = 16, .h = 16 };
+    const down = map.moveBox(above, 0, 50);
+    try std.testing.expectEqual(@as(f32, 16), down.y);
+    try std.testing.expect(!map.isSolid(2, 2));
+    try std.testing.expect(!map.boxOverlapsSolid(.{ .x = 32, .y = 32, .w = 16, .h = 16 }));
+
+    const up = map.moveBox(.{ .x = 32, .y = 48, .w = 16, .h = 8 }, 0, -30);
+    try std.testing.expectEqual(@as(f32, 18), up.y);
+    const right = map.moveBox(.{ .x = 16, .y = 34, .w = 8, .h = 8 }, 50, 0);
+    try std.testing.expectEqual(@as(f32, 56), right.x);
+    const left = map.moveBox(.{ .x = 40, .y = 34, .w = 8, .h = 8 }, -50, 0);
+    try std.testing.expectEqual(@as(f32, 16), left.x);
+}
+
+test "one-way tile does not catch a box already below its top and drop-through ignores only one-way" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(
+        allocator,
+        "size 5 5\nsolid 1\noneway 2\nlayer ground\n1 1 1 1 1\n1 0 0 0 1\n1 0 2 0 1\n1 0 0 0 1\n1 1 1 1 1\n",
+    );
+    defer map.deinit(allocator);
+    const already_past = map.moveBox(.{ .x = 32, .y = 40, .w = 16, .h = 8 }, 0, 10);
+    try std.testing.expectEqual(@as(f32, 50), already_past.y);
+    const drop = map.moveBoxIgnoringOneWay(.{ .x = 32, .y = 16, .w = 16, .h = 16 }, 0, 50);
+    try std.testing.expectEqual(@as(f32, 48), drop.y);
+    const solid_below = try tilemap.TileMap.parse(
+        allocator,
+        "size 5 5\nsolid 1\noneway 2\nlayer ground\n1 1 1 1 1\n1 0 0 0 1\n1 0 2 0 1\n1 0 1 0 1\n1 1 1 1 1\n",
+    );
+    defer solid_below.deinit(allocator);
+    const still_solid = solid_below.moveBoxIgnoringOneWay(.{ .x = 32, .y = 16, .w = 16, .h = 16 }, 0, 50);
+    try std.testing.expectEqual(@as(f32, 32), still_solid.y);
+}
+
+test "diagonal tile movement resolves X before landing on a one-way top" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(
+        allocator,
+        "size 5 5\nsolid 1\noneway 2\nlayer ground\n1 1 1 1 1\n1 0 0 0 1\n1 0 2 0 1\n1 0 0 0 1\n1 1 1 1 1\n",
+    );
+    defer map.deinit(allocator);
+    const moved = map.moveBox(.{ .x = 16, .y = 16, .w = 8, .h = 16 }, 16, 20);
+    try std.testing.expectEqual(@as(f32, 32), moved.x);
+    try std.testing.expectEqual(@as(f32, 16), moved.y);
 }
 
 test "a box moving up stops flush below a wall" {

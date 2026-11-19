@@ -13,6 +13,9 @@ The engine modules name no game type. They are reached through `engine.navigatio
 blocks its cell, and the edge of the map counts as a wall. A grid keeps a pointer to its map, so make one where it
 is used, and don't store it in a struct that is later moved.
 
+One-way tile cells remain walkable and do not block line of sight. A* rejects only a southward step
+into a one-way cell; northward and sideways entry remain available.
+
 `cellOf` gives the cell that holds a point in pixels, and `cellCenter` gives the center of a cell. `Grid.lineOfSight`
 answers whether a straight line between two points crosses only walkable cells. It checks every cell the line
 crosses, in order, so it cannot step past a thin wall at a corner.

@@ -130,6 +130,7 @@ pub const Pathfinder = struct {
             for (offsets) |offset| {
                 const next = Cell{ .col = from.col + offset[0], .row = from.row + offset[1] };
                 if (!grid.walkable(next)) continue;
+                if (next.row > from.row and grid.map.isOneWay(next.col, next.row)) continue;
                 const diagonal = offset[0] != 0 and offset[1] != 0;
                 if (diagonal) {
                     // No cutting corners: both cells beside the diagonal must be open as well.
@@ -346,6 +347,42 @@ test "a route that does not exist is reported, and so is a goal in a wall or a s
     const split = try tilemap.TileMap.parse(allocator, "size 3 1\nsolid 1\nlayer ground\n0 1 0\n");
     defer split.deinit(allocator);
     try std.testing.expectError(error.NoPath, finder.find(Grid.init(&split), .{ .col = 0, .row = 0 }, .{ .col = 2, .row = 0 }, &route));
+}
+
+test "paths cannot enter a one-way cell southward but can enter it northward or sideways" {
+    const allocator = std.testing.allocator;
+    const south_map = try tilemap.TileMap.parse(
+        allocator,
+        "size 3 2\nsolid 1\noneway 2\nlayer ground\n0 0 0\n1 2 1\n",
+    );
+    defer south_map.deinit(allocator);
+    const side_map = try tilemap.TileMap.parse(
+        allocator,
+        "size 2 1\noneway 2\nlayer ground\n0 2\n",
+    );
+    defer side_map.deinit(allocator);
+
+    var finder = try Pathfinder.init(allocator);
+    defer finder.deinit();
+    var route: [8]Cell = undefined;
+    try std.testing.expectError(
+        error.NoPath,
+        finder.find(Grid.init(&south_map), .{ .col = 1, .row = 0 }, .{ .col = 1, .row = 1 }, &route),
+    );
+    const north_count = try finder.find(
+        Grid.init(&south_map),
+        .{ .col = 1, .row = 1 },
+        .{ .col = 1, .row = 0 },
+        &route,
+    );
+    try std.testing.expectEqual(@as(usize, 2), north_count);
+    const side_count = try finder.find(
+        Grid.init(&side_map),
+        .{ .col = 0, .row = 0 },
+        .{ .col = 1, .row = 0 },
+        &route,
+    );
+    try std.testing.expectEqual(@as(usize, 2), side_count);
 }
 
 test "corners can't be cut, so two open cells that meet only at a corner are not joined" {
