@@ -6,12 +6,12 @@
 //! stores these values, and game-facing code holds only the FontHandle.
 //!
 //! Providers in this file:
-//! - `bfnt_coverage`: a prebaked `.bfnt` coverage atlas (font.zig). This is the compatibility path. The file format
-//!   and its loader are unchanged, and it is the only provider the game can load today.
-//! - `runtime_coverage`: a TrueType face (runtime_font.zig). Its glyphs are rasterized on demand into the Phase 4
-//!   glyph cache, which owns the atlas, so the face itself holds no atlas.
-//! Not here yet: `bitmap` (Phase 2) and `msdf` (Phase 6). Adding one means a new `Provider` variant and a new
-//! `FontResource` variant. Every switch on them then fails to compile until it handles the new variant.
+//! - `bfnt_coverage`: a prebaked `.bfnt` coverage atlas (font.zig), kept as the compatibility path.
+//! - `bitmap`: a normalized BMFont descriptor and its uploaded coverage pages.
+//! - `runtime_coverage`: a TrueType face (runtime_font.zig) and its reusable shaper. Its glyphs are rasterized on
+//!   demand into the Phase 4 glyph cache, which owns the atlas, so the face itself holds no atlas.
+//! `msdf` remains a future provider (Phase 6). Adding one means a new `Provider` and `FontResource` variant, and every
+//! switch on them then fails to compile until it handles the new variant.
 //!
 //! Metrics conventions, all in pixels, y down, unrounded. Consumers round them the way text.c does (a rounded line
 //! top, then a rounded ascent):
@@ -30,26 +30,58 @@ const font_registry = @import("font_registry.zig");
 const font_mod = @import("font.zig");
 const runtime_font = @import("runtime_font.zig");
 const shaper = @import("shaper.zig");
+const bmfont = @import("bmfont.zig");
 const layout = @import("layout.zig");
 const c = @import("../ui/c.zig").c;
+const Texture = @import("../renderer/texture.zig").Texture;
 
 pub const FontHandle = font_registry.FontHandle;
 
-/// The providers a font can be built by. Bitmap and MSDF are added in Phases 2 and 6.
+/// The providers a font can be built by. MSDF remains future work in Phase 6.
 pub const Provider = enum {
     bfnt_coverage,
+    bitmap,
     runtime_coverage,
+};
+
+/// Runtime face state kept together at a stable address in the registry. The shaper borrows `face`, so it is
+/// initialized only after the resource has been inserted into its final registry allocation.
+pub const RuntimeCoverage = struct {
+    face: runtime_font.RuntimeFont,
+    shaper: ?shaper.Shaper = null,
+
+    pub fn deinit(self: *RuntimeCoverage) void {
+        if (self.shaper) |*value| value.deinit();
+        self.face.deinit();
+        self.* = undefined;
+    }
+};
+
+/// A normalized bitmap descriptor and the fixed coverage textures for its authored pages.
+pub const BitmapFont = struct {
+    allocator: std.mem.Allocator,
+    descriptor: bmfont.Font,
+    pages: []Texture,
+
+    pub fn deinit(self: *BitmapFont) void {
+        for (self.pages) |*page| page.deinit();
+        self.allocator.free(self.pages);
+        self.descriptor.deinit();
+        self.* = undefined;
+    }
 };
 
 /// One font's provider-specific state. Only the provider touches it, and game code never does.
 pub const FontResource = union(Provider) {
     bfnt_coverage: font_mod.Font,
-    runtime_coverage: runtime_font.RuntimeFont,
+    bitmap: BitmapFont,
+    runtime_coverage: RuntimeCoverage,
 
     /// The provider that built this resource.
     pub fn provider(self: *const FontResource) Provider {
         return switch (self.*) {
             .bfnt_coverage => .bfnt_coverage,
+            .bitmap => .bitmap,
             .runtime_coverage => .runtime_coverage,
         };
     }
@@ -58,6 +90,7 @@ pub const FontResource = union(Provider) {
     pub fn deinit(self: *FontResource) void {
         switch (self.*) {
             .bfnt_coverage => |*f| f.deinit(),
+            .bitmap => |*f| f.deinit(),
             .runtime_coverage => |*f| f.deinit(),
         }
         self.* = undefined;
@@ -68,14 +101,15 @@ pub const FontResource = union(Provider) {
     pub fn metrics(self: *const FontResource) FontMetrics {
         return switch (self.*) {
             .bfnt_coverage => |*f| bfntMetrics(&f.baked),
-            .runtime_coverage => |*f| runtimeMetrics(f),
+            .bitmap => |*f| bitmapMetrics(&f.descriptor),
+            .runtime_coverage => |*f| runtimeMetrics(&f.face),
         };
     }
 };
 
 /// Metrics that every provider reports the same way. See the header for the conventions.
 pub const FontMetrics = struct {
-    /// The size the font was made at, in pixels: the baked size for BFNT, or the pixel height for a runtime face.
+    /// The size the font was made at, in pixels: baked size for BFNT, descriptor size for bitmap, or pixel height for runtime.
     pixel_height: f32,
     ascent: f32,
     descent: f32,
@@ -108,6 +142,18 @@ fn runtimeMetrics(face: *const runtime_font.RuntimeFont) FontMetrics {
         .descent = descent,
         .line_gap = line_gap,
         .line_height = ascent + descent + line_gap,
+    };
+}
+
+fn bitmapMetrics(descriptor: *const bmfont.Font) FontMetrics {
+    const line_height: f32 = @floatFromInt(descriptor.line_height);
+    const ascent: f32 = @floatFromInt(descriptor.base);
+    return .{
+        .pixel_height = @floatFromInt(descriptor.size),
+        .ascent = ascent,
+        .descent = line_height - ascent,
+        .line_gap = 0,
+        .line_height = line_height,
     };
 }
 
@@ -174,7 +220,7 @@ fn readFixture(allocator: std.mem.Allocator, path: [:0]const u8) ![]u8 {
 test "a runtime face reports ascent, descent, and line gap in pixels from the scale its glyphs use" {
     const bytes = try readFixture(testing.allocator, "assets/font.ttf");
     defer testing.allocator.free(bytes);
-    var resource = FontResource{ .runtime_coverage = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16) };
+    var resource = FontResource{ .runtime_coverage = .{ .face = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16) } };
     defer resource.deinit();
 
     try testing.expectEqual(Provider.runtime_coverage, resource.provider());
@@ -190,7 +236,7 @@ test "a runtime face reports ascent, descent, and line gap in pixels from the sc
 test "the natural line height is ascent plus descent plus line gap" {
     const bytes = try readFixture(testing.allocator, "assets/font.ttf");
     defer testing.allocator.free(bytes);
-    var resource = FontResource{ .runtime_coverage = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16) };
+    var resource = FontResource{ .runtime_coverage = .{ .face = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16) } };
     defer resource.deinit();
 
     const m = resource.metrics();
@@ -223,7 +269,7 @@ test "a runtime font stored in the registry is found by its handle, and released
 
     var face = try runtime_font.RuntimeFont.init(testing.allocator, bytes, 16);
     // If the insert fails, nothing was stored, so the face is still ours to release.
-    const handle = resources.insert(.{ .runtime_coverage = face }) catch |err| {
+    const handle = resources.insert(.{ .runtime_coverage = .{ .face = face } }) catch |err| {
         face.deinit();
         return err;
     };

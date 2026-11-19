@@ -81,13 +81,13 @@ pub const Shaper = struct {
 
     /// Creates a shaper for `font` with no registry id, so its runs carry `invalid_font_id`. The font must outlive
     /// the shaper.
-    pub fn init(font: *const runtime_font.RuntimeFont) Error!Shaper {
+    pub fn init(font: *const runtime_font.RuntimeFont) error{OutOfMemory}!Shaper {
         return initWithFontId(font, font_registry.invalid_font_id);
     }
 
     /// Creates a shaper for `font` whose runs are stamped with `font_id`, the id the caller got from the font
     /// registry. The font must outlive the shaper.
-    pub fn initWithFontId(font: *const runtime_font.RuntimeFont, font_id: FontId) Error!Shaper {
+    pub fn initWithFontId(font: *const runtime_font.RuntimeFont, font_id: FontId) error{OutOfMemory}!Shaper {
         const buffer = hb.hb_buffer_create() orelse return error.OutOfMemory;
         return .{ .font = font, .buffer = buffer, .font_id = font_id };
     }

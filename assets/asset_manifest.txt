@@ -6,6 +6,10 @@ tile image assets/tile.png tile.png -
 warrior image assets/warrior_16x32.png warrior_16x32.png -
 ui_font_9px font assets/font.ttf ui_font_9px.bfnt - 9 32 224 mono
 default_font_10px font assets/font.ttf default_font_10px.bfnt - 10 32 224
+# Hand-authored 8x8 bitmap font: source PNG becomes tightly packed R8 coverage, and the packaged BMFont descriptor
+# names that output page. See D-09 in the text/font migration plan.
+font8x8_basic_page coverage assets/fonts/font8x8_basic.png fonts/font8x8_basic.r8 -
+font8x8_basic bitmap_font assets/fonts/font8x8_basic.fnt fonts/font8x8_basic.fnt font8x8_basic_page
 # The TrueType file the runtime font face loads from the package (src/engine/text/runtime_font.zig). A file row
 # copies it unchanged; the font rows above bake the same source to .bfnt and are not affected.
 ui_font_ttf file assets/font.ttf fonts/font.ttf -

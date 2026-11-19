@@ -20,7 +20,10 @@ const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
 const texture_renderer = @import("../renderer/texture.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 const font = @import("../text/font.zig");
+const runtime_font = @import("../text/runtime_font.zig");
+const bmfont = @import("../text/bmfont.zig");
 const font_registry = @import("../text/font_registry.zig");
+const font_resource = @import("../text/font_resource.zig");
 const font_store = @import("../text/font_store.zig");
 const Input = @import("../input/input.zig").Input;
 const collector = @import("../diagnostics/collector.zig");
@@ -105,6 +108,36 @@ fn runFontLoad(job: *FontLoadJob) void {
     job.staged = font.stage(payload, job.pixel_height) catch {
         job.failure = error.FontLoadFailed;
         return;
+    };
+}
+
+const OutlineFontLoadJob = struct {
+    allocator: std.mem.Allocator,
+    relative: [max_full_path]u8 = undefined,
+    relative_len: usize = 0,
+    pixel_height: f32 = 0,
+    face: ?runtime_font.RuntimeFont = null,
+    failure: ?AssetError = null,
+};
+
+fn runOutlineFontLoad(job: *OutlineFontLoadJob) void {
+    const relative = job.relative[0..job.relative_len];
+    const bytes = platform.files.readQuiet(job.allocator, .packaged, relative) catch null;
+    defer if (bytes) |data| job.allocator.free(data);
+    const payload = bytes orelse {
+        job.failure = error.FileNotFound;
+        return;
+    };
+    job.face = runtime_font.RuntimeFont.init(job.allocator, payload, job.pixel_height) catch |err| {
+        job.failure = runtimeFontAssetError(err);
+        return;
+    };
+}
+
+fn runtimeFontAssetError(err: runtime_font.Error) AssetError {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.FontLoadFailed,
     };
 }
 
@@ -484,6 +517,102 @@ pub const Context = struct {
         };
     }
 
+    /// Loads a TrueType glyf outline font at `pixel_height`. The size is fixed into the face when it is loaded.
+    /// Unsupported outline formats and invalid files return `FontLoadFailed`; runtime text drawing is not available
+    /// until the page-aware renderer upload and binding hook is implemented.
+    pub fn loadOutlineFont(self: *const Context, relative: []const u8, pixel_height: f32) AssetError!font_registry.FontHandle {
+        var face: runtime_font.RuntimeFont = undefined;
+        if (self.jobs) |pool| {
+            var job = OutlineFontLoadJob{
+                .allocator = self.worker_allocator,
+                .pixel_height = pixel_height,
+            };
+            if (relative.len > job.relative.len) return error.PathTooLong;
+            @memcpy(job.relative[0..relative.len], relative);
+            job.relative_len = relative.len;
+            var counter = std.mem.zeroes(jobs.Counter);
+            pool.submit(&counter, OutlineFontLoadJob, &job, runOutlineFontLoad);
+            pool.wait(&counter);
+            if (job.failure) |err| return err;
+            face = job.face orelse return error.FontLoadFailed;
+        } else {
+            const bytes = self.readFile(self.allocators.asset, relative) catch |err| return switch (err) {
+                error.FileNotFound => error.FileNotFound,
+                error.PathTooLong => error.PathTooLong,
+                error.OutOfMemory => error.OutOfMemory,
+                else => error.ReadFailed,
+            };
+            defer self.allocators.asset.free(bytes);
+            face = runtime_font.RuntimeFont.init(self.allocators.asset, bytes, pixel_height) catch |err| return runtimeFontAssetError(err);
+        }
+
+        return font_store.insertRuntime(self.fonts, face) catch |err| switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.FontIdExhausted => error.FontLoadFailed,
+        };
+    }
+
+    /// Loads a packaged BMFont text descriptor and its R8 coverage pages. The descriptor's page entries must be
+    /// basenames produced by the asset builder. Bitmap text uses codepoint mapping and has no complex-script shaping.
+    pub fn loadBitmapFont(self: *const Context, relative: []const u8) AssetError!font_registry.FontHandle {
+        const allocator = self.allocators.asset;
+        const text = self.readFile(allocator, relative) catch |err| return switch (err) {
+            error.FileNotFound => error.FileNotFound,
+            error.PathTooLong => error.PathTooLong,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.ReadFailed,
+        };
+        defer allocator.free(text);
+
+        var diagnostic: bmfont.Diagnostic = .{};
+        var descriptor = bmfont.parse(allocator, text, .{}, &diagnostic) catch |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FontLoadFailed,
+        };
+        var pages = allocator.alloc(Texture, descriptor.pages.len) catch {
+            descriptor.deinit();
+            return error.OutOfMemory;
+        };
+        var loaded_pages: usize = 0;
+        var transferred = false;
+        errdefer if (!transferred) {
+            for (pages[0..loaded_pages]) |*page| page.deinit();
+            allocator.free(pages);
+            descriptor.deinit();
+        };
+
+        const page_folder = folderOf(relative);
+        const expected_bytes = std.math.mul(usize, @intCast(descriptor.scale_w), @intCast(descriptor.scale_h)) catch return error.FontLoadFailed;
+        for (descriptor.pages, 0..) |page, index| {
+            if (!safeBasename(page.file)) return error.FontLoadFailed;
+            const page_path = if (page_folder.len == 0)
+                try std.fmt.allocPrint(allocator, "{s}", .{page.file})
+            else
+                try std.fmt.allocPrint(allocator, "{s}/{s}", .{ page_folder, page.file });
+            defer allocator.free(page_path);
+            const bytes = self.readFile(allocator, page_path) catch |err| return switch (err) {
+                error.FileNotFound => error.FileNotFound,
+                error.PathTooLong => error.PathTooLong,
+                error.OutOfMemory => error.OutOfMemory,
+                else => error.ReadFailed,
+            };
+            defer allocator.free(bytes);
+            if (bytes.len != expected_bytes) return error.FontLoadFailed;
+            pages[index] = texture_renderer.createCoverage(allocator, contextGpuDevice(self), descriptor.scale_w, descriptor.scale_h, bytes);
+            loaded_pages += 1;
+        }
+
+        const bitmap = font_resource.BitmapFont{
+            .allocator = allocator,
+            .descriptor = descriptor,
+            .pages = pages,
+        };
+        transferred = true;
+        return font_store.insertBitmap(self.fonts, bitmap) catch |err| switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.FontIdExhausted => error.FontLoadFailed,
+        };
+    }
 
     /// Loads a texture atlas and validates the index against the uploaded image.
     pub fn loadAtlas(self: *const Context, image_path: []const u8, index_path: []const u8) AssetError!LoadedAtlas {
@@ -513,6 +642,18 @@ pub const Context = struct {
         return .{ .texture = texture, .index = index };
     }
 };
+
+fn folderOf(path: []const u8) []const u8 {
+    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return "";
+    return path[0..slash];
+}
+
+fn safeBasename(path: []const u8) bool {
+    return path.len != 0 and
+        !std.mem.eql(u8, path, ".") and
+        !std.mem.eql(u8, path, "..") and
+        std.mem.indexOfAny(u8, path, "/\\:") == null;
+}
 
 /// Loads a texture for the store through the same path as `loadTexture`, so the compressed variants
 /// and the RGBA8 fallback behave the same way for handles as for direct loads.

@@ -1,8 +1,7 @@
-# Text and prebaked fonts
+# Text and fonts
 
-Text is drawn from bitmap fonts that are baked offline by the asset builder. The engine never rasterizes
-glyph outlines at runtime, and it does not ship the TTF. Missing text is never drawn by a fallback
-rasterizer; a character the font was not baked with draws the fallback glyph the file records, normally `?`.
+Text can use prebaked `.bfnt` coverage fonts or a runtime TrueType outline face. The engine does not ship a TTF with a
+`.bfnt`; callers loading an outline font provide its packaged asset separately.
 
 ## Content pipeline
 
@@ -21,6 +20,25 @@ does not depend on the rasterization, so the runtime loads both the same way.
 
 The atlas is white glyphs with coverage in the alpha channel, and its top-left 2x2 block is solid white for
 filled rectangles. Atlas sizes are powers of two from 128 to 4096 pixels.
+
+## Hand-authored bitmap fonts
+
+The asset manifest supports a `coverage` row for an 8-bit grayscale PNG to tightly packed `.r8`, and a `bitmap_font`
+row for an AngelCode BMFont text descriptor. The descriptor's quoted page `file=` names the source PNG basename;
+the builder rewrites only that value in the packaged `.fnt` to the corresponding `.r8` basename. Every page is
+one byte per texel with no row padding. `check-assets` checks the PNG's grayscale IHDR, descriptor dimensions,
+coverage dependency wiring, and any packaged `.r8` byte length.
+
+Load the packaged descriptor through `Context.loadBitmapFont`, then use the existing `Canvas.text`, `textWidth`,
+`layoutText`, and `drawTextLayout` methods. Bitmap fonts use the same quad list and SpriteBatch submission as other
+fonts. Each glyph uses its authored atlas rectangle and offsets; page IDs select the corresponding coverage texture.
+The loader uses the existing nearest/clamp sampling, with no atlas repacking or extra padding. Whole-pixel placement
+is intended for native resolution and integer scaling.
+
+Bitmap mapping is one glyph per UTF-8 codepoint, with the descriptor fallback glyph used for missing codepoints and
+its kerning pairs applied before advances. It does not provide ligatures or complex-script shaping. The D-09 sample
+is `font8x8_basic`, a 16-by-6 grid of 8-by-8 cells with zero padding and an 8-pixel advance; the cells are drawn
+directly from the authored atlas.
 
 ## Rasterization
 
@@ -56,16 +74,25 @@ of RGBA8. Its glyphs are drawn through a coverage pipeline, which reads that byt
 applies the text color. Once the upload has copied the bytes, the CPU copy is released, so a loaded font keeps
 only its metrics, glyph table, and kerning pairs. Measuring and drawing never read atlas pixels.
 
-Each frame, a string becomes one quad per visible glyph. A quad's source is the glyph's rectangle in the
-atlas, and its destination is a whole-pixel rectangle on screen. Quads are queued on the sprite batch,
-which draws each run of consecutive quads that share the atlas in one draw call. A font atlas is never lit,
-so its quads always take the coverage pipeline.
+`ctx.loadOutlineFont(path, pixel_height)` loads a TrueType `glyf` outline face and fixes its size at load time. CFF,
+CFF2, and TrueType collections are rejected with `FontLoadFailed`. The existing `Canvas.textWidth` path shapes outline
+text with the compatibility defaults `Latn`, `en`, and left-to-right direction. Text layout and the public `Canvas`
+methods remain shared with `.bfnt` fonts. Runtime glyph submission is not enabled yet: calling `Canvas.text` or
+`Canvas.drawTextLayout` with an outline font fails explicitly until the renderer has page-aware atlas upload and binding.
+The C-backed widgets remain `.bfnt`-only.
+
+For `.bfnt` and bitmap fonts, a string becomes one quad per visible glyph. A quad's source is the glyph's rectangle in
+the atlas, and its destination is a whole-pixel rectangle on screen. Quads are queued on the sprite batch, which draws
+each run of consecutive quads that share the atlas page in one draw call. A font atlas is never lit, so its quads
+always take the coverage pipeline.
 
 ## Limits
 
-- Codepoints outside the baked range draw the font's fallback, which the file records. The baker records
+- For `.bfnt`, codepoints outside the baked range draw the font's fallback, which the file records. The baker records
   `?` for any font whose range includes it, and no fallback otherwise, so such a font draws nothing for
-  characters it lacks. Text is decoded as UTF-8, but it is not shaped.
+- characters it lacks. BFNT text is decoded as UTF-8, but it is not shaped.
+- Bitmap fonts map one UTF-8 codepoint to one glyph, apply authored kerning, and use the descriptor fallback for misses.
+  They do not support ligatures or complex-script shaping; malformed UTF-8 maps to U+FFFD before fallback.
 - Kerning comes only from the baked pair table.
 - Glyphs are placed on whole pixels. There is no signed-distance or sub-pixel scaling.
 - A font atlas is a single coverage channel. A glyph's color comes only from the quad's tint, so a font

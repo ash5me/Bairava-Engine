@@ -142,7 +142,7 @@ const Fields = struct {
 
 // ---- Asset manifest ----------------------------------------------------------------------------------
 
-const kinds = [_][]const u8{ "image", "audio", "wav", "font", "map", "file" };
+const kinds = [_][]const u8{ "image", "audio", "wav", "font", "coverage", "bitmap_font", "map", "file" };
 
 fn isKnownKind(kind: []const u8) bool {
     return contains(&kinds, kind);
@@ -153,6 +153,8 @@ fn formatMessage(kind: []const u8) []const u8 {
     if (std.mem.eql(u8, kind, "image")) return "image source must be png, jpg, jpeg, bmp, or tga";
     if (std.mem.eql(u8, kind, "audio") or std.mem.eql(u8, kind, "wav")) return "audio source must be a wav file";
     if (std.mem.eql(u8, kind, "font")) return "font source must be a ttf or otf file";
+    if (std.mem.eql(u8, kind, "coverage")) return "coverage source must be a png file";
+    if (std.mem.eql(u8, kind, "bitmap_font")) return "bitmap_font source must be a fnt file";
     return "map source must be a txt file";
 }
 
@@ -160,6 +162,8 @@ fn formatAccepted(kind: []const u8, source: []const u8) bool {
     if (std.mem.eql(u8, kind, "image")) return hasExtension(source, &image_exts);
     if (std.mem.eql(u8, kind, "audio") or std.mem.eql(u8, kind, "wav")) return hasExtension(source, &audio_exts);
     if (std.mem.eql(u8, kind, "font")) return hasExtension(source, &font_exts);
+    if (std.mem.eql(u8, kind, "coverage")) return hasExtension(source, &.{"png"});
+    if (std.mem.eql(u8, kind, "bitmap_font")) return hasExtension(source, &.{"fnt"});
     if (std.mem.eql(u8, kind, "map")) return hasExtension(source, &map_exts);
     return true; // `file` takes any format.
 }
@@ -224,7 +228,7 @@ fn checkManifestLine(path: []const u8, number: u32, line: []const u8, declared: 
     const deps = fields.items[4];
 
     if (!isKnownKind(kind)) {
-        report.add(path, number, "unknown asset type (use image, audio, wav, font, map, or file)");
+        report.add(path, number, "unknown asset type (use image, audio, wav, font, coverage, bitmap_font, map, or file)");
         return;
     }
     if (!isSafePath(source)) {
@@ -236,6 +240,13 @@ fn checkManifestLine(path: []const u8, number: u32, line: []const u8, declared: 
     }
     if (!isSafePath(output)) {
         report.add(path, number, "output path must be relative, inside the project, and free of '..'");
+    }
+    if (std.mem.eql(u8, kind, "coverage")) {
+        if (!hasExtension(output, &.{"r8"})) report.add(path, number, "coverage output must be an r8 file");
+        if (!std.mem.eql(u8, deps, "-")) report.add(path, number, "coverage assets must have no dependencies");
+    } else if (std.mem.eql(u8, kind, "bitmap_font")) {
+        if (!hasExtension(output, &.{"fnt"})) report.add(path, number, "bitmap_font output must be an fnt file");
+        if (std.mem.eql(u8, deps, "-") or deps.len == 0) report.add(path, number, "bitmap_font assets need at least one coverage dependency");
     }
     if (!std.mem.eql(u8, deps, "-")) {
         var parts = std.mem.splitScalar(u8, deps, ',');
@@ -431,7 +442,15 @@ pub fn pngSize(bytes: []const u8) ?ImageSize {
 
 /// A file list for the tests: these paths exist, and every other path does not.
 const FakeFiles = struct {
-    const present = [_][]const u8{ "assets/tile.png", "assets/warrior.png", "assets/font.ttf", "assets/wind1.wav", "assets/maps/level1.txt" };
+    const present = [_][]const u8{
+        "assets/tile.png",
+        "assets/warrior.png",
+        "assets/font.ttf",
+        "assets/wind1.wav",
+        "assets/maps/level1.txt",
+        "assets/fonts/font8x8_basic.png",
+        "assets/fonts/font8x8_basic.fnt",
+    };
     var marker: u8 = 0;
 
     fn exists(context: *anyopaque, path: []const u8) bool {
@@ -526,6 +545,40 @@ test "a font line may name its rasterization as gray or mono, and a tenth field 
     var extra = Report{};
     checkManifest("assets/asset_manifest.txt", "font font assets/font.ttf font.bfnt - 10 32 224 mono extra\n", FakeFiles.files(), &extra);
     try std.testing.expectEqual(@as(usize, 1), extra.count);
+}
+
+test "coverage and bitmap_font manifest rows accept their D-09 formats and dependencies" {
+    const text =
+        \\font8x8_page coverage assets/fonts/font8x8_basic.png fonts/font8x8_basic.r8 -
+        \\font8x8 bitmap_font assets/fonts/font8x8_basic.fnt fonts/font8x8_basic.fnt font8x8_page
+        \\
+    ;
+    var report = Report{};
+    checkManifest("assets/asset_manifest.txt", text, FakeFiles.files(), &report);
+    try std.testing.expect(report.ok());
+}
+
+test "coverage and bitmap_font rows reject incorrect formats or dependency shape" {
+    const text =
+        \\page coverage assets/fonts/font8x8_basic.png fonts/page.r8 -
+        \\other coverage assets/fonts/font8x8_basic.png fonts/other.r8 -
+        \\bad_source coverage assets/font.ttf fonts/a.r8 -
+        \\bad_output coverage assets/fonts/font8x8_basic.png fonts/a.png -
+        \\bad_deps coverage assets/fonts/font8x8_basic.png fonts/a.r8 other
+        \\bad_font_source bitmap_font assets/font.ttf fonts/a.fnt page
+        \\bad_font_output bitmap_font assets/fonts/font8x8_basic.fnt fonts/a.png page
+        \\no_pages bitmap_font assets/fonts/font8x8_basic.fnt fonts/a.fnt -
+        \\
+    ;
+    var report = Report{};
+    checkManifest("assets/asset_manifest.txt", text, FakeFiles.files(), &report);
+    try std.testing.expectEqual(@as(usize, 6), report.count);
+    try std.testing.expectEqualStrings("coverage source must be a png file", report.items[0].message);
+    try std.testing.expectEqualStrings("coverage output must be an r8 file", report.items[1].message);
+    try std.testing.expectEqualStrings("coverage assets must have no dependencies", report.items[2].message);
+    try std.testing.expectEqualStrings("bitmap_font source must be a fnt file", report.items[3].message);
+    try std.testing.expectEqualStrings("bitmap_font output must be an fnt file", report.items[4].message);
+    try std.testing.expectEqualStrings("bitmap_font assets need at least one coverage dependency", report.items[5].message);
 }
 
 test "a clean sprite list reports nothing, and a duplicate or missing image is reported" {

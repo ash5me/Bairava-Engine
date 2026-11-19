@@ -1,6 +1,6 @@
 # Bairava Engine — Text and Font System Migration Plan
 
-**Status (updated 2026-11-19):** Phase 0 decisions D-01 through D-06, D-08, D-09, and D-12, and D-21 (2026-11-19), are accepted as recorded in section 6.2. D-22 (`FontStore` API) is accepted subject to four boundary constraints (2026-11-19). E-03 is done with caveat by owner waiver (2026-11-19; section 6.4). The D-21 public-surface gate is not yet met (Phase 1 exit gate). E-01 is passed on commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded` (Windows, Linux, macOS; evidence in section 6.4). **Phases 1 and 2 implementation have not started.** Phase 3/4/5 CPU work exists in the reviewed branch, but implementation and integration status remain as recorded in the phase sections; E-01 does not close GPU/device gates or imply Phases 1, 2, 4, or 5 are complete.  
+**Status (updated 2026-11-19):** Phase 0 decisions D-01 through D-06, D-08, D-09, and D-12, and D-21 (2026-11-19), are accepted as recorded in section 6.2. D-22 (`FontStore` API) is accepted subject to four boundary constraints (2026-11-19). E-03 is done with caveat by owner waiver (2026-11-19; section 6.4). E-01 is passed on commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded` (Windows, Linux, macOS; evidence in section 6.4). **Phase 1 provider dispatch and Phase 2 bitmap-font implementation are integrated in the current worktree.** `zig build`, `zig build test` (747/747 by direct test executable), `zig build check-assets`, `zig build asset-build`, and `scripts/boundary_scan.py --fail` pass on Windows. The D-21 surface scan is clear. Phase 1 remains open for renderer/device and visual-baseline gates; runtime glyph drawing still returns an explicit error until the Phase 4/5 page-aware atlas upload and binding hook exists. Phase 2 remains open for the native-resolution/integer-scale visual identity check and other exit-gate evidence. This implementation was requested while Phase 1's visual/device gates remain open, so the Phase 2 entry condition is not represented as satisfied.
 **Scope:** Merge the runtime text/shaping pipeline (Architecture 1) with the multi-source font system (Architecture 2)  
 **Repository reviewed:** `ash5me/Bairava-Engine` default branch  
 **Target:** A unified text system that supports hand-authored bitmap fonts, the existing prebaked coverage fonts, runtime-rasterized outline fonts, and optional MSDF fonts while continuing to use Bairava's existing renderer and `SpriteBatch`.
@@ -368,7 +368,7 @@ A reviewed design decision record containing: supported font formats, font-sourc
 
 **Purpose:** Establish the common API and data contracts while the current BFNT implementation still works.
 
-**Decisions:** D-01 to D-07 are accepted. **Implementation status:** not started (owner status, 2026-11-18). **Environment:** E-01 is passed for the recorded commit; E-03 is done with caveat by owner waiver, so the baseline comparison is not evidenced.
+**Decisions:** D-01 to D-07 are accepted. **Implementation status:** provider-switched FontStore metrics, measurement, BFNT submission, outline loading, and the explicit runtime-draw-unavailable result are implemented and compile in this worktree. `scripts/boundary_scan.py --fail` reports zero D-21 exposures. Runtime draw submission and renderer integration remain open. **Environment:** E-01 is passed for the recorded commit; E-03 is done with caveat by owner waiver, so the baseline comparison is not evidenced.
 
 ### Needs — must implement
 
@@ -399,34 +399,34 @@ A common text/font interface with an adapter to the existing BFNT implementation
 - [x] Existing `.bfnt` v1/v2/v4 compatibility behavior remains covered by tests (where those versions are supported by the current loader). *(2026-11-19: v2 has explicit coverage in `tests/ui/test_text.c`, `check_v2_format`, and no longer depends on v1 and v4 passing. The repository has no v2 `.bfnt` file, and the baker writes only v4, so the test writes a v2 file from the documented layout. It checks the header, the glyph and kerning fields, the default fallback, the drawn quads and widths, and the rejections specific to v2. An earlier check that labeled version 2 'unsupported' was in fact rejecting a v2 file for its 48-byte header length, so it now uses version 5. The Zig wrapper in `font.zig` has no version logic and calls the same C loader. Results and the mutation check are in `checks/bfnt_v2_RESULTS.txt`. `zig build test-ui` was not run, because the sandbox has no Zig, so the owner's pinned run still needs to confirm it.)*
 - [ ] Rectangle drawing works without referencing a font atlas. D-04 is accepted (2026-11-18). Blocked: E-03 and the device checks (E-02, E-04).
 - [ ] New interfaces compile without exposing SDL, HarfBuzz, or internal font-resource types to game-facing code (D-21). E-01 passed on the recorded CI commit, but this Phase 1 interface work remains unimplemented.
-- [ ] D-21 holds on the public surface. `D21_DEBT` is empty (owner decision, 2026-11-19: no allowances). The seven listed exposures and two the old scanner could not see are fixed in the sandbox (see the sandbox note in Phase 1). The change is not compiled, and it is not gate evidence until the owner's `zig build test` and `scripts/boundary_scan.py --fail` runs are recorded against a commit. D-22 FontStore: ACCEPTED, subject to four boundary constraints. This acceptance does not close this item.
+- [x] D-21 holds on the public surface. `D21_DEBT` is empty (owner decision, 2026-11-19: no allowances). `scripts/boundary_scan.py --fail` reports zero reachable violations, zero known exposures, and zero new exposures in this worktree. `zig build` and the test suite compile the public surface. D-22 FontStore: ACCEPTED, subject to four boundary constraints. This closes only the API-boundary item, not the remaining Phase 1 visual/device gates.
 - [x] Resource ownership and shutdown order are documented and tested. *Evidence: `docs/ownership.md` states the store-owned font rule, the released-after-GPU-idle shutdown order, and the borrowing rules for `Canvas` and `Ui`. The tests are in `src/engine/text/font_store.zig` (store owns on insert, destroy releases each font once, failed insert releases the new font, id exhaustion releases the new font, discard releases nothing) and `src/engine/text/font_lifecycle_test.zig` (`Canvas` and `Ui` deinit leave the font alive; session shutdown waits for the GPU, then releases fonts, then tears down the device, checked with a fake GPU). Owner ran `zig build test`: passed (2026-11-19). Commit hash: waived by owner direction (2026-11-19). The C mirror in `checks/font_lifecycle_mirror.c` is supporting evidence only.*
 
 ---
 
 ## Phase 2 — Hand-authored bitmap font importer and renderer
 
-**Purpose:** Add the missing first-class path for pixel fonts that are already hand-drawn as bitmap glyphs.
+**Purpose:** Add the first-class path for pixel fonts that are already hand-drawn as bitmap glyphs.
 
-**Decisions:** D-08 and D-09 are accepted. **Implementation status:** not started (owner status, 2026-11-18). **Entry:** Phase 1 must close first (section 7). **Environment:** E-03 is required for the pixel-accuracy check at native resolution and integer scales.
+**Decisions:** D-08 and D-09 are accepted. **Implementation status:** integrated provisionally in the current worktree; the Phase 1 entry gate is still open, as are Phase 2's native-resolution/integer-scale visual gate and other exit evidence. The owner-requested work adds manifest validation, packaged bitmap-font loading, and submission through the shared Canvas/SpriteBatch path. `zig build check-assets`, `zig build asset-build`, `zig build`, and all 747 tests pass on Windows. `font8x8_basic.r8` is 6,144 bytes, and the packaged descriptor names that `.r8`; no visual identity comparison has been run. **Entry:** Phase 1 must close first (section 7); this work does not claim that condition is met. **Environment:** E-03 is required for the pixel-accuracy check at native resolution and integer scales.
 
 ### Needs — must implement
 
 - [~] Add a versioned bitmap-font asset descriptor containing glyph mapping, atlas page, source rectangle, advance, bearing/offset, baseline/line metrics, and optional kerning pairs. *(Partly, sandbox, 2026-11-19: `bmfont.zig` parses the BMFont text descriptor (D-08) into a normalized `Font` with those fields. The versioned contract is the normalized `Font`, schema version 1 (D-27). No on-disk Bairava format is added in Phase 2.)*
 - [~] Support mapping Unicode codepoints to glyph entries. Keep glyph IDs distinct from codepoints internally even if the first format maps one codepoint to one glyph. *(Partly, sandbox, 2026-11-19: `Font.glyphFor` maps a codepoint by binary search. `Glyph` has no separate glyph ID yet.)*
-- [ ] Import atlas image data without vectorizing it or sending it through MSDF generation.
-- [~] Validate atlas bounds, duplicate codepoints, invalid metrics, missing pages, malformed descriptors, and missing fallback glyphs during asset build. *(Partly, sandbox, 2026-11-19: all of these are checked in `bmfont.zig`. Page image sizes are checked against `scaleW` and `scaleH` in `src/engine/assets/bmfont_check.zig`, and a missing image is reported. Not yet wired into `check-assets`: that needs the `bitmap_font` row kind in the asset manifest. The D-09 asset contract defines that row kind (2026-11-19). The builder implements it (see the D-09 builder dispatch block), but Zig `check-assets` does not accept it yet.)*
-- [~] Implement the D-09 `check-assets` rules (contract, 2026-11-19): exact `.r8` byte length equals `scaleW` × `scaleH` with overflow-safe multiplication; source PNG width and height equal `scaleW` and `scaleH`; `file=` values are bare quoted filenames that match a declared coverage output, and path separators, drive prefixes, and `.`/`..` are rejected. Builder side done (see the D-09 builder dispatch block). Blocked: the Zig `validate.zig` kinds and the `check-assets` wiring, which need a Zig toolchain.
-- [ ] Support monochrome/alpha glyph atlases using the coverage path. If color bitmap glyphs are included, use the normal RGBA sprite path and preserve their authored color.
-- [ ] Use nearest-neighbor sampling for pixel bitmap fonts and preserve integer-pixel destination placement by default.
-- [ ] Define atlas padding/edge handling so neighboring glyphs cannot bleed when sampled or scaled.
-- [~] Add a basic bitmap shaper/mapper that looks up the font's codepoint mapping and stored kerning; explicitly document its limits for ligatures and complex scripts. *(Partly, sandbox, 2026-11-19: `Font.glyphFor` and `Font.kerningFor` are the lookups. The adapter that the text path calls, and the limits note, are not written.)*
-- [ ] Draw through the common text API and existing `SpriteBatch`; do not make a separate bitmap-text public API.
-- [ ] Add an example font asset authored as a bitmap atlas and exercise punctuation, spaces, missing glyphs, baseline offsets, and kerning. Blocked: D-09.
+- [x] Import atlas image data without vectorizing it or sending it through MSDF generation. `coverage` builds raw R8 pages; the runtime uploads them with `createCoverage`.
+- [x] Validate atlas bounds, duplicate codepoints, invalid metrics, missing pages, malformed descriptors, and missing fallback glyphs during asset build. BMFont checks are wired into the content pass; `zig build check-assets` accepts the D-09 rows.
+- [x] Implement the D-09 `check-assets` rules: exact overflow-checked `.r8` length; grayscale 8-bit source PNG; matching dimensions; quoted, safe source basenames; dependency kind/use; source/output folder locality; and packaged `.fnt` page rewrite checks.
+- [x] Support monochrome/alpha glyph atlases using the coverage path. Color bitmap glyphs remain out of scope.
+- [x] Use nearest-neighbor sampling for pixel bitmap fonts and round destinations to whole pixels.
+- [x] Define atlas padding/edge handling: use authored rectangles and offsets, add no atlas padding, and rely on the existing nearest/clamp sampler.
+- [x] Add a basic bitmap mapper with one glyph per UTF-8 codepoint, fallback, kerning, byte-offset clusters, and documented limits for ligatures and complex scripts.
+- [x] Draw through the common text API and existing `SpriteBatch`; no bitmap-specific Canvas API was added.
+- [x] Add the D-09 example asset. Mapper/store tests cover punctuation fallback, spaces, kerning, authored offsets, and page selection; the native-resolution visual comparison remains an exit gate.
 
 ### Wants — useful but not blocking
 
-- [ ] Support multi-page bitmap font atlases in the descriptor, even if the first example uses one page.
+- [x] Support multi-page bitmap font atlases in the descriptor and page-aware SpriteBatch queuing.
 - [ ] Support importing a common external bitmap-font descriptor if it is a good fit and has no unacceptable license/format constraints. Conditional on D-08 (section 6.5).
 - [ ] Provide an atlas preview or validation report showing glyph rectangles and baseline positions.
 
@@ -1058,7 +1058,7 @@ A documented, tested, multi-source text/font system with an explicit supported-f
 | 7 | Fallback and hardening | Predictable runtime behavior | Memory, lifetime, missing-glyph, and error behavior are covered |
 | 8 | Cutover and documentation | Supported unified subsystem | Full CI, visual baselines, docs, and dependency records pass |
 
-**Decision order.** D-01 to D-07 are accepted and define the Phase 1 contract; Phase 1 implementation is still not started. D-08 and D-09 are accepted and define the Phase 2 descriptor and example asset; Phase 2 implementation is still not started and cannot enter until Phase 1 closes. Phase 5 depends on the Phase 1 API/font/rectangle decisions and the required preceding phase gates. CPU work written ahead of those implementation gates remains provisional (section 6.1).
+**Decision order.** D-01 to D-07 define the Phase 1 contract; Phase 1's provider/API work is integrated, but its visual/device gates remain open. D-08 and D-09 define the Phase 2 descriptor and example asset; Phase 2's owner-requested implementation is integrated provisionally despite the still-open Phase 1 entry gate, and its visual gate remains open. Phase 5 depends on the Phase 1 API/font/rectangle decisions and the required preceding phase gates. Work written ahead of those implementation gates remains provisional (section 6.1).
 
 This order is deliberate: bitmap fonts become usable early; HarfBuzz and runtime coverage are introduced without destabilizing the current UI; MSDF is added only after the shared shaping/layout/provider contracts are proven.
 

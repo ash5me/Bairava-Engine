@@ -23,6 +23,7 @@ typedef struct ui_quad {
     ui_rect dst;    /* where to draw, in pixels from the top-left of the UI */
     ui_rect src;    /* what to draw, in texels of the font atlas */
     ui_color color; /* RGB tints the texel, and alpha multiplies its alpha */
+    unsigned int page; /* coverage page for bitmap-font glyphs; zero for BFNT glyphs */
     int solid;      /* 1 for a solid fill, 0 for a glyph. A solid fill draws from the backend's own white texture and ignores src. */
 } ui_quad;
 
@@ -42,6 +43,7 @@ static inline void ui_quad_push(ui_quad_list *list, ui_rect dst, ui_rect src, ui
     q->dst = dst;
     q->src = src;
     q->color = color;
+    q->page = 0;
     q->solid = 0;
 }
 
@@ -57,6 +59,7 @@ static inline void ui_quad_push_solid(ui_quad_list *list, ui_rect dst, ui_rect s
     q->dst = dst;
     q->src = src;
     q->color = color;
+    q->page = 0;
     q->solid = 1;
 }
 

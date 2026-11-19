@@ -145,7 +145,8 @@ pub const Canvas = struct {
 
     /// Adds `str` with its top-left corner at (x, y), in pixels.
     pub fn text(self: *Canvas, x: f32, y: f32, str: []const u8, color: Color) void {
-        self.fonts.drawText(self.font, self.list, x, y, str, toC(color));
+        self.fonts.drawText(self.font, self.list, x, y, str, toC(color)) catch |err|
+            std.debug.panic("could not draw text with font {d}: {s}", .{ self.font.id, @errorName(err) });
     }
 
     /// Adds a solid rectangle. It draws from the batch's white texture when it is queued (see `queueQuads`), so it
@@ -161,6 +162,7 @@ pub const Canvas = struct {
             .dst = .{ .x = x, .y = y, .w = w, .h = h },
             .src = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
             .color = toC(color),
+            .page = 0,
             .solid = 1,
         };
         list.count += 1;
@@ -325,6 +327,7 @@ fn toC(color: Color) c.ui_color {
 fn queueQuads(batch: *sprite.SpriteBatch, fonts: *FontStore, handle: FontHandle, list: *const c.ui_quad_list, z: i32) void {
     const count: usize = @intCast(list.count);
     var atlas: ?*const Texture = null;
+    var atlas_page: ?u32 = null;
     for (list.items[0..count]) |q| {
         const snap = @floor(q.dst.x + 0.5);
         const snap_y = @floor(q.dst.y + 0.5);
@@ -340,8 +343,9 @@ fn queueQuads(batch: *sprite.SpriteBatch, fonts: *FontStore, handle: FontHandle,
             );
             continue;
         }
-        const glyph_atlas = atlas orelse blk: {
-            atlas = font_store.glyphTextureOf(fonts, handle);
+        const glyph_atlas = if (atlas_page != null and atlas_page.? == q.page) atlas.? else blk: {
+            atlas = font_store.glyphTextureForPageOf(fonts, handle, q.page);
+            atlas_page = q.page;
             break :blk atlas.?;
         };
         batch.drawSprite(

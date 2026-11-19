@@ -2,8 +2,8 @@
 //!
 //! An AngelCode BMFont text descriptor (`.fnt`) names an atlas image, gives each glyph a rectangle in that image, and may
 //! give kerning pairs. This file parses one into Bairava-owned structures (`Font`, `Glyph`, `Kerning`, `Page`) and
-//! validates it. BMFont's own names stay in this file. Nothing here reads an image, uploads a texture, or draws: those
-//! steps belong to the bitmap provider, which is not written yet.
+//! validates it. BMFont's own names stay in this file. The asset checker validates page images, while the bitmap
+//! provider uploads coverage pages and submits glyphs through the shared text path.
 //!
 //! Accepted tags are `info`, `common`, `page`, `chars`, `char`, `kernings`, and `kerning`. Any other tag is rejected, so
 //! a feature this importer does not handle cannot pass silently. A descriptor needs `info`, `common`, at least one

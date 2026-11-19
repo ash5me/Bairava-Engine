@@ -17,11 +17,15 @@ const c = @import("../ui/c.zig").c;
 const font_registry = @import("font_registry.zig");
 const font_resource = @import("font_resource.zig");
 const font_mod = @import("font.zig");
+const runtime_font = @import("runtime_font.zig");
+const shaper = @import("shaper.zig");
+const bitmap_mapper = @import("bitmap_mapper.zig");
 const bfnt_measure = @import("bfnt_measure.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 
 pub const FontHandle = font_registry.FontHandle;
 pub const InsertError = font_registry.InsertError;
+pub const DrawError = error{RuntimeDrawingUnavailable};
 
 /// The fonts the store holds, counted by how they are drawn. Plain numbers, so game code reads them without any engine type.
 pub const Stats = struct {
@@ -29,6 +33,8 @@ pub const Stats = struct {
     fonts: usize,
     /// Fonts drawn from a prebaked `.bfnt` coverage atlas.
     bfnt_coverage: usize,
+    /// Fonts drawn from hand-authored bitmap coverage pages.
+    bitmap: usize,
     /// Fonts rasterized at runtime from a TrueType face.
     runtime_coverage: usize,
 };
@@ -38,10 +44,10 @@ pub const Description = struct {
     source: Source,
     mode: Mode,
 
-    pub const Source = enum { bfnt_prebaked, runtime_outline };
+    pub const Source = enum { bfnt_prebaked, bitmap, runtime_outline };
     /// `prebaked_coverage` reads a coverage atlas from a file. `gray_coverage` rasterizes glyphs at runtime. Gray is the
     /// only mode the runtime path produces (Phase 4, decision 1).
-    pub const Mode = enum { prebaked_coverage, gray_coverage };
+    pub const Mode = enum { prebaked_coverage, bitmap_coverage, gray_coverage };
 };
 
 /// Releases one font when the store lets go of it. `create` uses `FontResource.deinit`. Tests pass a counting function, so
@@ -59,22 +65,32 @@ const State = struct {
 pub const FontStore = opaque {
     /// The natural line height of the font `handle` names, in pixels.
     pub fn lineHeight(self: *FontStore, handle: FontHandle) f32 {
-        return @floatFromInt(bfntFont(stateOf(self), handle).baked.line_height);
+        return resourceOf(stateOf(self), handle).metrics().line_height;
     }
 
     /// The width of `str` in pixels, in the font `handle` names.
     pub fn textWidth(self: *FontStore, handle: FontHandle, str: []const u8) f32 {
-        return bfnt_measure.width(&bfntFont(stateOf(self), handle).baked, str, 1.0);
+        return switch (resourceOf(stateOf(self), handle).*) {
+            .bfnt_coverage => |*font_value| bfnt_measure.width(&font_value.baked, str, 1.0),
+            .bitmap => |*font_value| bitmapWidth(&font_value.descriptor, str),
+            .runtime_coverage => |*font_value| runtimeShaper(font_value).measure(str, .{}) catch |err|
+                std.debug.panic("could not measure outline font text: {s}", .{@errorName(err)}),
+        };
     }
 
-    /// Adds `str` to `list` with its top-left corner at (x, y), in pixels, in the font `handle` names.
-    pub fn drawText(self: *FontStore, handle: FontHandle, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) void {
-        c.ui_font_draw_text(&bfntFont(stateOf(self), handle).baked, list, x, y, str.ptr, str.len, color);
+    /// Adds `str` to `list` with its top-left corner at (x, y), in pixels, in the font `handle` names. Runtime glyph
+    /// submission remains unavailable until the renderer has a page-aware atlas upload and binding hook.
+    pub fn drawText(self: *FontStore, handle: FontHandle, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) DrawError!void {
+        switch (resourceOf(stateOf(self), handle).*) {
+            .bfnt_coverage => |*font_value| drawBfntText(font_value, list, x, y, str, color),
+            .bitmap => |*font_value| drawBitmapText(&font_value.descriptor, list, x, y, str, color),
+            .runtime_coverage => return error.RuntimeDrawingUnavailable,
+        }
     }
 
-    /// Panics unless `handle` names a font the UI can draw. Canvas creation calls this, so a bad handle fails there.
+    /// Panics unless `handle` names a loaded font. Canvas creation calls this, so a bad handle fails there.
     pub fn check(self: *FontStore, handle: FontHandle) void {
-        _ = bfntFont(stateOf(self), handle);
+        _ = resourceOf(stateOf(self), handle);
     }
 
     /// Counts the fonts the store holds, by how they are drawn.
@@ -113,10 +129,23 @@ pub fn count(store: *const FontStore) usize {
     return stateOfConst(store).resources.count();
 }
 
-/// The atlas texture that the glyphs of `handle`'s font sample. Solid fills never sample it. This function is engine-only:
-/// it names a renderer type, so it is not a method of `FontStore`, which game code reaches.
+/// The single BFNT atlas texture. Solid fills never sample it. This remains BFNT-only; bitmap fonts have multiple pages.
+/// Engine-only because it names a renderer type.
 pub fn glyphTextureOf(store: *FontStore, handle: FontHandle) *const Texture {
     return &bfntFont(stateOf(store), handle).texture;
+}
+
+/// Resolves one page for the engine's common sprite submission path. No page or texture getter is exposed on FontStore.
+pub fn glyphTextureForPageOf(store: *FontStore, handle: FontHandle, page: u32) *const Texture {
+    const resource = resourceOf(stateOf(store), handle);
+    return switch (resource.*) {
+        .bfnt_coverage => |*font_value| if (page == 0) &font_value.texture else std.debug.panic("BFNT font has no page {d}", .{page}),
+        .bitmap => |*font_value| if (page < font_value.pages.len)
+            &font_value.pages[@intCast(page)]
+        else
+            std.debug.panic("bitmap font has no page {d}", .{page}),
+        .runtime_coverage => std.debug.panic("runtime glyph pages are submitted by the runtime atlas hook", .{}),
+    };
 }
 
 /// Stores a bitmap font under a new handle. The store takes ownership. If the insert fails, the store releases the font
@@ -129,6 +158,37 @@ pub fn insertBfnt(store: *FontStore, font_value: font_mod.Font) InsertError!Font
         state.release(&resource);
         return err;
     };
+}
+
+/// Stores a normalized bitmap font and its uploaded pages. The store releases both descriptor allocations and textures.
+pub fn insertBitmap(store: *FontStore, font_value: font_resource.BitmapFont) InsertError!FontHandle {
+    const state = stateOf(store);
+    var resource = font_resource.FontResource{ .bitmap = font_value };
+    return state.resources.insert(resource) catch |err| {
+        state.release(&resource);
+        return err;
+    };
+}
+
+/// Stores a runtime TrueType face under a new handle. The store takes ownership on entry. The shaper is created once
+/// after the resource reaches its stable registry allocation, because it borrows the face at that address.
+pub fn insertRuntime(store: *FontStore, face: runtime_font.RuntimeFont) InsertError!FontHandle {
+    const state = stateOf(store);
+    var resource = font_resource.FontResource{ .runtime_coverage = .{ .face = face } };
+    const handle = state.resources.insert(resource) catch |err| {
+        state.release(&resource);
+        return err;
+    };
+
+    const stored = state.resources.get(handle) catch unreachable;
+    const runtime = &stored.runtime_coverage;
+    runtime.shaper = shaper.Shaper.init(&runtime.face) catch |err| {
+        var failed = state.resources.remove(handle) catch unreachable;
+        state.release(&failed);
+        return err;
+    };
+    runtime.shaper.?.font_id = handle.id;
+    return handle;
 }
 
 /// Releases every font, then frees the store. Call it once no handle is in use, and before the GPU device is released.
@@ -155,20 +215,71 @@ fn stateOfConst(store: *const FontStore) *const State {
     return @ptrCast(@alignCast(store));
 }
 
+fn resourceOf(state: *State, handle: FontHandle) *font_resource.FontResource {
+    return state.resources.get(handle) catch |err| std.debug.panic("UI font handle {d} does not name a loaded font: {s}", .{ handle.id, @errorName(err) });
+}
+
+fn runtimeShaper(font_value: *font_resource.RuntimeCoverage) *shaper.Shaper {
+    return if (font_value.shaper) |*value| value else unreachable;
+}
+
+fn drawBfntText(font_value: *font_mod.Font, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) void {
+    c.ui_font_draw_text(&font_value.baked, list, x, y, str.ptr, str.len, color);
+}
+
+fn bitmapWidth(font_value: *const @import("bmfont.zig").Font, str: []const u8) f32 {
+    var mapper = bitmap_mapper.Mapper.init(font_value, str);
+    return mapper.width();
+}
+
+fn drawBitmapText(font_value: *const @import("bmfont.zig").Font, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) void {
+    var mapper = bitmap_mapper.Mapper.init(font_value, str);
+    while (mapper.next()) |mapped| {
+        const glyph = mapped.glyph;
+        if (glyph.width == 0 or glyph.height == 0) continue;
+        if (list.count >= c.UI_MAX_QUADS) {
+            list.dropped += 1;
+            continue;
+        }
+        list.items[@intCast(list.count)] = .{
+            .dst = .{
+                .x = @round(x + mapped.pen + @as(f32, @floatFromInt(glyph.x_offset))),
+                .y = @round(y + @as(f32, @floatFromInt(glyph.y_offset))),
+                .w = @floatFromInt(glyph.width),
+                .h = @floatFromInt(glyph.height),
+            },
+            .src = .{
+                .x = @floatFromInt(glyph.x),
+                .y = @floatFromInt(glyph.y),
+                .w = @floatFromInt(glyph.width),
+                .h = @floatFromInt(glyph.height),
+            },
+            .color = color,
+            .page = glyph.page,
+            .solid = 0,
+        };
+        list.count += 1;
+    }
+}
+
 fn bfntFont(state: *State, handle: FontHandle) *font_mod.Font {
-    const resource = state.resources.get(handle) catch |err| std.debug.panic("UI font handle {d} does not name a loaded font: {s}", .{ handle.id, @errorName(err) });
+    const resource = resourceOf(state, handle);
     return switch (resource.*) {
         .bfnt_coverage => |*font_value| font_value,
-        .runtime_coverage => std.debug.panic("UI font handle {d} is an outline font, which the UI cannot draw yet", .{handle.id}),
+        .bitmap => std.debug.panic("UI font handle {d} is a bitmap font, which the C widgets cannot draw", .{handle.id}),
+        .runtime_coverage => std.debug.panic("UI font handle {d} is an outline font, which the C widgets cannot draw", .{handle.id}),
     };
 }
 
 fn statsOf(state: *const State) Stats {
-    var result = Stats{ .fonts = state.resources.count(), .bfnt_coverage = 0, .runtime_coverage = 0 };
+    var result = Stats{ .fonts = state.resources.count(), .bfnt_coverage = 0, .bitmap = 0, .runtime_coverage = 0 };
     for (state.resources.entries.items) |entry| {
         switch (entry.value.*) {
             .bfnt_coverage => {
                 result.bfnt_coverage += 1;
+            },
+            .bitmap => {
+                result.bitmap += 1;
             },
             .runtime_coverage => {
                 result.runtime_coverage += 1;
@@ -182,6 +293,7 @@ fn describeOf(state: *State, handle: FontHandle) Description {
     const resource = state.resources.peek(handle) catch |err| std.debug.panic("UI font handle {d} does not name a loaded font: {s}", .{ handle.id, @errorName(err) });
     return switch (resource.*) {
         .bfnt_coverage => .{ .source = .bfnt_prebaked, .mode = .prebaked_coverage },
+        .bitmap => .{ .source = .bitmap, .mode = .bitmap_coverage },
         .runtime_coverage => .{ .source = .runtime_outline, .mode = .gray_coverage },
     };
 }
@@ -189,6 +301,7 @@ fn describeOf(state: *State, handle: FontHandle) Description {
 // ---- tests -----------------------------------------------------------------
 
 const testing = std.testing;
+const bmfont = @import("bmfont.zig");
 
 /// A font with empty metrics, except for a 1x1 white block at the origin. Its texture comes from the test fixtures: a
 /// texture with no GPU object, so `discard` can free the store without releasing anything.
@@ -240,6 +353,7 @@ test "an empty store reports no fonts" {
     const stats = store.stats();
     try testing.expectEqual(@as(usize, 0), stats.fonts);
     try testing.expectEqual(@as(usize, 0), stats.bfnt_coverage);
+    try testing.expectEqual(@as(usize, 0), stats.bitmap);
     try testing.expectEqual(@as(usize, 0), stats.runtime_coverage);
 }
 
@@ -257,6 +371,115 @@ test "a stored bfnt font is counted as prebaked, and drawn with prebaked coverag
     try testing.expectEqual(Description.Mode.prebaked_coverage, described.mode);
 }
 
+const bitmap_fixture =
+    \\info face="Fixture" size=8 padding=0,0,0,0
+    \\common lineHeight=8 base=7 scaleW=16 scaleH=8 pages=2
+    \\page id=0 file="page.r8"
+    \\page id=1 file="page2.r8"
+    \\chars count=4
+    \\char id=32 x=0 y=0 width=0 height=0 xoffset=0 yoffset=0 xadvance=4 page=0 chnl=15
+    \\char id=63 x=0 y=0 width=8 height=8 xoffset=0 yoffset=0 xadvance=8 page=0 chnl=15
+    \\char id=65 x=8 y=0 width=8 height=8 xoffset=-1 yoffset=2 xadvance=8 page=0 chnl=15
+    \\char id=66 x=0 y=0 width=8 height=8 xoffset=0 yoffset=0 xadvance=8 page=1 chnl=15
+    \\kernings count=1
+    \\kerning first=65 second=65 amount=-1
+;
+
+fn bitmapFixture() !font_resource.BitmapFont {
+    const fixtures = @import("../test_fixtures.zig");
+    const descriptor = try bmfont.parse(testing.allocator, bitmap_fixture, .{}, null);
+    const pages = try testing.allocator.alloc(Texture, 2);
+    pages[0] = fixtures.texture(16, 8);
+    pages[1] = fixtures.texture(16, 8);
+    return .{ .allocator = testing.allocator, .descriptor = descriptor, .pages = pages };
+}
+
+test "bitmap text shares measurement and quad submission with authored offsets, fallback, and kerning" {
+    const store = try countingStore(testing.allocator);
+    const handle = try insertBitmap(store, try bitmapFixture());
+    defer destroy(store);
+
+    store.check(handle);
+    try testing.expectEqual(@as(f32, 8), store.lineHeight(handle));
+    try testing.expectEqual(@as(f32, 15), store.textWidth(handle, "AA"));
+    try testing.expectEqual(@as(f32, 16), store.textWidth(handle, "AZ"));
+    try testing.expectEqual(@as(usize, 1), store.stats().bitmap);
+    try testing.expectEqual(Description.Source.bitmap, store.describe(handle).source);
+    try testing.expectEqual(Description.Mode.bitmap_coverage, store.describe(handle).mode);
+
+    var list = std.mem.zeroes(c.ui_quad_list);
+    try store.drawText(handle, &list, 10.4, 20.6, "AA", .{ .r = 1, .g = 1, .b = 1, .a = 1 });
+    try testing.expectEqual(@as(c_int, 2), list.count);
+    try testing.expectEqual(@as(u32, 0), list.items[0].page);
+    try testing.expectEqual(@as(f32, 8), list.items[0].src.x);
+    try testing.expectEqual(@as(f32, 8), list.items[0].src.w);
+    try testing.expectEqual(@as(f32, 9), list.items[0].dst.x);
+    try testing.expectEqual(@as(f32, 23), list.items[0].dst.y);
+    try testing.expectEqual(@as(f32, 16), list.items[1].dst.x);
+    try testing.expectEqual(@as(*const Texture, &resourceOf(stateOf(store), handle).bitmap.pages[0]), glyphTextureForPageOf(store, handle, 0));
+
+    list.count = 0;
+    try store.drawText(handle, &list, 0, 0, "AB", .{ .r = 1, .g = 1, .b = 1, .a = 1 });
+    try testing.expectEqual(@as(u32, 0), list.items[0].page);
+    try testing.expectEqual(@as(u32, 1), list.items[1].page);
+    try testing.expectEqual(@as(*const Texture, &resourceOf(stateOf(store), handle).bitmap.pages[1]), glyphTextureForPageOf(store, handle, 1));
+}
+
+test "runtime fonts share metrics and measurement, and pass check without enabling drawing" {
+    const store = try create(testing.allocator);
+    defer destroy(store);
+    const handle = try insertRuntime(store, try runtimeFixture());
+
+    store.check(handle);
+    const resource = resourceOf(stateOf(store), handle);
+    try testing.expectEqual(resource.metrics().line_height, store.lineHeight(handle));
+    try testing.expectEqual(@as(usize, 1), store.stats().runtime_coverage);
+    try testing.expectEqual(Description.Source.runtime_outline, store.describe(handle).source);
+
+    const expected = try runtimeShaper(&resource.runtime_coverage).measure("AV", .{});
+    try testing.expectEqual(expected, store.textWidth(handle, "AV"));
+    try testing.expectEqual(handle.id, runtimeShaper(&resource.runtime_coverage).font_id);
+
+    var list = std.mem.zeroes(c.ui_quad_list);
+    try testing.expectError(error.RuntimeDrawingUnavailable, store.drawText(handle, &list, 0, 0, "A", .{
+        .r = 1,
+        .g = 1,
+        .b = 1,
+        .a = 1,
+    }));
+    try testing.expectEqual(@as(c_int, 0), list.count);
+}
+
+test "destroy releases an inserted runtime face and its shaper exactly once" {
+    const store = try countingStore(testing.allocator);
+    _ = try insertRuntime(store, try runtimeFixture());
+    try testing.expectEqual(@as(usize, 0), released_count);
+    destroy(store);
+    try testing.expectEqual(@as(usize, 1), releasesOf(16));
+}
+
+test "a runtime insert that fails to allocate releases the face once" {
+    var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 1 });
+    const store = try countingStore(failing.allocator());
+    try testing.expectError(error.OutOfMemory, insertRuntime(store, try runtimeFixture()));
+    try testing.expectEqual(@as(usize, 1), releasesOf(16));
+    try testing.expectEqual(@as(usize, 0), count(store));
+    destroy(store);
+    try testing.expectEqual(@as(usize, 1), released_count);
+}
+
+test "a runtime insert at id exhaustion releases its face and keeps stored fonts" {
+    const store = try countingStore(testing.allocator);
+    _ = try insertBfnt(store, markedFont(61));
+    stateOf(store).resources.next_id = std.math.maxInt(font_registry.FontId);
+    try testing.expectError(error.FontIdExhausted, insertRuntime(store, try runtimeFixture()));
+    try testing.expectEqual(@as(usize, 1), releasesOf(16));
+    try testing.expectEqual(@as(usize, 1), count(store));
+    destroy(store);
+    try testing.expectEqual(@as(usize, 1), releasesOf(61));
+    try testing.expectEqual(@as(usize, 2), released_count);
+}
+
 // ---- ownership: who releases a font, and when ------------------------------------------------------------------------
 //
 // These tests count releases with `recordRelease`, a stand-in for `FontResource.deinit`. A font's marker is its line
@@ -267,14 +490,31 @@ var released_markers: [8]c_int = undefined;
 var released_count: usize = 0;
 
 fn recordRelease(resource: *font_resource.FontResource) void {
+    var needs_provider_deinit = false;
     switch (resource.*) {
         .bfnt_coverage => |f| {
             released_markers[released_count] = f.baked.line_height;
             released_count += 1;
         },
-        .runtime_coverage => @panic("the store test holds only bfnt fonts"),
+        .bitmap => |*f| {
+            released_markers[released_count] = f.descriptor.size;
+            released_count += 1;
+            f.descriptor.deinit();
+            f.allocator.free(f.pages);
+            resource.* = undefined;
+            return;
+        },
+        .runtime_coverage => |f| {
+            released_markers[released_count] = @intFromFloat(f.face.pixel_height);
+            released_count += 1;
+            needs_provider_deinit = true;
+        },
     }
-    resource.* = undefined;
+    if (needs_provider_deinit) {
+        resource.deinit();
+    } else {
+        resource.* = undefined;
+    }
 }
 
 /// How many releases carried `marker`.
@@ -295,6 +535,16 @@ fn markedFont(marker: c_int) font_mod.Font {
     var font_value = emptyFont();
     font_value.baked.line_height = marker;
     return font_value;
+}
+
+fn runtimeFixture() !runtime_font.RuntimeFont {
+    const blob = runtime_font.hb.hb_blob_create_from_file_or_fail("assets/font.ttf") orelse return error.FixtureMissing;
+    defer runtime_font.hb.hb_blob_destroy(blob);
+    var len: c_uint = 0;
+    const data = runtime_font.hb.hb_blob_get_data(blob, &len);
+    if (data == null or len == 0) return error.FixtureMissing;
+    const ptr: [*]const u8 = @ptrCast(data);
+    return runtime_font.RuntimeFont.init(testing.allocator, ptr[0..@as(usize, len)], 16);
 }
 
 test "the store owns a font once it is inserted, so the insert releases nothing" {
