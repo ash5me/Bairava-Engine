@@ -11,11 +11,15 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const shapes = @import("../physics/shapes.zig");
 const types = @import("../platform/types.zig");
 
-/// A position in world pixels. Positional sounds and the listener use the same space.
-pub const Point = shapes.Point;
+/// A position in world pixels. Z is height off the gameplay plane, not draw order.
+pub const Point = struct {
+    x: f32,
+    y: f32,
+    /// Height off the gameplay plane, in world pixels. Not sprite `.z` or `depth_y`.
+    z: f32 = 0,
+};
 
 /// The range a positional sound uses when its caller gives none, in pixels: ten tiles.
 pub const default_range: f32 = 160;
@@ -53,7 +57,8 @@ pub fn clampPan(pan: f32) f32 {
 pub fn mix(listener: Point, source: Point, range: f32) Mix {
     const dx = source.x - listener.x;
     const dy = source.y - listener.y;
-    const distance = @sqrt(dx * dx + dy * dy);
+    const dz = source.z - listener.z;
+    const distance = @sqrt(dx * dx + dy * dy + dz * dz);
     if (!std.math.isFinite(distance)) return .{ .attenuation = 0, .pan = 0 };
     const r = usableRange(range);
     return .{
@@ -206,6 +211,46 @@ test "a range that is not finite uses the default, and a tiny one is raised to t
 test "a source without a finite position is silent" {
     const listener = Point{ .x = 0, .y = 0 };
     const lost = mix(listener, .{ .x = std.math.nan(f32), .y = 0 }, 160);
+    try expectEqual(@as(f32, 0), lost.attenuation);
+    try expectEqual(@as(f32, 0), lost.pan);
+}
+
+test "height attenuates loudness without changing horizontal pan" {
+    const listener = Point{ .x = 0, .y = 0 };
+    const level = mix(listener, .{ .x = 0, .y = 0, .z = 80 }, 160);
+    try expectApproxEqAbs(@as(f32, 0.5), level.attenuation, 1e-6);
+    try expectEqual(@as(f32, 0), level.pan);
+
+    const with_horizontal_offset = mix(listener, .{ .x = 160, .y = 0, .z = 160 }, 160);
+    const xy_only = mix(listener, .{ .x = 160, .y = 0 }, 160);
+    try expectEqual(xy_only.pan, with_horizontal_offset.pan);
+    try expectEqual(@as(f32, 0), with_horizontal_offset.attenuation);
+}
+
+test "height and planar offsets share the same distance and sign does not matter" {
+    const listener = Point{ .x = 0, .y = 0 };
+    const above = mix(listener, .{ .x = 0, .y = 0, .z = 160 }, 160);
+    try expectEqual(@as(f32, 0), above.attenuation);
+    try expectEqual(@as(f32, 0), above.pan);
+
+    const three_four_five = mix(listener, .{ .x = 0, .y = 4, .z = 3 }, 160);
+    try expectApproxEqAbs(@as(f32, 1.0 - 5.0 / 160.0), three_four_five.attenuation, 1e-6);
+    try expectEqual(@as(f32, 0), three_four_five.pan);
+
+    const below = mix(listener, .{ .x = 0, .y = 0, .z = -80 }, 160);
+    try expectApproxEqAbs(@as(f32, 0.5), below.attenuation, 1e-6);
+}
+
+test "equal listener and source heights retain full loudness" {
+    const listener = Point{ .x = 12, .y = 34, .z = 48 };
+    const placed = mix(listener, .{ .x = 12, .y = 34, .z = 48 }, 160);
+    try expectEqual(@as(f32, 1), placed.attenuation);
+    try expectEqual(@as(f32, 0), placed.pan);
+}
+
+test "a non-finite height makes a positional sound silent and centered" {
+    const listener = Point{ .x = 0, .y = 0 };
+    const lost = mix(listener, .{ .x = 80, .y = 0, .z = std.math.nan(f32) }, 160);
     try expectEqual(@as(f32, 0), lost.attenuation);
     try expectEqual(@as(f32, 0), lost.pan);
 }
