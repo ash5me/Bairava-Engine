@@ -1,0 +1,57 @@
+D-09 font8x8_basic asset: generation and validation report
+Date: 2026-11-19
+Spec: grayscale coverage (8-bit L, 0 = no ink, 255 = full ink, binary glyphs; alpha not used;
+      red channel as coverage, chnl=4; nearest sampling; no mipmaps)
+
+SOURCE
+  Repository: https://github.com/dhepper/font8x8
+  Commit:     4876b70490600222f30bb9acd2c02868e390bb56
+  File:       font8x8_basic.h
+  SHA-256:    49d8df366296b203ca3211bc0672cf2a762135bf12710735b6292756b19dffd5
+  Provenance: the codeload tarball and raw URLs resolve at this SHA. The commit API rate-limited the
+              check, so commit metadata was not read. No LICENSE file exists upstream. The README and
+              each header state "License: Public Domain".
+
+OUTPUTS
+  font8x8_basic.png          sha256 b01ee8e2a8f4574099940b6dfc920c0186be3c391d1a647e9336933d88b3d513
+  font8x8_basic.fnt          sha256 afd0fe0bbd531cb642978e777ebb58c76325d4b15d30afef90a0b1ebe066d25c
+  font8x8_basic.NOTICE.txt   sha256 75604a6dbaea35085db943951786e3b0b6f7aa030d32d09d769b2fad4c09d414
+  gen_font8x8_asset.py       sha256 55b50f48dd4074a46b9fbbb1adcc2e6f903d251f0dd8dd1bea9a2dd7de21ef6c
+
+CHECKS THAT PASSED
+  1. Generator refuses any source whose SHA-256 differs from the pinned value.
+  2. PNG, read by an independent decoder (no PIL): IHDR 128x48, bit depth 8, colour type 0 (grayscale),
+     no alpha, non-interlaced, valid CRCs, filters 0/1/2/4 decoded, pixel values only 0 and 255.
+  3. Descriptor to atlas: 95 char lines; 6016 glyph pixels compared against the source table, 0 mismatches.
+     Space: width 0, height 0, advance 8. Fallback '?' (63): x=120, y=8. Cells past U+007E are empty.
+  4. Channel metadata: every char line has chnl=4 (red). common: packed=0, alphaChnl=4, redChnl=0,
+     greenChnl=4, blueChnl=4 (glyph data in red; the other channels are constant, alpha not used).
+  5. Repo reference model, checks/bmfont_model.py: parse OK (schema 1, 95 glyphs, 1 page);
+     check_descriptor passes with a 128x48 page and reports a size mismatch for a 128x64 page;
+     model self-test 20 of 20 cases pass.
+  6. Baseline: base=7 (matches the repository's own parser fixture). Uppercase and most lowercase end in
+     row 6. Only ,;_gjpqy reach row 7, which is the descender row.
+
+NOT VERIFIED HERE
+  - The Zig parser and importer were not compiled or run (the sandbox has no Zig toolchain). The Python
+    model mirrors the parser's rules; it is supporting evidence only, not a gate run.
+  - The R8 upload, the sampling shader, and the colour modulation are not implemented or rendered.
+  - Channel semantics are taken from the AngelCode format as I understand it (chnl bitmask: 1 blue,
+    2 green, 4 red, 8 alpha; common fields: 0 glyph, 1 outline, 3 zero, 4 one). The format document
+    could not be fetched from the sandbox, so confirm these against it.
+
+FINDINGS FOR THE IMPLEMENTATION
+  a. The existing image path (tools/assets/build.c, build_texture_variants) decodes every image with
+     stbi_load(..., 4), builds RGBA8, and encodes BC1 and BC3 variants. A page declared as an ordinary
+     image row would lose the R8 format and gain unused colour data. The bitmap_font row must copy its
+     page through as a coverage asset, not through build_texture_variants.
+  b. The parser stores chnl on each glyph but checks only that it is at most 15. It ignores the common
+     channel fields. A missing chnl defaults to 15 (all channels), which is wrong for an R8 page. The
+     importer should require chnl=4 on every glyph of this page and redChnl=0 in the common line.
+  c. The repository's parser fixture declares alphaChnl=1 and greenChnl/blueChnl=0. That does not match a
+     red-only glyph page. Do not copy it into the D-09 asset.
+  d. The descriptor cannot hold comments: the parser rejects unknown tags. The coverage meaning must be
+     documented in the bitmap_font provider and the NOTICE file, not in the .fnt.
+  e. Glyph identity is still the BMFont id as codepoint (no glyph_index field). No change from the
+     accepted decision.
+  f. The asset is not yet listed in assets/asset_manifest.txt. The bitmap_font row kind does not exist yet.
