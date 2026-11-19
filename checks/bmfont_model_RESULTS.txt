@@ -17,4 +17,5 @@ PASS value that does not parse is rejected
 PASS unclosed quote is malformed
 PASS base past line height is rejected
 PASS surrogate codepoint is rejected
-19 of 19 cases pass
+PASS page checks: matching size, wrong size, missing image, count mismatch, unmapped kerning, malformed line
+20 of 20 cases pass

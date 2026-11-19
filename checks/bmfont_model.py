@@ -1,4 +1,4 @@
-"""Reference model of src/engine/text/bmfont.zig, run on the same 19 cases as its Zig tests.
+"""Reference model of src/engine/text/bmfont.zig and src/engine/assets/bmfont_check.zig, run on the Zig test cases.
 
 This checks the algorithm and the test expectations against each other. It does not compile or run the Zig code, so it is
 supporting evidence only. It does not close any environment gate (plan section 6.4).
@@ -431,6 +431,64 @@ CASES = [
         INFO + COMMON + PAGE + "chars count=1\n" +
         "char id=55296 x=0 y=0 width=0 height=0 xoffset=0 yoffset=0 xadvance=0 page=0\n",
         "InvalidCodepoint", fl)),
+]
+
+
+
+# ---- page and descriptor checks, mirroring src/engine/assets/bmfont_check.zig ---------------------------------------
+
+def check_descriptor(text, page_images):
+    """Returns the (line, message-key) issues a descriptor produces, in the order the Zig check reports them."""
+    issues = []
+    try:
+        font = parse(text)
+    except Err as e:
+        if e.name == "UnmappedKerning":
+            issues.append((e.line, f"kerning pair {e.diag['kerning_first']} {e.diag['kerning_second']} "
+                                   f"names glyph {e.diag['unmapped_id']}, which the font does not map"))
+        else:
+            issues.append((e.line, e.name))
+        return issues
+    if len(page_images) != len(font["pages"]):
+        issues.append((0, "page count"))
+        return issues
+    for page, image in zip(font["pages"], page_images):
+        if image is None:
+            issues.append((0, f"the image for page {page['id']} is missing or is not a PNG"))
+        elif image != (font["scale_w"], font["scale_h"]):
+            issues.append((0, f"page {page['id']} is {image[0]}x{image[1]}, but scaleW and scaleH give "
+                              f"{font['scale_w']}x{font['scale_h']}"))
+    return issues
+
+
+CHECK_DESCRIPTOR = ("info size=8\ncommon lineHeight=8 base=7 scaleW=128 scaleH=48 pages=1\n"
+                    'page id=0 file="p.png"\nchars count=1\n'
+                    "char id=63 x=0 y=0 width=8 height=8 xoffset=0 yoffset=0 xadvance=8 page=0\n")
+
+
+def check_cases(failures_list):
+    d = CHECK_DESCRIPTOR
+    fail = []
+    issues = check_descriptor(d, [(128, 48)])
+    check(issues == [], "matching page passes", fail)
+    issues = check_descriptor(d, [(256, 48)])
+    check(len(issues) == 1 and "page 0" in issues[0][1], "wrong size names page 0", fail)
+    issues = check_descriptor(d, [None])
+    check(len(issues) == 1, "missing image reported", fail)
+    issues = check_descriptor(d, [(128, 48), (128, 48)])
+    check(len(issues) == 1, "page count mismatch reported", fail)
+    issues = check_descriptor(d + "kernings count=1\nkerning first=63 second=66 amount=-1\n", [(128, 48)])
+    check(len(issues) == 1 and issues[0][0] == 7, "unmapped kerning on line 7", fail)
+    check(len(issues) == 1 and "kerning pair 63 66" in issues[0][1] and "names glyph 66" in issues[0][1],
+          "unmapped kerning message names pair and id", fail)
+    issues = check_descriptor("info size=8\nbogus x=1\n", [(128, 48)])
+    check(len(issues) == 1 and issues[0][0] == 2, "malformed line 2", fail)
+    failures_list.extend(fail)
+
+
+CASES += [
+    ("page checks: matching size, wrong size, missing image, count mismatch, unmapped kerning, malformed line",
+     check_cases),
 ]
 
 
