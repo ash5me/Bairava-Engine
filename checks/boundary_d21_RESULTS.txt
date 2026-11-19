@@ -1,26 +1,67 @@
-Boundary scanner: D-21 and HarfBuzz checks, verification record
-==============================================================
-Recorded 2026-11-19 in the sandbox. This is sandbox evidence for a static check. It is not an environment gate
-(plan section 6.4). It does not compile Zig.
+D-21 boundary gate: results, 2026-11-19 (owner decision: D21_DEBT empty, no allowances)
+Environment: sandbox. No Zig toolchain is installed here, so nothing below compiles the Zig change.
+Owner run (Windows, zig build test, same day): one compile error in the font_store.zig test helper, fixed here. Not rerun.
+What these runs are: scripts/boundary_scan.py (text-based), its self-test, and the negative-test suite.
+They are not evidence of a Zig build or test run.
 
-What changed
-- scripts/boundary_scan.py: new D-21 section (public-surface scan from src/engine/bairava.zig, the D21_DEBT list,
-  and a HarfBuzz scan outside src/engine/text/). --fail also fails on new exposures, stale debt entries, and
-  HarfBuzz names. The SDL logic is unchanged.
-- checks/boundary_d21_negative_tests.py: seven end-to-end cases in scratch copies of the repository.
+== scripts/boundary_scan.py --fail  (exit 0) ==
+Platform-boundary scan (migration.md P0.5)
+Scanned 164 files under src/ (151 .zig, 13 .c/.h).
+Reachable .zig from src/main.zig, src/engine/core/engine.zig, src/tests.zig, src/engine_api_test.zig: 142. Unreachable .zig: 9.
 
-Commands (from the repository root)
-  python3 scripts/boundary_scan.py --self-test
-  python3 scripts/boundary_scan.py --fail
-  python3 checks/boundary_d21_negative_tests.py
+REACHABLE VIOLATIONS: 0 line(s) in 0 file(s) (warning)
 
-1. Self-test
-Boundary self-test: 3/3 negative fixtures rejected; 4/4 public-surface and HarfBuzz cases as expected
-self-test exit 0
+ALLOWED HITS (not violations)
+  src/engine/platform/platform.zig: backend_import 8  [platform facade: forwards engine-facing calls to the SDL backend]
+  src/engine/platform/sdl/audio.zig: sdl_name 45, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/clock.zig: sdl_name 2, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/files.zig: sdl_name 29, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/gamepad.zig: sdl_name 44, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/gpu.zig: sdl_name 33, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/init.zig: sdl_name 7, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/input.zig: sdl_name 116, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/renderer2d.zig: sdl_name 30, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/sdl.zig: sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/platform/sdl/window.zig: sdl_name 13, sdl_import 1  [platform/sdl: the SDL implementation]
+  src/engine/renderer/backends/sdl_gpu/backend.zig: sdl_name 5, sdl_import 1  [SDL GPU backend: passes, shaders, textures, sprite pipelines and buffers]
+  src/engine/renderer/backends/sdl_gpu/pass.zig: sdl_name 12, sdl_import 1  [SDL GPU backend: passes, shaders, textures, sprite pipelines and buffers]
+  src/engine/renderer/backends/sdl_gpu/post.zig: sdl_name 6, sdl_import 1  [SDL GPU backend: passes, shaders, textures, sprite pipelines and buffers]
+  src/engine/renderer/backends/sdl_gpu/shader.zig: sdl_name 23, sdl_import 1  [SDL GPU backend: passes, shaders, textures, sprite pipelines and buffers]
+  src/engine/renderer/backends/sdl_gpu/sprite.zig: sdl_name 101, sdl_import 1  [SDL GPU backend: passes, shaders, textures, sprite pipelines and buffers]
+  src/engine/renderer/backends/sdl_gpu/texture.zig: sdl_name 75, sdl_import 1  [SDL GPU backend: passes, shaders, textures, sprite pipelines and buffers]
+  src/tests.zig: backend_import 7  [imports SDL backend modules so their platform tests are included]
 
-2. Scan, deliverable tree
+UNREACHABLE FILES WITH HITS (dead code; Step 1 candidates, not warned)
+  src/engine/renderer/shader.zig: sdl_name 19, sdl_import 1
+
+INFORMATION: SDL names that appear only inside string literals
+  src/engine/core/application.zig: lines 29
+  src/engine/core/lifecycle.zig: lines 187
+
 PUBLIC SURFACE AND HARFBUZZ NAMES (D-21, plan section 6.2)
-Public root src/engine/bairava.zig: 75 surface(s), 35 whole module(s) and 40 declaration(s).
+Public root src/engine/bairava.zig: 379 surface(s), 42 whole module(s) and 337 declaration(s).
+KNOWN EXPOSURES (debt listed in D21_DEBT): 0 line(s)
+NEW EXPOSURES: 0
+STALE DEBT ENTRIES: 0
+HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+
+
+== scripts/boundary_scan.py --self-test  (exit 0) ==
+Boundary self-test: 3/3 negative fixtures rejected; 4/4 public-surface and HarfBuzz cases as expected
+
+== checks/boundary_d21_negative_tests.py  (exit 0) ==
+PASS N1 new pub fn exposing the registry in ui.zig: exit 1; NEW EXPOSURES: 1  (fails --fail); STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N2 HarfBuzz name in a reachable file outside the text package: exit 1; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 1  (fails --fail)
+PASS N3 approved-debt entry that matches no line (stale): exit 1; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 1  (fails --fail: remove from D21_DEBT); HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N4 private struct holding the registry (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N5 texture staging type, not a font type (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N6 public function that takes only FontHandle (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N7 public root re-exports the registry: exit 1; NEW EXPOSURES: 1  (fails --fail); STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N8 leak through a method of FontStore, reached by a clean re-export (must fail): exit 1; NEW EXPOSURES: 1  (fails --fail); STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N9 private type alias to the registry, used as a field type (must fail): exit 1; NEW EXPOSURES: 1  (fails --fail); STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+9/9 cases as expected
+
+== Same scanner on the ORIGINAL upload, with its original 7-entry debt list restored ==
 KNOWN EXPOSURES (debt listed in D21_DEBT): 7 line(s)
   src/engine/core/context.zig:182 [field] fonts: *font_resource.Resources,
       Context.fonts field holds the internal font registry
@@ -36,35 +77,8 @@ KNOWN EXPOSURES (debt listed in D21_DEBT): 7 line(s)
       Canvas.create takes the internal font registry
   src/engine/ui/ui.zig:201 [pub fn] pub fn init(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Ui {
       Ui.init takes the internal font registry
-NEW EXPOSURES: 0
+NEW EXPOSURES: 2  (fails --fail)
+  src/engine/text/font.zig:16 [field] baked: c.ui_font,
+  src/engine/text/font.zig:19 [pub fn] pub fn deinit(self: *Font) void {
 STALE DEBT ENTRIES: 0
-HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
-
-scan --fail exit 0
-
-SDL section: identical to the upload's report (same run, lines before the D-21 section).
-
-3. End-to-end cases
-PASS N1 new pub fn exposing the registry in a debt-listed file: exit 1; NEW EXPOSURES: 1  (fails --fail); STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
-PASS N2 HarfBuzz name in a reachable file outside the text package: exit 1; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 1  (fails --fail)
-PASS N3 debt entry whose line was removed (stale): exit 1; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 1  (fails --fail: remove from D21_DEBT); HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
-PASS N4 private struct holding the registry (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
-PASS N5 texture staging type, not a font type (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
-PASS N6 public function that takes only FontHandle (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
-PASS N7 public root re-exports the registry: exit 1; NEW EXPOSURES: 1  (fails --fail); STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
-7/7 cases as expected
-negative tests exit 0
-
-Mutation check on the self-test (each rule broken in a scratch copy):
-  drop staging lookbehind ................ caught
-  field rule ignores struct kind ......... caught
-  drop C include check ................... caught
-  drop test-block skip ................... not a valid mutant. The rule could not match any valid Zig line, so it was
-                                           removed from the scanner rather than given a fixture.
-
-Limits (also in the scanner's docstring)
-- Text-based. It does not compile Zig, and it does not resolve types through names that are not themselves
-  forbidden, so a forbidden type reached only through such a name is found only if that name's declaration is on
-  the surface.
-- The seven known exposures are an owner decision. The debt list is what lets the gate pass today; removing an
-  entry without fixing its exposure makes the gate fail, and so does adding a new exposure.
+Two of the nine are unlisted: font.zig:16 and font.zig:19, both reachable through the old ui.Font re-export.

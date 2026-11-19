@@ -86,7 +86,7 @@ test "engine resource fields do not expose SDL types" {
     expectNoSdlApi(bairava.Texture);
     expectNoSdlApi(bairava.SpriteBatch);
     expectNoSdlApi(bairava.LoadedAtlas);
-    expectNoSdlApi(bairava.ui.Font);
+    expectNoSdlApi(bairava.ui.FontHandle);
     expectNoSdlApi(bairava.ui.Ui);
     expectNoSdlApi(bairava.audio.Audio);
     expectNoSdlApi(bairava.audio.Sound);
@@ -111,8 +111,8 @@ test "engine resource types do not publish backend operations" {
     try std.testing.expect(!@hasDecl(bairava.SpriteBatch, "init"));
     try std.testing.expect(!@hasDecl(bairava.SpriteBatch, "upload"));
     try std.testing.expect(!@hasDecl(bairava.SpriteBatch, "draw"));
-    try std.testing.expect(!@hasDecl(bairava.ui.Font, "load"));
-    try std.testing.expect(!@hasDecl(bairava.ui.Font, "bake"));
+    try std.testing.expect(!@hasDecl(bairava.ui.FontStore, "load"));
+    try std.testing.expect(!@hasDecl(bairava.ui.FontStore, "bake"));
 }
 
 fn expectNoSdlApi(comptime T: type) void {
@@ -190,18 +190,10 @@ test "game rebinding rolls back when saving settings fails" {
     try std.testing.expectEqual(previous, bindings.bindingsOf(.move_left)[0]);
 }
 
-test "Canvas text layout validates dimensions through the public UI API" {
-    var fonts = bairava.ui.Fonts.init(std.testing.allocator);
-    defer fonts.deinit();
-    const handle = try fonts.insert(.{ .bfnt_coverage = .{
-        .baked = .{ .line_height = 10 },
-        .texture = undefined,
-    } });
-    const canvas = bairava.ui.Canvas{
-        .allocator = std.testing.allocator,
-        .fonts = &fonts,
-        .font = handle,
-        .list = undefined,
-    };
-    try std.testing.expectError(error.InvalidWidth, canvas.layoutText(std.testing.allocator, "text", 0, .left));
+test "the public UI API names the font store but cannot create, insert, or remove fonts" {
+    try std.testing.expect(@typeInfo(bairava.ui.FontStore) == .@"opaque");
+    try std.testing.expect(!@hasDecl(bairava.ui, "Font"));
+    try std.testing.expect(!@hasDecl(bairava.ui, "Fonts"));
+    try std.testing.expect(!@hasDecl(bairava.ui.FontStore, "insert"));
+    try std.testing.expect(!@hasDecl(bairava.ui.FontStore, "remove"));
 }

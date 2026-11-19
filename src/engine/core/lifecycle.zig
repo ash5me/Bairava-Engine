@@ -29,7 +29,7 @@ const jobs = @import("../jobs/jobs.zig");
 const staging = @import("../assets/staging.zig");
 const texture_stream = @import("texture_stream.zig");
 const glyph_check = @import("../renderer/glyph_check.zig");
-const font_resource = @import("../text/font_resource.zig");
+const font_store = @import("../text/font_store.zig");
 
 /// The most jobs the pool queues before a submit runs its job on the calling thread instead.
 const job_queue_capacity: u32 = 256;
@@ -83,9 +83,9 @@ pub const Session = struct {
     ctx: Context = undefined,
     /// Textures registered by name. It lives in the engine arena, so the context can point at it.
     textures: *context.TextureStore = undefined,
-    /// The registry of loaded fonts. The session creates it before the context and releases it in `stop`, after the
+    /// The store of loaded fonts. The session creates it before the context and destroys it in `stop`, after the
     /// game and overlay have released their handles, and before the GPU device.
-    fonts: *font_resource.Resources = undefined,
+    fonts: *font_store.FontStore = undefined,
     fonts_ready: bool = false,
     /// Worker threads for background work. Created after the platform starts, and joined before the textures close.
     jobs_pool: jobs.Pool = undefined,
@@ -180,8 +180,7 @@ pub const Session = struct {
         // textures through the context, so the store is set up once the context exists.
         self.stage = .textures;
         self.textures = try self.engine_allocator.create(context.TextureStore);
-        self.fonts = try self.engine_allocator.create(font_resource.Resources);
-        self.fonts.* = font_resource.Resources.init(self.engine_allocator);
+        self.fonts = try font_store.create(self.engine_allocator);
         self.fonts_ready = true;
         self.reloads.stat = hotReloadStamp;
         if (application.resolveRenderer(config.renderer) != config.renderer) {
@@ -284,9 +283,8 @@ pub const Session = struct {
         if (self.fonts_ready) {
             // The fonts' GPU textures may still be read by frames in flight, so the GPU must be idle before they go.
             platform.gpu.waitIdle(self.gpu.device);
-            const loaded = self.fonts.count();
-            self.fonts.deinitWith(&font_resource.FontResource.deinit);
-            self.engine_allocator.destroy(self.fonts);
+            const loaded = font_store.count(self.fonts);
+            font_store.destroy(self.fonts);
             self.fonts_ready = false;
             elog.info("font registry at shutdown: {d} font(s) released", .{loaded});
         }

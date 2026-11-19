@@ -21,7 +21,7 @@ const texture_renderer = @import("../renderer/texture.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 const font = @import("../text/font.zig");
 const font_registry = @import("../text/font_registry.zig");
-const font_resource = @import("../text/font_resource.zig");
+const font_store = @import("../text/font_store.zig");
 const Input = @import("../input/input.zig").Input;
 const collector = @import("../diagnostics/collector.zig");
 const debug_draw = @import("../diagnostics/debug_draw.zig");
@@ -177,9 +177,9 @@ pub const Context = struct {
     immediate_present_supported: bool = false,
     /// Textures registered by name and loaded on first use. The texture functions below use it.
     textures: *TextureStore,
-    /// Fonts loaded by `loadFont`. The session owns the registry and releases it at shutdown. Game code holds the
-    /// handles, and reads through `fontOf`.
-    fonts: *font_resource.Resources,
+    /// Fonts loaded by `loadFont`. The session owns the store and releases it at shutdown. Game code holds the
+    /// handles, and draws and measures with them through `Canvas` and `Ui`.
+    fonts: *font_store.FontStore,
     /// The allocator for memory that worker threads touch, such as decoded textures. It must be safe to use from
     /// several threads. The engine passes the page allocator, which is.
     worker_allocator: std.mem.Allocator = std.heap.page_allocator,
@@ -453,11 +453,6 @@ pub const Context = struct {
         platform.gpu.waitIdle(contextGpuDevice(self));
     }
 
-    /// The font `handle` names, for reading. An invalid or stale handle fails, as `Registry.peek` does.
-    pub fn fontOf(self: *const Context, font_handle: font_registry.FontHandle) font_registry.LookupError!*const font_resource.FontResource {
-        return self.fonts.peek(font_handle);
-    }
-
     /// Loads a prebaked UI font from its `.bfnt` file, which must have been baked at `pixel_height`. Missing or
     /// malformed files return an error instead of crashing startup.
     pub fn loadFont(self: *const Context, relative: []const u8, pixel_height: f32) AssetError!font_registry.FontHandle {
@@ -481,14 +476,11 @@ pub const Context = struct {
             const payload = bytes orelse return error.FileNotFound;
             staged = font.stage(payload, pixel_height) catch return error.FontLoadFailed;
         }
-        var resource = font_resource.FontResource{ .bfnt_coverage = staged.upload(self.allocators.asset, contextGpuDevice(self)) };
-        return self.fonts.insert(resource) catch |err| {
-            // Nothing was stored, so the font is still ours to release.
-            resource.deinit();
-            return switch (err) {
-                error.OutOfMemory => error.OutOfMemory,
-                error.FontIdExhausted => error.FontLoadFailed,
-            };
+        const font_value = staged.upload(self.allocators.asset, contextGpuDevice(self));
+        // The store releases the font itself when the insert fails, so nothing is left for this function to clean up.
+        return font_store.insertBfnt(self.fonts, font_value) catch |err| switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.FontIdExhausted => error.FontLoadFailed,
         };
     }
 

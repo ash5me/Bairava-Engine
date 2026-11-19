@@ -34,10 +34,15 @@ appear only inside strings (for example a panic message) are listed as
 information, not as violations.
 
 D-21 (plan section 6.2): a second, text-based check. It follows the public root src/engine/bairava.zig through
-its re-exports and flags a HarfBuzz name, or an internal font-resource name, where it appears on that surface:
-in a re-export, a pub fn signature, or a field of a pub struct. Known exposures are listed in D21_DEBT by exact
-line text. A new exposure, a stale debt entry, or a HarfBuzz name outside src/engine/text/ fails --fail. The
-check does not compile Zig, and it does not follow a type through a name that is not itself forbidden.
+its re-exports. Each whole-module surface is expanded: every public re-export in it is followed into the
+declaration it names, so a declaration reached through a clean re-export name is scanned too. The check flags a
+HarfBuzz name, or an internal font-resource name, where it appears on that surface: in a re-export, a pub fn
+signature, a field of a pub struct, or a private top-level type alias in a surface file (a private alias can be
+re-exported later, or used as a field type). D21_DEBT lists approved exposures by exact line text, and is empty
+(owner decision, 2026-11-19: no allowances). A new exposure, a stale debt entry, or a HarfBuzz name outside
+src/engine/text/ fails --fail. The check does not compile Zig. It does not resolve a field or parameter type
+through a local name that is not itself a re-export, so the names it can judge are the ones written in the
+source.
 
 Usage:
   python3 scripts/boundary_scan.py                 report; exit 0
@@ -261,29 +266,15 @@ FN_HDR_RE = re.compile(r"^\s*(pub\s+)?fn\b")
 TEST_HDR_RE = re.compile(r"^\s*test\b")
 PUB_FN_RE = re.compile(r"^\s*pub\s+fn\b")
 FIELD_RE = re.compile(r"^\s+(?:pub\s+)?[A-Za-z_]\w*\s*:\s*(.+?),?\s*$")
+# A private top-level type alias: `const X = <type path>;` on one line. Struct, union, enum, opaque, and fn
+# declarations are excluded, and so is any right-hand side with a brace, so a private helper type is not an alias.
+PRIVATE_ALIAS_RE = re.compile(
+    r"^const\s+\w+\s*=\s*(?!(?:packed\s+|extern\s+)?(?:struct|union|enum|opaque|fn)\b)(?!.*\{)(.*);\s*$")
 
-# Known D-21 exposures, as the upload stands on 2026-11-19. Each entry matches a line by its exact stripped
-# text. Remove an entry when its exposure is fixed: an entry that matches nothing fails --fail as stale. A new
-# exposure is not on this list, so it fails. Owner approval of this list is the open decision in the plan.
-D21_DEBT = [
-    ("src/engine/ui/ui.zig", 'pub const Font = @import("../text/font.zig").Font;',
-     "ui.Font re-exports the BFNT Font, which holds the C ui_font"),
-    ("src/engine/ui/ui.zig", "pub const Fonts = font_resource.Resources;",
-     "ui.Fonts re-exports the internal font registry"),
-    ("src/engine/ui/ui.zig", "fonts: *font_resource.Resources,",
-     "Canvas.fonts field holds the internal font registry"),
-    ("src/engine/ui/ui.zig",
-     "pub fn create(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Canvas {",
-     "Canvas.create takes the internal font registry"),
-    ("src/engine/ui/ui.zig",
-     "pub fn init(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Ui {",
-     "Ui.init takes the internal font registry"),
-    ("src/engine/core/context.zig", "fonts: *font_resource.Resources,",
-     "Context.fonts field holds the internal font registry"),
-    ("src/engine/core/context.zig",
-     "pub fn fontOf(self: *const Context, font_handle: font_registry.FontHandle) font_registry.LookupError!*const font_resource.FontResource {",
-     "Context.fontOf returns the internal FontResource"),
-]
+# Approved D-21 exposures, matched by exact stripped line text. Owner decision, 2026-11-19: no allowances. The
+# list is empty, so every D-21 exposure fails --fail. An entry that matches no line is stale and fails --fail too.
+# Do not add an entry to make a build pass. Fix the exposure.
+D21_DEBT = []
 
 
 def _pairs_from_text(text, is_c=False):
@@ -318,7 +309,10 @@ def _top_decls(pairs):
 
 
 def _block_end(pairs, start):
-    """Last line of the brace block that opens on or after `start`; `start` itself when no block opens."""
+    """Last line of the declaration that starts at `start`: its brace block, or its `;` when no block opens first.
+
+    A single-line declaration such as `pub const X = a.b;` ends at its `;`, so it does not reach the next function.
+    """
     depth, opened = 0, False
     for j in range(start, len(pairs)):
         for ch in pairs[j][1]:
@@ -327,6 +321,8 @@ def _block_end(pairs, start):
                 opened = True
             elif ch == "}":
                 depth -= 1
+            elif ch == ";" and not opened:
+                return j
         if opened and depth <= 0:
             return j
     return start
@@ -376,13 +372,31 @@ def _surfaces(path, name, seen):
 
 
 def public_surfaces():
-    """Every surface a game can name through the public root, starting from the root's own re-exports."""
+    """Every surface a game can name through the public root, starting from the root's own re-exports.
+
+    A whole-module surface is also expanded: each of its public declarations that is a re-export is followed into the
+    file it names, so a declaration reached through a clean re-export name is scanned as well.
+    """
     root = ROOT / PUBLIC_ROOT
     seen = set()
     out = [("file", root, 0, 0)]
     for name, (is_pub, _idx, _rhs) in _top_decls(_pairs(root)).items():
         if is_pub:
             out += _surfaces(root, name, seen)
+    expanded = set()
+    queue = [s[1] for s in out if s[0] == "file"]
+    while queue:
+        path = queue.pop()
+        if path in expanded:
+            continue
+        expanded.add(path)
+        for name, (is_pub, _idx, _rhs) in _top_decls(_pairs(path)).items():
+            if not is_pub:
+                continue
+            for surf in _surfaces(path, name, seen):
+                out.append(surf)
+                if surf[0] == "file":
+                    queue.append(surf[1])
     return out
 
 
@@ -411,6 +425,9 @@ def _scan(kind, pairs, start, end):
                 rhs = TOP_REEXPORT_RHS_RE.match(code)
                 if rhs and FONT_INTERNAL_RE.search(rhs.group(1)):
                     hits.append((i + 1, "re-export", text))
+                alias = PRIVATE_ALIAS_RE.match(code)
+                if alias and not stack and FONT_INTERNAL_RE.search(alias.group(1)):
+                    hits.append((i + 1, "alias", text))
             if PUB_FN_RE.match(code) and innermost in (None, "pubstruct") and FONT_INTERNAL_RE.search(code):
                 hits.append((i + 1, "pub fn", text))
             elif top == "pubstruct":
@@ -535,6 +552,12 @@ def self_test_d21():
     expect("declaration surface",
            {ln for ln, _k, _t in _scan("decl", pairs, decl_start, decl_end)}, {9, 10, 11})
 
+    stmt_pairs = _pairs_from_text("pub const Alias = font_registry.FontHandle;\npub fn leak(x: *font_resource.Resources) void {\n    _ = x;\n}")
+    if _block_end(stmt_pairs, 0) != 0:
+        failures.append(f"block end: a statement declaration ends at its semicolon, got line {_block_end(stmt_pairs, 0) + 1}")
+    brace_pairs = _pairs_from_text("pub const Store = struct {\n    fonts: u8,\n};")
+    if _block_end(brace_pairs, 0) != 2:
+        failures.append(f"block end: a struct declaration ends at its closing brace, got line {_block_end(brace_pairs, 0) + 1}")
     hb_pairs = _pairs_from_text("const raw = hb_buffer_create();\n// hb_comment_only\nconst s = \"hb_text\";")
     expect("HarfBuzz call", {ln for _r, ln, _t in hb_hits_from_pairs("x.zig", hb_pairs)}, {1})
     c_pairs = _pairs_from_text("#include <hb.h>\n#include <stdio.h>", is_c=True)

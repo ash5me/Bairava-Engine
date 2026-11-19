@@ -52,7 +52,7 @@ pub const Overlay = struct {
     visible: bool = true,
 
     /// The font stays in `fonts`, which the session releases at shutdown. The overlay draws with it every frame.
-    pub fn init(allocator: std.mem.Allocator, fonts: *ui.Fonts, font: ?ui.FontHandle) Overlay {
+    pub fn init(allocator: std.mem.Allocator, fonts: *ui.FontStore, font: ?ui.FontHandle) Overlay {
         return .{ .canvas = if (font) |value| ui.Canvas.create(allocator, fonts, value) else null };
     }
 

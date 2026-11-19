@@ -289,7 +289,7 @@ Phase 1 decisions come first. They fix the font representation, the `Canvas` API
 | D-18 | MSDF on the SDL3 2D renderer: none. The 2D path uses a prebaked coverage fallback. | Phase 0 exit; Phase 6 | Open |
 | D-19 | The old C text path after cutover: keep it as a BFNT compatibility adapter, or remove it once every consumer has migrated. | Phase 8 | Open |
 | D-20 | BFNT metrics for `FontMetrics`: a BFNT font's descent is `line_height` minus `ascent`, and its line gap is zero, because the file stores neither. This changes no file format and only affects `FontMetrics`. | Phase 1 | **Accepted (owner, 2026-11-18)** |
-| D-21 | **Public API boundary: the strict gate is retained.** No HarfBuzz type and no internal font-resource type (`FontResource`, `Resources` or any `Registry` instance, a provider type, `font.zig`'s `Font`, or `c.ui_font`) may appear in a game-facing interface: an export of `bairava.zig`, a `Context` or `Canvas`/`Ui` signature, or a field or return type that game code can reach. The gate is not amended to allow either type. Game code holds `FontHandle` only. Enforced by the D-21 section of `scripts/boundary_scan.py`. Its known exposures are listed in `D21_DEBT`, pending owner approval, and are open under the Phase 1 exit gate. | Phase 1 | **Accepted by owner direction (2026-11-19).** |
+| D-21 | **Public API boundary: the strict gate is retained.** No HarfBuzz type and no internal font-resource type (`FontResource`, `Resources` or any `Registry` instance, a provider type, `font.zig`'s `Font`, or `c.ui_font`) may appear in a game-facing interface: an export of `bairava.zig`, a `Context` or `Canvas`/`Ui` signature, or a field or return type that game code can reach. The gate is not amended to allow either type. Game code holds `FontHandle` only. Enforced by the D-21 section of `scripts/boundary_scan.py`. The debt list `D21_DEBT` is empty: no exposure is allowed (owner decision, 2026-11-19). | Phase 1 | **Accepted by owner direction (2026-11-19). Debt list emptied by owner direction (2026-11-19): no allowances.** |
 
 ## 6.3 Status markers
 
@@ -392,7 +392,7 @@ A common text/font interface with an adapter to the existing BFNT implementation
 - [x] Existing `.bfnt` v1/v2/v4 compatibility behavior remains covered by tests (where those versions are supported by the current loader). *(2026-11-19: v2 has explicit coverage in `tests/ui/test_text.c`, `check_v2_format`, and no longer depends on v1 and v4 passing. The repository has no v2 `.bfnt` file, and the baker writes only v4, so the test writes a v2 file from the documented layout. It checks the header, the glyph and kerning fields, the default fallback, the drawn quads and widths, and the rejections specific to v2. An earlier check that labeled version 2 'unsupported' was in fact rejecting a v2 file for its 48-byte header length, so it now uses version 5. The Zig wrapper in `font.zig` has no version logic and calls the same C loader. Results and the mutation check are in `checks/bfnt_v2_RESULTS.txt`. `zig build test-ui` was not run, because the sandbox has no Zig, so the owner's pinned run still needs to confirm it.)*
 - [ ] Rectangle drawing works without referencing a font atlas. Blocked: D-04, E-03.
 - [ ] New interfaces compile without exposing SDL, HarfBuzz, or internal font-resource types to game-facing code (D-21). E-01 passed on the recorded CI commit, but this Phase 1 interface work remains unimplemented.
-- [ ] D-21 holds on the public surface. `scripts/boundary_scan.py` now checks it (its D-21 section; its self-test; and `checks/boundary_d21_negative_tests.py`, 7 of 7 cases). Seven known exposures are listed in `D21_DEBT` and remain open work: `ui.Font` and `ui.Fonts` (`ui.zig:20`, `:24`); the registry parameter of `Canvas.create` and `Ui.init` (`ui.zig:91`, `:201`), where `src/game/game.zig:169` passes `ctx.fonts`; the fields `Canvas.fonts` (`ui.zig:85`) and `Context.fonts` (`context.zig:182`); and `Context.fontOf` (`context.zig:457`), which returns `FontResource`. The `Canvas.fonts` field was missing from the first list. The debt list needs owner approval, or the gate fails until these are fixed. No HarfBuzz name appears outside `src/engine/text/`.
+- [ ] D-21 holds on the public surface. `D21_DEBT` is empty (owner decision, 2026-11-19: no allowances). The seven listed exposures and two the old scanner could not see are fixed in the sandbox (see the sandbox note in Phase 1). The change is not compiled, and it is not gate evidence until the owner's `zig build test` and `scripts/boundary_scan.py --fail` runs are recorded against a commit. The `FontStore` API is proposed and not yet accepted.
 - [ ] Resource ownership and shutdown order are documented and tested.
 
 ---
@@ -737,6 +737,39 @@ This note records the first slice of the Canvas migration. The owner status abov
 - Visual checks against reference screenshots (E-03).
 
 **Behavior note:** fills and glyphs now break draw runs at each texture change, so a frame that mixes them can issue more draw calls. The sampled coverage values are the same, so the output should match. E-03 confirms it, and the debug overlay shows the draw-call count.
+
+### Sandbox progress (2026-11-19): D-21 with no allowances
+
+This note records sandbox work. The owner status above still governs. The sandbox has no Zig toolchain, so nothing here is compiled.
+
+**Owner decision (2026-11-19):** `D21_DEBT` is empty. No exposure is allowed. The exposures are fixed in code, not listed as debt.
+
+**Scanner, strengthened first.** Before this change, the gate could not see some exposures. It did not follow a re-export under a clean name into the file it names, and it did not judge a private type alias. Under the strengthened gate, the original upload shows **9** exposures, not 7. The seven listed in `D21_DEBT` are `context.zig:182`, `context.zig:457`, `ui.zig:20`, `ui.zig:24`, `ui.zig:85`, `ui.zig:91`, and `ui.zig:201`. Two were not listed: `text/font.zig:16` (`Font.baked`, a `c.ui_font` field) and `text/font.zig:19` (`Font.deinit`). Both were reachable through the old `ui.Font` re-export. The plan's Phase 1 notes already recorded one earlier miss (`Canvas.fonts`). These are a second and third. The strengthened scanner also flagged `font_resource.zig:118` (`metricsFor`). That was a scanner error: a single-line declaration ran on into the next function body. It is fixed, and a self-test pins it. `metricsFor` is not reachable from game code.
+
+**Landed (Zig; not compiled):**
+- `src/engine/text/font_store.zig` (new). `FontStore` is an opaque type. Its methods take a `FontHandle` and return widths, heights, quad lists, texture pointers, or C widget state. Its state is a private struct in that file. The engine-only functions (`create`, `destroy`, `discard`, `count`, `insertBfnt`) sit outside the type and are not re-exported by `bairava.zig`.
+- `ui.zig`: the `Font` and `Fonts` re-exports are gone. `Canvas.fonts` and the `create` and `init` parameters are `*FontStore`. The `Canvas` text, measurement, layout, and queue signatures are unchanged (D-05). The `Canvas` layout-validation test moved here from `engine_api_test.zig`, because building a store is an engine-internal step.
+- `context.zig`: `fonts` is `*font_store.FontStore`. `fontOf` is removed, because nothing called it. `loadFont` passes the upload to `insertBfnt`, which releases the font if the insert fails.
+- `lifecycle.zig`, `debug_overlay.zig`, `engine_api_test.zig`, `tests.zig`: updated for the new type. `game.zig` and `runtime.zig` are unchanged, because `ctx.fonts` keeps its call shape.
+- `scripts/boundary_scan.py`: `D21_DEBT = []`. Re-export following and private-alias judgment added (see the scanner note above). `checks/boundary_d21_negative_tests.py`: anchors moved off removed lines; N3 tests a stale entry in an empty list; N8 and N9 cover the two holes above.
+
+**Verified in the sandbox (scanner and Python only):**
+- `scripts/boundary_scan.py --fail` on this tree: 0 known, 0 new, 0 stale, 0 HarfBuzz names outside `src/engine/text/`. Exit 0.
+- `scripts/boundary_scan.py --self-test`: 3 of 3 fixtures, 4 of 4 cases.
+- `checks/boundary_d21_negative_tests.py`: 9 of 9 cases.
+- On the original upload, the strengthened scanner exits 1 with 9 exposures, 7 listed and 2 not.
+
+**Not verified:**
+- Owner run of `zig build test` on Windows (2026-11-19, after this change). It reported one compile error, in the `font_store.zig` test helper: the `Texture` literal `.{}` lacked four required fields (`gpu_state`, `width`, `height`, `has_upload_fence`). Fixed here with `fixtures.texture(1, 1)`, the helper the other tests use. The same literal was already in the original `ui.zig` tests, so those tests were broken if they ever ran. The fix is not yet rerun. The run's summary reported 13 of 13 tests passed for the root, and the second root (`engine_api_test.zig`) does not appear in the output, so its status is unknown.
+- Coverage gap. `tests.zig` does not import `ui.zig`, and no build step runs `ui.zig`'s Zig tests, so the layout test that moved there has not run. Those tests call `imgui.c` functions, which the test root does not link, so running them needs a build change. That is a decision for the owner.
+- `FontStore.initWidgets` is compiled only by the app build, through `Ui.init`. The owner's next run should be `zig build` as well as `zig build test`.
+- The E-03 visual baseline. The draw path keeps the same quads and texture choices, but the owner should check the debug overlay and the widget screen before accepting the change.
+
+**Proposed, not in force.** The opaque `FontStore` API, and its handle-only method set, is a design choice that changes game-facing code. The plan's rule is that code can propose a decision but cannot settle one. The owner should accept or reject it. D-21 stays `[ ]` until the owner accepts it and the Zig gate runs.
+
+**Remaining limit of the gate.** It is text-based. It does not resolve a field or parameter type through a local name that is not a re-export, and a private alias is judged only when it is a top-level type alias in a surface file. A type can still be hidden behind a name the scanner cannot see. Review remains necessary.
+
+---
 
 ---
 
