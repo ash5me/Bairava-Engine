@@ -281,7 +281,7 @@ Phase 1 decisions come first. They fix the font representation, the `Canvas` API
 | D-10 | Runtime outline formats: TrueType `glyf` only; CFF stays on the prebaked path. The code enforces this (`checkFormat`). Variable fonts use their default instance. | Phase 0 exit; Phase 3 | Open |
 | D-11 | Runtime FreeType is not part of the first release. | Phase 0 exit | Open |
 | D-12 | Scripts and test corpus: Latin and Tamil. **Chemmozhi Paranar may remain in the distributed repository only as a test fixture**, with its exact upstream license text/version, copyright and modification attribution, provenance, and hash retained. It must not be silently included in game assets, binaries, or release packages. Any downstream redistribution must comply with the actual GPL version attached to the font. | Phase 0 exit | **Accepted with test-only restriction (owner, 2026-11-18)** |
-| D-13 | Missing glyphs: a caller-supplied fallback glyph, with no font chain in the first release. Mapping `?` and font chains move to Phase 7. | Phase 0 exit; Phase 4 | Open |
+| D-13 | Missing glyphs: a caller-supplied fallback glyph, with no font chain in the first release. Mapping `?` and font chains move to Phase 7. | Phase 0 exit; Phase 4 | **Accepted (2026-11-17)** |
 | D-14 | Atlas memory ceiling: 4 pages of 1024² R8, which is 8 MiB at the default, plus 4 MiB per 2D copy while 2D is active. No eviction. A full cache refuses the glyph with `AtlasFull` and counts it. | Phase 0 exit; Phase 4 | Open |
 | D-15 | Success metrics: the frame-time budget and the text load it applies to. The plan asks for "acceptable" performance and gives no number. | Phase 0 exit; Phase 7 | Open (owner input) |
 | D-16 | OpenType features: HarfBuzz defaults only in the first release. Configurable features stay a Want. | Phase 3 | Open |
@@ -333,7 +333,7 @@ Two kinds appear here, and they are kept apart.
 - [ ] Decide whether runtime rasterization supports TrueType `glyf` only initially, or whether FreeType must also move into the runtime for CFF. → D-10, D-11.
 - [x] Decide the bitmap descriptor format: AngelCode BMFont text descriptor, normalized into Bairava-owned structures (D-08).
 - [ ] Decide which MSDF generator will be used, its license, version pin, supported font formats, output metadata, and asset-builder integration. → D-17.
-- [ ] Decide fallback behavior for missing glyphs and whether font fallback chains are part of the first release or a later phase. → D-13.
+- [x] Decide fallback behavior for missing glyphs and whether font fallback chains are part of the first release or a later phase. → D-13. *(Done: D-13 accepted 2026-11-17. Caller-supplied fallback glyph; no font chain in the first release; mapping `?` and font chains move to Phase 7.)*
 - [ ] Decide the initial renderer policy for MSDF. Recommended: SDL_GPU first; the SDL3 2D renderer uses a matching prebaked coverage/bitmap fallback until it has an equivalent shader path. → D-18.
 - [ ] Define atlas growth, maximum pages, memory budget, and whether eviction is required for the first release. → D-14.
 - [ ] Define success metrics: no visual regression for existing fonts, correct shaping fixtures, no duplicate rasterization for cache hits, and acceptable cold/hot text performance. → D-15.
@@ -354,7 +354,7 @@ A reviewed design decision record containing: supported font formats, font-sourc
 - [ ] HarfBuzz and MSDF dependency/tooling choices are explicit and licensable.
 - [ ] SDL_GPU and SDL3 2D behavior for every rendering mode is documented.
 - [ ] Existing behavior has baseline tests or screenshots (E-03 is done with caveat by owner waiver, 2026-11-19; see section 6.4).
-- [ ] No unresolved design question would force a data-format or public-API rewrite in a later phase. D-01–D-06, D-08, and D-12 are accepted; other Phase 0 decisions remain open.
+- [ ] No unresolved design question would force a data-format or public-API rewrite in a later phase. D-01–D-06, D-08, D-12, and D-13 are accepted; other Phase 0 decisions remain open.
 
 ---
 
@@ -380,8 +380,8 @@ A reviewed design decision record containing: supported font formats, font-sourc
 
 ### Wants — useful but not blocking
 
-- [ ] Add diagnostic counters/interfaces for loaded fonts, glyph lookups, misses, and atlas page count, even if initial counters are simple.
-- [ ] Add a debug description of the active font source and rendering mode.
+- [~] Add diagnostic counters/interfaces for loaded fonts, glyph lookups, misses, and atlas page count, even if initial counters are simple. *(Partly, sandbox, 2026-11-19: `FontStore.stats()` counts loaded fonts by provider. Glyph lookups, misses, and atlas pages are counted in `glyph_cache.Stats`, but `FontStore` does not reach that cache, and the bfnt path makes no glyph-cache lookups. Not compiled; not shown in the overlay.)*
+- [~] Add a debug description of the active font source and rendering mode. *(Partly, sandbox, 2026-11-19: `FontStore.describe(handle)` returns the source and the mode. Not compiled; the debug overlay does not display it yet.)*
 
 ### Deliverable
 
@@ -771,6 +771,26 @@ This note records sandbox work. The owner status above still governs. The sandbo
 **Remaining limit of the gate.** It is text-based. It does not resolve a field or parameter type through a local name that is not a re-export, and a private alias is judged only when it is a top-level type alias in a surface file. A type can still be hidden behind a name the scanner cannot see. Review remains necessary.
 
 ---
+
+---
+
+### Sandbox progress (2026-11-19, fourth pass): diagnostics surface
+
+This note records sandbox work on Phase 1 items 383 and 384. The owner status above still governs. The sandbox has no Zig toolchain, so the Zig changes here are not compiled.
+
+**Landed (Zig; not compiled):**
+- `src/engine/text/font_store.zig`: `FontStore.stats()` returns `Stats`, the number of fonts and their count by provider (`bfnt_coverage`, `runtime_coverage`). `FontStore.describe(handle)` returns `Description`, the source (`bfnt_prebaked` or `runtime_outline`) and the mode (`prebaked_coverage` or `gray_coverage`). Both are plain values. The stats walk the registry's entries, so no separate counter can drift from the stored fonts. Two tests cover an empty store and a stored bfnt font.
+
+**Verified in the sandbox (scanner and Python only):**
+- `scripts/boundary_scan.py --fail`: 0 known, 0 new, and 0 stale exposures; 0 HarfBuzz names outside `src/engine/text/`. Exit 0.
+- `scripts/boundary_scan.py --self-test`: 3 of 3 fixtures and 4 of 4 cases. `checks/boundary_d21_negative_tests.py`: 9 of 9 cases.
+
+**Not done, with the reason:**
+- Glyph lookups, misses, and atlas page count. These exist in `glyph_cache.Stats`, but `FontStore` does not hold the cache, and the bfnt path makes no glyph-cache lookups. Item 383 stays `[~]` until the renderer side reports them through the store or the debug overlay.
+- Display of the description in the debug overlay. Item 384 stays `[~]`. That needs a device check (E-03).
+- Insertion of runtime fonts. `FontStore` can count and describe them, but it has only `insertBfnt`. The runtime path is tested through `FontResource` tests.
+
+**Correction to the coverage-gap note in the third pass above.** That note says the test root does not link `imgui.c`. In this upload, `build.zig` links `src/engine/ui/imgui.c` into the test module (line 620, with the include path on line 616). The note is out of date for this upload. The owner's Windows run of `zig build test`, after the `ui.zig` import was moved inside the test block, is the check that settles it.
 
 ---
 

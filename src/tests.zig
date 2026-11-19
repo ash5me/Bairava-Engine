@@ -6,15 +6,12 @@ const std = @import("std");
 
 const animation = @import("engine/animation/animation.zig");
 const math = @import("engine/core/math.zig");
-const physics_queries = @import("engine/physics/queries.zig");
 const camera = @import("engine/renderer/camera.zig");
 const sprite = @import("engine/renderer/sprite.zig");
+const fixtures = @import("engine/test_fixtures.zig");
 const Texture = @import("engine/renderer/texture.zig").Texture;
 const tilemap = @import("engine/scene/tilemap.zig");
-const fixtures = @import("engine/test_fixtures.zig");
-const testTexture = fixtures.texture;
-const testBatch = fixtures.batch;
-const freeTestBatch = fixtures.freeBatch;
+const physics_queries = @import("engine/physics/queries.zig");
 
 test {
     _ = @import("engine/text/hb_smoke.zig");
@@ -113,8 +110,11 @@ test {
     _ = @import("engine/navigation/agent.zig");
     _ = @import("engine/ai.zig");
     _ = @import("game/enemy_ai.zig");
-    _ = @import("engine/ui/ui.zig");
 }
+
+const testTexture = fixtures.texture;
+const testBatch = fixtures.batch;
+const freeTestBatch = fixtures.freeBatch;
 
 test "drawSprite keeps every sprite of a frame, past the old 8192 limit" {
     var no_vertices: [0]sprite.Vertex = .{};

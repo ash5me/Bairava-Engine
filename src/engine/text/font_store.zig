@@ -22,6 +22,27 @@ const Texture = @import("../renderer/texture.zig").Texture;
 pub const FontHandle = font_registry.FontHandle;
 pub const InsertError = font_registry.InsertError;
 
+/// The fonts the store holds, counted by how they are drawn. Plain numbers, so game code reads them without any engine type.
+pub const Stats = struct {
+    /// Every font stored.
+    fonts: usize,
+    /// Fonts drawn from a prebaked `.bfnt` coverage atlas.
+    bfnt_coverage: usize,
+    /// Fonts rasterized at runtime from a TrueType face.
+    runtime_coverage: usize,
+};
+
+/// How one font's glyphs reach the screen. Plain values, for the debug overlay and for logs.
+pub const Description = struct {
+    source: Source,
+    mode: Mode,
+
+    pub const Source = enum { bfnt_prebaked, runtime_outline };
+    /// `prebaked_coverage` reads a coverage atlas from a file. `gray_coverage` rasterizes glyphs at runtime. Gray is the
+    /// only mode the runtime path produces (Phase 4, decision 1).
+    pub const Mode = enum { prebaked_coverage, gray_coverage };
+};
+
 /// Releases one font when the store lets go of it. `create` uses `FontResource.deinit`. Tests pass a counting function, so
 /// the store's ownership can be checked without a GPU object behind the font.
 pub const Release = *const fn (*font_resource.FontResource) void;
@@ -58,6 +79,17 @@ pub const FontStore = opaque {
     /// Panics unless `handle` names a font the UI can draw. Canvas creation calls this, so a bad handle fails there.
     pub fn check(self: *FontStore, handle: FontHandle) void {
         _ = bfntFont(stateOf(self), handle);
+    }
+
+    /// Counts the fonts the store holds, by how they are drawn.
+    pub fn stats(self: *FontStore) Stats {
+        return statsOf(stateOf(self));
+    }
+
+    /// How the font `handle` names is drawn: its source, and the mode its glyphs use. Panics on a handle that names no
+    /// loaded font, as the other lookups do.
+    pub fn describe(self: *FontStore, handle: FontHandle) Description {
+        return describeOf(stateOf(self), handle);
     }
 
     /// Points the C widget state at the font's metrics. The font keeps its address until it is removed, so the pointer
@@ -129,6 +161,29 @@ fn bfntFont(state: *State, handle: FontHandle) *font_mod.Font {
     };
 }
 
+fn statsOf(state: *const State) Stats {
+    var result = Stats{ .fonts = state.resources.count(), .bfnt_coverage = 0, .runtime_coverage = 0 };
+    for (state.resources.entries.items) |entry| {
+        switch (entry.value.*) {
+            .bfnt_coverage => {
+                result.bfnt_coverage += 1;
+            },
+            .runtime_coverage => {
+                result.runtime_coverage += 1;
+            },
+        }
+    }
+    return result;
+}
+
+fn describeOf(state: *State, handle: FontHandle) Description {
+    const resource = state.resources.peek(handle) catch |err| std.debug.panic("UI font handle {d} does not name a loaded font: {s}", .{ handle.id, @errorName(err) });
+    return switch (resource.*) {
+        .bfnt_coverage => .{ .source = .bfnt_prebaked, .mode = .prebaked_coverage },
+        .runtime_coverage => .{ .source = .runtime_outline, .mode = .gray_coverage },
+    };
+}
+
 // ---- tests -----------------------------------------------------------------
 
 const testing = std.testing;
@@ -175,6 +230,29 @@ test "every FontStore method the engine uses is compiled by the test build" {
     _ = &FontStore.check;
     _ = &count;
     _ = &destroy;
+}
+
+test "an empty store reports no fonts" {
+    const store = try create(testing.allocator);
+    defer discard(store);
+    const stats = store.stats();
+    try testing.expectEqual(@as(usize, 0), stats.fonts);
+    try testing.expectEqual(@as(usize, 0), stats.bfnt_coverage);
+    try testing.expectEqual(@as(usize, 0), stats.runtime_coverage);
+}
+
+test "a stored bfnt font is counted as prebaked, and drawn with prebaked coverage" {
+    const store = try create(testing.allocator);
+    defer discard(store);
+    const handle = try insertBfnt(store, emptyFont());
+    _ = try insertBfnt(store, emptyFont());
+    const stats = store.stats();
+    try testing.expectEqual(@as(usize, 2), stats.fonts);
+    try testing.expectEqual(@as(usize, 2), stats.bfnt_coverage);
+    try testing.expectEqual(@as(usize, 0), stats.runtime_coverage);
+    const described = store.describe(handle);
+    try testing.expectEqual(Description.Source.bfnt_prebaked, described.source);
+    try testing.expectEqual(Description.Mode.prebaked_coverage, described.mode);
 }
 
 // ---- ownership: who releases a font, and when ------------------------------------------------------------------------
