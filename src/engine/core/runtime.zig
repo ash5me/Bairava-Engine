@@ -30,6 +30,7 @@ const sprite = @import("../renderer/sprite.zig");
 const Rect = sprite.Rect;
 const texture = @import("../renderer/texture.zig");
 const glyph_check = @import("../renderer/glyph_check.zig");
+const font_store = @import("../text/font_store.zig");
 const ui = @import("../ui/ui.zig");
 
 const Config = application.Config;
@@ -292,11 +293,13 @@ pub fn run(comptime Game: type, config: Config) !void {
         const view_hf: f32 = @floatFromInt(view_h);
         logging.assert(view_w >= 1 and view_h >= 1, @src(), "view {d}x{d} is empty", .{ view_w, view_h });
 
+        var waited_idle_for_resize = false;
         if (session.target.width != view_w or session.target.height != view_h) {
             const zone = profile.zoneNamed(@src(), "rebuild target");
             defer zone.End();
             // Wait first, because the old target may still be in use by the GPU.
             platform.gpu.waitIdle(session.gpu.device);
+            waited_idle_for_resize = true;
             session.target.deinit();
             session.target = texture.createTarget(allocators.engineAllocator(), session.gpu.device, view_w, view_h, session.format);
             session.post_chain.resize(view_w, view_h);
@@ -333,6 +336,12 @@ pub fn run(comptime Game: type, config: Config) !void {
         // Pass 1: the game queues its sprites, and they're drawn into the view-sized target.
         const draw_start = clockIf();
         session.world_batch.begin(view_wf, view_hf);
+        if (font_store.retiredCount(session.fonts) > 0) {
+            if (!waited_idle_for_resize and !config.gpu_timing) {
+                platform.gpu.waitIdle(session.gpu.device);
+            }
+            _ = font_store.collectRetiredAfterGpuIdle(session.fonts);
+        }
         collector.debug.clear();
         const draw_ctx = DrawContext{
             .batch = &session.world_batch,
@@ -420,7 +429,11 @@ pub fn run(comptime Game: type, config: Config) !void {
         }
         // All outline glyphs for this frame, including the optional diagnostic burst, are queued before this one flush.
         if (session.glyph_check_state) |*check| glyph_check.frame(check, &session.world_batch);
-        try session.glyph_atlas_state.flush(frame.cmd, ctx.renderer == .sdl2d);
+        session.glyph_atlas_state.flush(frame.cmd, ctx.renderer == .sdl2d) catch |err| {
+            elog.err("glyph atlas upload could not be recorded: {s}", .{@errorName(err)});
+            _ = platform.gpu.Gpu.endFrame(frame);
+            return error.GlyphAtlasFlushFailed;
+        };
         if (session.glyph_check_state) |*check| glyph_check.afterFlush(check);
         if (ctx.renderer == .sdl2d) {
             session.renderer2d.clear(
@@ -437,7 +450,11 @@ pub fn run(comptime Game: type, config: Config) !void {
                 ctx.layout.dst_h / ctx.layout.view_h,
             );
             session.renderer2d.present();
-            platform.gpu.Gpu.endFrame(frame);
+            if (!platform.gpu.Gpu.endFrame(frame)) {
+                elog.err("SDL failed to submit the frame command buffer", .{});
+                return error.GpuSubmitFailed;
+            }
+            session.glyph_atlas_state.completeFlush();
             last_draw_calls = session.world_batch.draw_calls;
             total_frames += 1;
             continue;
@@ -498,13 +515,20 @@ pub fn run(comptime Game: type, config: Config) !void {
         // frame is submitted and the CPU moves on.
         if (gate.enabled and config.gpu_timing) {
             const gpu_start = clockIf();
-            session.gpu.submitAndWait(frame);
+            if (!session.gpu.submitAndWait(frame)) {
+                elog.err("SDL failed to submit the timed frame command buffer", .{});
+                return error.GpuSubmitFailed;
+            }
             const gpu_seconds = secondsBetween(gpu_start, clockIf());
             collector.stats.record(.gpu, gpu_seconds);
             profile.plot("gpu ms", gpu_seconds * 1000.0);
         } else {
-            platform.gpu.Gpu.endFrame(frame);
+            if (!platform.gpu.Gpu.endFrame(frame)) {
+                elog.err("SDL failed to submit the frame command buffer", .{});
+                return error.GpuSubmitFailed;
+            }
         }
+        session.glyph_atlas_state.completeFlush();
         if (gate.enabled) collector.stats.record(.present, secondsBetween(present_start, clockIf()));
 
         // The window title stays as configured. The frame stats are in the debug overlay (F3).

@@ -14,13 +14,14 @@ and reflected in the version records that ship with release artifacts.
 | ztracy | Full Git commit and Zig package content hash in `build.zig.zon` |
 | msdfgen | Version 1.13.0, full Git commit and Zig package content hash in `build.zig.zon`; source-tree hash, MIT notice, and asset-builder-only scope in [`dependency-lock.json`](dependency-lock.json); linked only into the host asset builder |
 | Slang compiler | Version in `.github/workflows/ci.yml`; per-platform archive digests in [`dependency-lock.json`](dependency-lock.json) |
+| DirectX Shader Compiler runtime | Version in `.github/workflows/ci.yml`; Windows release archive digest in [`dependency-lock.json`](dependency-lock.json); required by Slang for DXIL compilation |
 | cglm, FreeType, stb, log.c, Parson | Versions, upstream references, and source-tree SHA-256 values in [`dependency-lock.json`](dependency-lock.json) |
 | HarfBuzz | Version, upstream reference, and source-tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); vendored under `vendor/harfbuzz-15.1.0/` (`src/` and `COPYING`) |
 | Test font (Noto Sans Tamil) | Upstream commit and tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); files under `tests/fixtures/`, used only by `zig build test` |
 | Test font (Chemmozhi Paranar) | SHA-256 in [`dependency-lock.json`](dependency-lock.json); file under `tests/fixtures/`, used only by `zig build test`. License accepted by the owner (see "Test fixtures") |
 
 The lock file covers every file in the vendored dependency paths, not just
-version headers. It also mirrors the Zig, Slang, SDL, and ztracy pins. The
+version headers. It also mirrors the Zig, Slang, DXC, SDL, and ztracy pins. The
 checker compares those records to `build.zig.zon` and CI, recomputes each
 vendored SHA-256, and fails on a missing or changed source. CI and release
 packaging run the same checker. CI also checks the SHA-256 digest of the
@@ -42,8 +43,10 @@ For Zig packages, update the reviewed URL/commit and content hash together in
 `build.zig.zon` (for example with `zig fetch --save`) and mirror both in the
 dependency lock. For Slang, update the single CI version used by all operating systems, mirror
 it in the lock, and refresh the official SHA-256 digests for every supported
-platform archive. CI verifies both the archive and the extracted compiler
-version; release packaging checks the compiler on `PATH` before building.
+platform archive. CI verifies both the Slang archive and extracted compiler
+version. Windows CI verifies the DXC runtime archive before adding its x64
+runtime DLL directory to `PATH`; release packaging checks Slang on `PATH`
+before building.
 Verify SPIR-V, DXIL, and Metal shader compilation where supported. Do not
 update generated hashes or version records without reviewing the corresponding
 upstream change and license.

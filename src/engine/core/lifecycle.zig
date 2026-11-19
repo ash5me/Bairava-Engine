@@ -192,6 +192,7 @@ pub const Session = struct {
         self.stage = .textures;
         self.textures = try self.engine_allocator.create(context.TextureStore);
         self.fonts = try font_store.createWithAtlas(self.engine_allocator, &self.glyph_atlas_state);
+        font_store.setProfileClock(self.fonts, platform.clock.nowNs);
         self.fonts_ready = true;
         self.reloads.stat = hotReloadStamp;
         if (application.resolveRenderer(config.renderer) != config.renderer) {
@@ -263,10 +264,6 @@ pub const Session = struct {
             self.world_batch.deinit();
             self.world_batch_created = false;
         }
-        if (self.glyph_atlas_ready) {
-            self.glyph_atlas_state.deinit();
-            self.glyph_atlas_ready = false;
-        }
         if (self.glyph_check_state) |*check| {
             glyph_check.destroy(check);
             self.glyph_check_state = null;
@@ -299,9 +296,33 @@ pub const Session = struct {
         // Font resources can hold GPU textures, so they go before the device, after the game and overlay are gone.
         if (self.fonts_ready) {
             const loaded = font_store.count(self.fonts);
+            const text = self.fonts.profileStats();
+            const atlas = self.glyph_atlas_state.flushStats();
+            elog.info(
+                "text profile: shape {d} calls/{d} ms, measure {d} calls/{d} ms; glyph cache {d} hits/{d} misses, {d} rasterized, {d} page(s), {d} CPU bytes; atlas uploads {d} regions/{d} bytes; retired fonts {d}; last-frame sprite draws {d}",
+                .{
+                    text.shape_calls,
+                    @as(f64, @floatFromInt(text.shape_nanoseconds)) / 1_000_000.0,
+                    text.measure_calls,
+                    @as(f64, @floatFromInt(text.measure_nanoseconds)) / 1_000_000.0,
+                    text.glyph_cache_hits,
+                    text.glyph_cache_misses,
+                    text.glyphs_rasterized,
+                    text.atlas_pages,
+                    text.atlas_cpu_bytes,
+                    atlas.gpu_regions,
+                    atlas.gpu_upload_bytes,
+                    text.retired_fonts,
+                    self.world_batch.draw_calls,
+                },
+            );
             font_store.destroy(self.fonts);
             self.fonts_ready = false;
             elog.info("font registry at shutdown: {d} font(s) released", .{loaded});
+        }
+        if (self.glyph_atlas_ready) {
+            self.glyph_atlas_state.deinit();
+            self.glyph_atlas_ready = false;
         }
         if (self.renderer2d_created) {
             platform.renderer2d.deactivate();

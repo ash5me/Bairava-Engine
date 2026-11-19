@@ -2,7 +2,8 @@
   "format": 1,
   "toolchain": {
     "zig": "0.16.0-dev.3142+5ccfeb926",
-    "slang": "2026.20"
+    "slang": "2026.20",
+    "dxc": "1.8.2505.1"
   },
   "slang_archives": {
     "slang-2026.20-linux-x86_64-glibc-2.27.tar.gz": "b831477e994dee2fb36a3e83c54ad89cbfeefd47b4d973b2d8bed65b64780996",
@@ -10,6 +11,9 @@
     "slang-2026.20-macos-x86_64.zip": "a71d4a499d08b6178325a697a5a5c9fddc9eee5914daaf195451b283189e96ce",
     "slang-2026.20-macos-aarch64.zip": "ede1865bf086442c8786c5b7c0470ce5f4fd4f032eefe881356726ff9c445f40",
     "slang-2026.20-windows-x86_64.zip": "e6dd32bbddf1720ebb4e679d55e9635ce792865a5bd84f3d2cd9af28647c0174"
+  },
+  "dxc_archives": {
+    "dxc_2025_07_14.zip": "9ad895a6b039e3a8f8c22a1009f866800b840a74b50db9218d13319e215ea8a4"
   },
   "zig_packages": [
     {

@@ -10,6 +10,7 @@ permissions:
 
 env:
   SLANG_VERSION: "2026.20"
+  DXC_VERSION: "1.8.2505.1"
 
 jobs:
   build-and-test:
@@ -98,6 +99,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Slang compiler version did not match dependency-lock.json" }
           Add-Content -LiteralPath $env:GITHUB_PATH -Value $compiler.DirectoryName
           & $compiler.FullName -version
+
+      - name: Install DXC runtime on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = "dxc_2025_07_14.zip"
+          $url = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v$env:DXC_VERSION/$archive"
+          $archivePath = Join-Path $env:RUNNER_TEMP $archive
+          $installDir = Join-Path $env:RUNNER_TEMP 'dxc'
+          Invoke-WebRequest -Uri $url -OutFile $archivePath
+          python scripts/check-dependency-pins.py --dxc-archive $archivePath
+          if ($LASTEXITCODE -ne 0) { throw "DXC archive checksum did not match dependency-lock.json" }
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $installDir -Force
+          $runtimeDir = Join-Path $installDir 'bin\x64'
+          foreach ($runtime in @('dxcompiler.dll', 'dxil.dll')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $runtimeDir $runtime))) {
+              throw "DXC runtime file $runtime was not found in $archive"
+            }
+          }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $runtimeDir
 
       - name: Cache Zig packages
         uses: actions/cache@v4

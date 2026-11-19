@@ -95,11 +95,21 @@ pub const CoverageRegion = struct {
     cycle: bool = false,
 };
 
+pub const CoverageUploadError = error{
+    TransferBufferCreateFailed,
+    TransferBufferMapFailed,
+    CopyPassFailed,
+};
+
 /// Records copies of `regions` into `cmd` outside a render pass. The copies run before any draw recorded after them in
 /// the same command buffer, which is how a glyph written this frame is sampled this frame. The rows are staged in one
 /// transfer buffer. SDL frees that buffer once the GPU no longer needs it, so it is released before this returns.
 /// Regions must lie inside the texture. An empty region is skipped.
-pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, regions: []const CoverageRegion) void {
+pub fn recordCoverageRegions(
+    state: *const State,
+    cmd: *c.SDL_GPUCommandBuffer,
+    regions: []const CoverageRegion,
+) CoverageUploadError!void {
     var total: usize = 0;
     for (regions) |region| {
         if (region.w == 0 or region.h == 0) continue;
@@ -110,14 +120,10 @@ pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, 
     var tb_info = std.mem.zeroes(c.SDL_GPUTransferBufferCreateInfo);
     tb_info.usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     tb_info.size = @intCast(total);
-    const transfer = c.SDL_CreateGPUTransferBuffer(state.device, &tb_info) orelse {
-        std.debug.panic("SDL_CreateGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
-    };
+    const transfer = c.SDL_CreateGPUTransferBuffer(state.device, &tb_info) orelse return error.TransferBufferCreateFailed;
     defer c.SDL_ReleaseGPUTransferBuffer(state.device, transfer);
 
-    const mapped = c.SDL_MapGPUTransferBuffer(state.device, transfer, false) orelse {
-        std.debug.panic("SDL_MapGPUTransferBuffer failed: {s}", .{c.SDL_GetError()});
-    };
+    const mapped = c.SDL_MapGPUTransferBuffer(state.device, transfer, false) orelse return error.TransferBufferMapFailed;
     const staged: [*]u8 = @ptrCast(mapped);
     var offset: usize = 0;
     for (regions) |region| {
@@ -132,7 +138,7 @@ pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, 
     }
     c.SDL_UnmapGPUTransferBuffer(state.device, transfer);
 
-    const copy_pass = c.SDL_BeginGPUCopyPass(cmd);
+    const copy_pass = c.SDL_BeginGPUCopyPass(cmd) orelse return error.CopyPassFailed;
     offset = 0;
     for (regions) |region| {
         if (region.w == 0 or region.h == 0) continue;

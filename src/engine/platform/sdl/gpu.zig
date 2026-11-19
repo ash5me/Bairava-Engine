@@ -117,21 +117,19 @@ pub const Gpu = struct {
     }
 
     /// Submits the frame's commands to the GPU.
-    pub fn endFrame(frame: Frame) void {
+    pub fn endFrame(frame: Frame) bool {
         const zone = profile.zoneNamed(@src(), "submit frame");
         defer zone.End();
-        _ = c.SDL_SubmitGPUCommandBuffer(frame.cmd);
+        return c.SDL_SubmitGPUCommandBuffer(frame.cmd);
     }
 
     /// Submits the frame, then blocks until the GPU has finished it. The runtime times this call when
     /// `Config.gpu_timing` is set, so the time is the frame's GPU cost. SDL_GPU exposes no timestamp queries,
     /// so a fence wait is the closest measure it offers. The wait stalls the CPU, so it is a profiling mode.
-    pub fn submitAndWait(self: *Gpu, frame: Frame) void {
+    pub fn submitAndWait(self: *Gpu, frame: Frame) bool {
         const zone = profile.zoneNamed(@src(), "gpu wait");
         defer zone.End();
-        const fence = c.SDL_SubmitGPUCommandBufferAndAcquireFence(frame.cmd) orelse {
-            std.debug.panic("SDL_SubmitGPUCommandBufferAndAcquireFence failed: {s}", .{c.SDL_GetError()});
-        };
+        const fence = c.SDL_SubmitGPUCommandBufferAndAcquireFence(frame.cmd) orelse return false;
         const started = sdl_clock.nowNs();
         while (!c.SDL_QueryGPUFence(self.device, fence)) {
             if (sdl_clock.nowNs() - started > fence_timeout_ns) {
@@ -139,6 +137,7 @@ pub const Gpu = struct {
             }
         }
         c.SDL_ReleaseGPUFence(self.device, fence);
+        return true;
     }
 
     /// Releases the device. Destroy anything created from it first.

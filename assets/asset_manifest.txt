@@ -14,6 +14,7 @@ font8x8_basic bitmap_font assets/fonts/font8x8_basic.fnt fonts/font8x8_basic.fnt
 # The TrueType file the runtime font face loads from the package (src/engine/text/runtime_font.zig). A file row
 # copies it unchanged; the font rows above bake the same source to .bfnt and are not affected.
 ui_font_ttf file assets/font.ttf fonts/font.ttf -
+tamil_font_ttf file assets/tamilfont.ttf fonts/tamilfont.ttf -
 level1 map assets/maps/level1.txt maps/level1.txt tile
 level1_spawn file assets/maps/level1.spawn maps/level1.spawn level1,game_prefabs
 game_prefabs file assets/prefabs.txt prefabs.txt -

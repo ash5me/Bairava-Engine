@@ -569,6 +569,20 @@ test "a glyph misses once, is inserted, and then hits, and a repeated insert ret
     try testing.expectEqual(@as(u32, 1), stats.entries);
 }
 
+test "dirty glyph regions remain pending until a successful submission acknowledges them" {
+    var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 1 });
+    defer cache.deinit();
+    cache.clearPending();
+
+    _ = try cache.insert(keyOf(1, 7), testMetrics(2, 2), &.{ 1, 2, 3, 4 });
+    try testing.expectEqual(@as(usize, 1), cache.pendingRegions().len);
+    try testing.expectEqual(@as(usize, 0), cache.pendingSpill().len);
+
+    cache.clearPending();
+    try testing.expectEqual(@as(usize, 0), cache.pendingRegions().len);
+    try testing.expectEqual(@as(usize, 0), cache.pendingSpill().len);
+}
+
 test "glyph rows are copied to the region the cache reports, and regionCoverage keeps the page stride" {
     var cache = try Cache.init(testing.allocator, .{ .page_size = 32, .page_count = 2 });
     defer cache.deinit();

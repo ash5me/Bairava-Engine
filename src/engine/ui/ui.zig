@@ -21,6 +21,7 @@ const Texture = @import("../renderer/texture.zig").Texture;
 pub const FontHandle = font_registry.FontHandle;
 /// The session's fonts. Game code reaches them with a `FontHandle`, through the methods of this type.
 pub const FontStore = font_store.FontStore;
+pub const FontProfileStats = font_store.ProfileStats;
 pub const TextAlignment = text_layout.Alignment;
 pub const TextLayout = text_layout.Layout;
 

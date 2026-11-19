@@ -64,6 +64,23 @@ raw RGB distance field.
 The existing C BFNT code remains only as a compatibility adapter. It is not a second public text API,
 and no legacy BFNT consumer or asset format is removed by this migration.
 
+## Resource lifetime and diagnostics
+
+CPU atlas bytes remain owned by BFNT, bitmap, MSDF, and runtime-coverage resources so their text GPU
+textures can be rebuilt after an idle-safe resource reset while the device is still valid. The engine
+does not currently expose a full SDL_GPU device-loss recovery/replacement path; retaining pixels alone
+does not imply that the whole renderer can survive device loss.
+
+Unloaded font handles become stale immediately. Their GPU resources remain alive while queued work may
+refer to them, and are collected at an idle-safe point. Runtime atlas uploads remain pending until the
+frame command buffer submits successfully; staging or submission failures are surfaced and retried.
+SDL's coverage upload call has no per-copy result, so the engine cannot reliably detect an individual
+copy failure through that API.
+
+Run `zig build run-text-benchmark` for a deterministic bitmap/BFNT/Latin/Tamil/MSDF scene and
+text-specific shaping, cache, atlas, upload, draw-call, and frame counters. Its output supplements but
+does not replace display-backed visual acceptance.
+
 ## Validation and visual acceptance
 
 `zig build test` runs the engine, C UI, and asset-tool tests. `zig build test-ui` runs the C text and

@@ -31,6 +31,7 @@ const texture = @import("texture.zig");
 const backend = @import("backends/sdl_gpu/backend.zig");
 
 const Texture = texture.Texture;
+pub const FlushError = std.mem.Allocator.Error || backend.texture.CoverageUploadError;
 
 /// What `flush` does with one page's 2D copy.
 pub const Action2d = enum {
@@ -111,6 +112,8 @@ pub const FlushStats = struct {
     idle_flushes: u64 = 0,
     /// GPU copy regions recorded. A whole-page upload counts as one region.
     gpu_regions: u64 = 0,
+    /// Coverage bytes in the GPU copy regions recorded. A failed frame submission is counted again when retried.
+    gpu_upload_bytes: u64 = 0,
     /// Whole-page GPU uploads.
     gpu_full_pages: u64 = 0,
     /// 2D copies made from the whole CPU page.
@@ -165,6 +168,31 @@ pub const Atlas = struct {
         self.* = undefined;
     }
 
+    /// Rebuilds every GPU page from the retained CPU cache. Call after GPU idle, with no queued draws that reference
+    /// the old page textures. The next 2D flush creates fresh copies from the same cache bytes.
+    pub fn recreateGpuResources(self: *Atlas, device: *backend.Device) std.mem.Allocator.Error!void {
+        const pages = try self.allocator.alloc(Texture, self.pages.len);
+        errdefer self.allocator.free(pages);
+        var made: usize = 0;
+        errdefer {
+            for (pages[0..made]) |*page| page.deinit();
+        }
+
+        while (made < pages.len) : (made += 1) {
+            pages[made] = texture.createCoverageGpuOnly(
+                self.allocator,
+                device,
+                self.cache.page_size,
+                self.cache.page_size,
+                self.cache.pagePixels(@intCast(made)),
+            );
+        }
+        for (self.pages) |*page| page.deinit();
+        self.allocator.free(self.pages);
+        self.pages = pages;
+        self.cache.clearPending();
+    }
+
     /// The GPU texture of one page. It stays valid until `deinit`, so queued sprites may keep the pointer.
     pub fn pageTexture(self: *const Atlas, page: u32) *const Texture {
         return &self.pages[page];
@@ -185,15 +213,19 @@ pub const Atlas = struct {
         return self.flush_stats;
     }
 
-    /// Writes every texel changed since the last flush, then clears the changed list. Two steps, in this order, for each
+    /// Writes every texel changed since the last acknowledged flush. Call `completeFlush` only after successful frame
+    /// submission; otherwise the next frame records the same regions again. Two steps, in this order, for each
     /// page:
     ///   1. GPU, always. The page's changed regions are gathered and recorded into `cmd`, the frame's command buffer,
     ///      before the sprite upload. Nothing in this step reads `sdl2d_active`, so pending glyphs reach the GPU whichever
     ///      renderer is active.
     ///   2. 2D, only the 2D copy. `plan2d` reads `sdl2d_active` and decides whether the copy is made, updated, or released.
     ///      A GPU-only frame releases any copy and writes nothing to it.
-    /// The changed list is cleared after both steps for every page. Clearing it does not depend on the renderer either.
-    pub fn flush(self: *Atlas, cmd: *backend.CommandBuffer, sdl2d_active: bool) std.mem.Allocator.Error!void {
+    pub fn flush(
+        self: *Atlas,
+        cmd: *backend.CommandBuffer,
+        sdl2d_active: bool,
+    ) FlushError!void {
         const size = self.cache.page_size;
         const stats = &self.flush_stats;
         stats.flushes += 1;
@@ -209,13 +241,19 @@ pub const Atlas = struct {
             const count = gathered.total();
             if (count > 0) {
                 if (gathered.fixed > 0) {
-                    texture.recordCoverageGpu(page_texture, cmd, regions[0..gathered.fixed]);
+                    try texture.recordCoverageGpu(page_texture, cmd, regions[0..gathered.fixed]);
                 }
                 if (gathered.spill > 0) {
-                    texture.recordCoverageGpu(page_texture, cmd, self.spill_regions.items[0..gathered.spill]);
+                    try texture.recordCoverageGpu(page_texture, cmd, self.spill_regions.items[0..gathered.spill]);
                 }
                 recorded_any = true;
                 stats.gpu_regions += count;
+                for (regions[0..gathered.fixed]) |region| {
+                    stats.gpu_upload_bytes += @as(u64, region.w) * region.h;
+                }
+                for (self.spill_regions.items[0..gathered.spill]) |region| {
+                    stats.gpu_upload_bytes += @as(u64, region.w) * region.h;
+                }
                 if (self.cache.pageNeedsFullUpload(page)) stats.gpu_full_pages += 1;
             }
 
@@ -246,6 +284,10 @@ pub const Atlas = struct {
         }
 
         if (!recorded_any) stats.idle_flushes += 1;
+    }
+
+    /// Commits the recorded changes after the frame command buffer was submitted successfully.
+    pub fn completeFlush(self: *Atlas) void {
         self.cache.clearPending();
     }
 };

@@ -110,7 +110,9 @@ fn wrap(state: *backend.texture.State, width: u32, height: u32) Texture {
 fn wrapWithSdl(state: *backend.texture.State, width: u32, height: u32, pixels: []const u8) Texture {
     var result = wrap(state, width, height);
     result.sdl2d_state = if (platform.renderer2d.createTexture(width, height, pixels)) |sdl_texture|
-        @ptrCast(sdl_texture) else null;
+        @ptrCast(sdl_texture)
+    else
+        null;
     return result;
 }
 
@@ -127,9 +129,9 @@ pub fn createCoverageGpuOnly(allocator: std.mem.Allocator, device: *backend.Devi
 
 /// Records the GPU copies of `regions` into `cmd`, the frame's command buffer, so SDL runs them before any draw recorded
 /// after them. Regions must lie inside the texture.
-pub fn recordCoverageGpu(texture_ref: *const Texture, cmd: *backend.CommandBuffer, regions: []const CoverageRegion) void {
+pub fn recordCoverageGpu(texture_ref: *const Texture, cmd: *backend.CommandBuffer, regions: []const CoverageRegion) backend.texture.CoverageUploadError!void {
     std.debug.assert(texture_ref.coverage);
-    backend.texture.recordCoverageRegions(backendState(texture_ref), cmd, regions);
+    try backend.texture.recordCoverageRegions(backendState(texture_ref), cmd, regions);
 }
 
 /// Makes the 2D renderer's copy of a coverage texture match `alpha`, which holds width * height coverage bytes, row 0

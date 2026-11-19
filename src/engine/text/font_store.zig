@@ -24,7 +24,9 @@ const bfnt_measure = @import("bfnt_measure.zig");
 const text_layout = @import("layout.zig");
 const shaped_layout = @import("shaped_layout.zig");
 const glyph_records = @import("glyph_records.zig");
+const glyph_cache = @import("glyph_cache.zig");
 const glyph_atlas = @import("../renderer/glyph_atlas.zig");
+const platform = @import("../platform/platform.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 
 pub const FontHandle = font_registry.FontHandle;
@@ -56,6 +58,22 @@ pub const Description = struct {
     pub const Mode = enum { prebaked_coverage, msdf, bitmap_coverage, gray_coverage };
 };
 
+/// Plain text-path counters for profiling. Timings cover HarfBuzz calls; cache and upload counters are cumulative.
+pub const ProfileStats = struct {
+    shape_calls: u64 = 0,
+    shape_nanoseconds: u64 = 0,
+    measure_calls: u64 = 0,
+    measure_nanoseconds: u64 = 0,
+    glyph_cache_hits: u64 = 0,
+    glyph_cache_misses: u64 = 0,
+    glyphs_rasterized: u64 = 0,
+    atlas_pages: u32 = 0,
+    atlas_cpu_bytes: u64 = 0,
+    atlas_gpu_upload_bytes: u64 = 0,
+    atlas_gpu_upload_regions: u64 = 0,
+    retired_fonts: usize = 0,
+};
+
 /// Releases one font when the store lets go of it. `create` uses `FontResource.deinit`. Tests pass a counting function, so
 /// the store's ownership can be checked without a GPU object behind the font.
 pub const Release = *const fn (*font_resource.FontResource) void;
@@ -67,6 +85,7 @@ const State = struct {
     release: Release,
     atlas: ?*glyph_atlas.Atlas = null,
     retired: std.ArrayList(*font_resource.FontResource) = .empty,
+    profile_clock: ?*const fn () u64 = null,
 };
 
 /// The session's fonts, as game-facing code sees them. Opaque, so its state is reachable only from this file.
@@ -122,6 +141,11 @@ pub const FontStore = opaque {
     /// loaded font, as the other lookups do.
     pub fn describe(self: *FontStore, handle: FontHandle) Description {
         return describeOf(stateOf(self), handle);
+    }
+
+    /// Returns plain timing, cache, atlas, and retirement counters for the text path.
+    pub fn profileStats(self: *FontStore) ProfileStats {
+        return profileStatsOf(stateOf(self));
     }
 
     /// Connects C widget layout to the same provider-based measurement and draw path as Canvas text.
@@ -285,6 +309,7 @@ pub fn insertMsdf(store: *FontStore, font_value: font_resource.MsdfFont) InsertE
         return err;
     };
     msdf.shaper.?.font_id = handle.id;
+    msdf.shaper.?.setProfileClock(state.profile_clock);
     msdf.msdf_texture.sdl2d_fallback = &msdf.coverage_texture;
     return handle;
 }
@@ -317,6 +342,7 @@ pub fn insertRuntime(store: *FontStore, face: runtime_font.RuntimeFont) InsertEr
         return err;
     };
     runtime.shaper.?.font_id = handle.id;
+    runtime.shaper.?.setProfileClock(state.profile_clock);
     return handle;
 }
 
@@ -333,8 +359,46 @@ pub fn destroy(store: *FontStore) void {
     allocator.destroy(state);
 }
 
-/// Invalidates a font handle immediately and defers releasing its resource until store destruction, after the session's
-/// GPU-idle wait. This keeps any texture pointers already queued in the current frame valid.
+/// Rebuilds stored provider textures from retained CPU data. The caller must wait for GPU idle first.
+pub fn recreateGpuResources(store: *FontStore, device: *platform.gpu.Device) void {
+    const state = stateOf(store);
+    for (state.resources.entries.items) |entry| {
+        entry.value.recreateGpuResources(state.allocator, device);
+    }
+}
+
+/// Sets the monotonic timer used to accumulate shaping durations without coupling the text package to a platform clock.
+pub fn setProfileClock(store: *FontStore, clock_ns: ?*const fn () u64) void {
+    const state = stateOf(store);
+    state.profile_clock = clock_ns;
+    for (state.resources.entries.items) |entry| {
+        switch (entry.value.*) {
+            .runtime_coverage => |*font_value| if (font_value.shaper) |*value| value.setProfileClock(clock_ns),
+            .msdf => |*font_value| if (font_value.shaper) |*value| value.setProfileClock(clock_ns),
+            .bfnt_coverage, .bitmap => {},
+        }
+    }
+}
+
+/// Releases resources retired by `unload`. Call only after GPU idle, when no queued draw can retain their texture pointers.
+pub fn collectRetiredAfterGpuIdle(store: *FontStore) usize {
+    const state = stateOf(store);
+    const retired_count = state.retired.items.len;
+    for (state.retired.items) |resource| {
+        state.release(resource);
+        state.allocator.destroy(resource);
+    }
+    state.retired.clearRetainingCapacity();
+    return retired_count;
+}
+
+/// Number of unloaded fonts waiting for an idle-safe release.
+pub fn retiredCount(store: *const FontStore) usize {
+    return stateOfConst(store).retired.items.len;
+}
+
+/// Invalidates a font handle immediately and defers releasing its resource until the next GPU-idle collection.
+/// This keeps any texture pointers already queued in the current frame valid.
 pub fn unload(store: *FontStore, handle: FontHandle) UnloadError!void {
     const state = stateOf(store);
     try state.retired.ensureUnusedCapacity(state.allocator, 1);
@@ -611,6 +675,37 @@ fn statsOf(state: *const State) Stats {
     return result;
 }
 
+fn profileStatsOf(state: *const State) ProfileStats {
+    var result = ProfileStats{ .retired_fonts = state.retired.items.len };
+    for (state.resources.entries.items) |entry| {
+        switch (entry.value.*) {
+            .runtime_coverage => |*font_value| addShaperStats(&result, font_value.shaper),
+            .msdf => |*font_value| addShaperStats(&result, font_value.shaper),
+            .bfnt_coverage, .bitmap => {},
+        }
+    }
+    if (state.atlas) |atlas| {
+        const cache_stats = atlas.cache.snapshot();
+        const flush_stats = atlas.flushStats();
+        result.glyph_cache_hits = cache_stats.hits;
+        result.glyph_cache_misses = cache_stats.misses;
+        result.glyphs_rasterized = cache_stats.rasterized;
+        result.atlas_pages = cache_stats.pages_in_use;
+        result.atlas_cpu_bytes = cache_stats.allocated_bytes;
+        result.atlas_gpu_upload_bytes = flush_stats.gpu_upload_bytes;
+        result.atlas_gpu_upload_regions = flush_stats.gpu_regions;
+    }
+    return result;
+}
+
+fn addShaperStats(result: *ProfileStats, value: ?shaper.Shaper) void {
+    const profile = if (value) |*font_shaper| font_shaper.profile else return;
+    result.shape_calls += profile.shape_calls;
+    result.shape_nanoseconds += profile.shape_nanoseconds;
+    result.measure_calls += profile.measure_calls;
+    result.measure_nanoseconds += profile.measure_nanoseconds;
+}
+
 fn describeOf(state: *State, handle: FontHandle) Description {
     const resource = state.resources.peek(handle) catch |err| std.debug.panic("UI font handle {d} does not name a loaded font: {s}", .{ handle.id, @errorName(err) });
     return switch (resource.*) {
@@ -714,7 +809,12 @@ fn bitmapFixture() !font_resource.BitmapFont {
     const pages = try testing.allocator.alloc(Texture, 2);
     pages[0] = fixtures.texture(16, 8);
     pages[1] = fixtures.texture(16, 8);
-    return .{ .allocator = testing.allocator, .descriptor = descriptor, .pages = pages };
+    const page_pixels = try testing.allocator.alloc([]u8, 2);
+    page_pixels[0] = try testing.allocator.alloc(u8, 16 * 8);
+    page_pixels[1] = try testing.allocator.alloc(u8, 16 * 8);
+    @memset(page_pixels[0], 0);
+    @memset(page_pixels[1], 0);
+    return .{ .allocator = testing.allocator, .descriptor = descriptor, .pages = pages, .page_pixels = page_pixels };
 }
 
 test "bitmap text shares measurement and quad submission with authored offsets, fallback, and kerning" {
@@ -786,6 +886,9 @@ test "runtime fonts share metrics and measurement, and pass check without enabli
     const expected = try runtimeShaper(&resource.runtime_coverage).measure("AV", .{});
     try testing.expectEqual(expected, store.textWidth(handle, "AV"));
     try testing.expectEqual(handle.id, runtimeShaper(&resource.runtime_coverage).font_id);
+    const profile = store.profileStats();
+    try testing.expectEqual(@as(u64, 2), profile.measure_calls);
+    try testing.expectEqual(@as(u64, 0), profile.shape_calls);
 
     var list = std.mem.zeroes(c.ui_quad_list);
     try testing.expectError(error.RuntimeDrawingUnavailable, store.drawText(handle, &list, 0, 0, "A", .{
@@ -849,6 +952,8 @@ fn recordRelease(resource: *font_resource.FontResource) void {
             released_count += 1;
             f.descriptor.deinit();
             f.allocator.free(f.pages);
+            for (f.page_pixels) |pixels| f.allocator.free(pixels);
+            f.allocator.free(f.page_pixels);
             resource.* = undefined;
             return;
         },
@@ -918,7 +1023,7 @@ test "destroy releases each stored font exactly once, and nothing before it" {
     try testing.expectEqual(@as(usize, 1), releasesOf(23));
 }
 
-test "unloading invalidates the handle but retains font storage until destroy" {
+test "unloading invalidates the handle and idle collection releases it exactly once" {
     const store = try countingStore(testing.allocator);
     const handle = try insertBfnt(store, markedFont(33));
     const stored = try stateOf(store).resources.get(handle);
@@ -928,9 +1033,11 @@ test "unloading invalidates the handle but retains font storage until destroy" {
     try testing.expectEqual(@as(c_int, 33), stored.bfnt_coverage.baked.line_height);
     try testing.expectError(error.StaleHandle, stateOf(store).resources.get(handle));
 
-    destroy(store);
+    try testing.expectEqual(@as(usize, 1), collectRetiredAfterGpuIdle(store));
     try testing.expectEqual(@as(usize, 1), released_count);
     try testing.expectEqual(@as(usize, 1), releasesOf(33));
+    destroy(store);
+    try testing.expectEqual(@as(usize, 1), released_count);
 }
 
 test "an insert that fails to allocate releases the new font once, and stores nothing" {

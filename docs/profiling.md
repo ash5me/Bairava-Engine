@@ -19,6 +19,24 @@ results. Let it run past its 60-frame warm-up and the 120 frames it summarizes, 
 times along with the individual phase averages. F3 toggles the overlay; F2 opens the console, where
 `performance` prints the current summary; Escape quits.
 
+Run the typography reference workload with:
+
+```text
+zig build run-text-benchmark
+```
+
+It draws the authored bitmap font, BFNT coverage, runtime-shaped Latin and Tamil, and MSDF from the
+same native 320x180 view. Use F10 to compare SDL_GPU with SDL3 2D; Escape quits. After its 60-frame
+warm-up and 120-frame sample window, it logs frame average/p95, shaping and measure time, cache hits
+and misses, rasterized glyphs, atlas pages and CPU bytes, upload regions/bytes, and draw calls. The
+timings are local to the loaded font workload. Capture screenshots on a display for visual review;
+the log is profiling evidence, not screenshot acceptance.
+
+At shutdown, the engine also reports cumulative shaping, cache, atlas upload, and retirement counts.
+Those counters are useful for diagnosing a run but are not a machine-independent performance
+baseline. For cold/warm comparisons, use the reference workload and record its machine and backend
+details as above.
+
 The measurements are deliberately runtime-local and are not uploaded. No machine-independent
 baseline is committed because results depend on hardware, drivers, window compositor, and vsync.
 Record the machine/OS, CPU/GPU, Zig version, build mode, backend, and workload count beside any

@@ -78,6 +78,15 @@ pub const Shaper = struct {
     buffer: *hb.hb_buffer_t,
     /// Stamped on every run this shaper returns.
     font_id: FontId = font_registry.invalid_font_id,
+    profile: ProfileStats = .{},
+    clock_ns: ?*const fn () u64 = null,
+
+    pub const ProfileStats = struct {
+        shape_calls: u64 = 0,
+        measure_calls: u64 = 0,
+        shape_nanoseconds: u64 = 0,
+        measure_nanoseconds: u64 = 0,
+    };
 
     /// Creates a shaper for `font` with no registry id, so its runs carry `invalid_font_id`. The font must outlive
     /// the shaper.
@@ -97,9 +106,18 @@ pub const Shaper = struct {
         self.* = undefined;
     }
 
+    pub fn setProfileClock(self: *Shaper, clock_ns: ?*const fn () u64) void {
+        self.clock_ns = clock_ns;
+    }
+
     /// Shapes `text` and returns its glyphs. The caller frees the result with `ShapedRun.deinit`. An empty string shapes
     /// to no glyphs and zero width.
     pub fn shape(self: *Shaper, allocator: std.mem.Allocator, text: []const u8, options: Options) Error!ShapedRun {
+        const started = if (self.clock_ns) |now| now() else 0;
+        defer {
+            self.profile.shape_calls += 1;
+            if (self.clock_ns) |now| self.profile.shape_nanoseconds += now() - started;
+        }
         const count = try self.run(text, options);
         const glyphs = try allocator.alloc(Glyph, count);
         errdefer allocator.free(glyphs);
@@ -119,6 +137,11 @@ pub const Shaper = struct {
     /// Shapes `text` and returns only its width. It runs the same shaping and the same summation as `shape`, so the
     /// result equals `shape(...).width` exactly, with no glyph array.
     pub fn measure(self: *Shaper, text: []const u8, options: Options) Error!f32 {
+        const started = if (self.clock_ns) |now| now() else 0;
+        defer {
+            self.profile.measure_calls += 1;
+            if (self.clock_ns) |now| self.profile.measure_nanoseconds += now() - started;
+        }
         const count = try self.run(text, options);
         const infos = hb.hb_buffer_get_glyph_infos(self.buffer, null);
         const positions = hb.hb_buffer_get_glyph_positions(self.buffer, null);
@@ -206,6 +229,9 @@ test "AVATAR shapes to six glyphs with clusters 0 to 5, in input order" {
     defer run.deinit();
     try testing.expectEqual(@as(usize, 6), run.glyphs.len);
     for (run.glyphs, 0..) |g, i| try testing.expectEqual(@as(u32, @intCast(i)), g.cluster);
+    _ = try shaper.measure("AVATAR", .{});
+    try testing.expectEqual(@as(u64, 1), shaper.profile.shape_calls);
+    try testing.expectEqual(@as(u64, 1), shaper.profile.measure_calls);
 }
 
 test "glyph IDs are the font's own IDs, and a repeated letter maps to one glyph" {

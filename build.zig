@@ -453,6 +453,21 @@ pub fn build(b: *std.Build) void {
     run_benchmark.step.dependOn(b.getInstallStep());
     b.step("run-benchmark", "Run the deterministic 1000-sprite profiling workload").dependOn(&run_benchmark.step);
 
+    const text_benchmark = b.addExecutable(.{
+        .name = "BairavaTextBenchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/text_benchmark.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    text_benchmark.root_module.addImport("bairava", engine_module);
+    b.installArtifact(text_benchmark);
+    const run_text_benchmark = b.addRunArtifact(text_benchmark);
+    run_text_benchmark.step.dependOn(b.getInstallStep());
+    b.step("run-text-benchmark", "Run the deterministic multi-provider typography reference workload").dependOn(&run_text_benchmark.step);
+
     // Texture atlas: every sprite in one image, packed at build time by tools/atlas/pack.c with
     // stb_rect_pack. The packer runs on the build machine, so it is built for the host, not the target.
     const atlas_tool = b.addExecutable(.{

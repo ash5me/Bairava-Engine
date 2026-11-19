@@ -11,12 +11,21 @@ const runtime_font = @import("runtime_font.zig");
 const shaper = @import("shaper.zig");
 const Texture = texture.Texture;
 
-/// A font on the GPU: the baked metrics and glyphs from C, plus the atlas texture they sample. The CPU copy of
-/// the atlas is released after upload, so `baked.alpha` is null; measuring and drawing read only metrics.
+/// A font on the GPU: the baked metrics and glyphs from C, plus the atlas texture they sample. The CPU atlas remains
+/// resident so the GPU texture can be rebuilt after a renderer-resource reset.
 pub const Font = struct {
     /// Metrics, kerning, and glyphs, owned by the C side. Pass `&font.baked` to C functions.
     baked: c.ui_font,
     texture: Texture,
+
+    pub fn recreateGpuResources(self: *Font, allocator: std.mem.Allocator, device: *platform.gpu.Device) void {
+        const pixels = self.baked.alpha orelse @panic("BFNT CPU atlas was released before GPU recreation");
+        const width: u32 = @intCast(self.baked.atlas_w);
+        const height: u32 = @intCast(self.baked.atlas_h);
+        const replacement = texture.createCoverage(allocator, device, width, height, pixels[0 .. @as(usize, width) * height]);
+        self.texture.deinit();
+        self.texture = replacement;
+    }
 
     pub fn deinit(self: *Font) void {
         self.texture.deinit();
@@ -31,6 +40,21 @@ pub const MsdfFont = struct {
     coverage_texture: Texture,
     face: runtime_font.RuntimeFont,
     shaper: ?shaper.Shaper = null,
+
+    pub fn recreateGpuResources(self: *MsdfFont, allocator: std.mem.Allocator, device: *platform.gpu.Device) void {
+        const texels = @as(usize, @intCast(self.baked.atlas_w)) * @as(usize, @intCast(self.baked.atlas_h));
+        const msdf_pixels = self.baked.msdf_rgba orelse @panic("MSDF CPU atlas was released before GPU recreation");
+        const coverage_pixels = self.baked.alpha orelse @panic("MSDF coverage atlas was released before GPU recreation");
+        const width: u32 = @intCast(self.baked.atlas_w);
+        const height: u32 = @intCast(self.baked.atlas_h);
+        const replacement_msdf = texture.createMsdf(allocator, device, width, height, msdf_pixels[0 .. texels * 4], self.baked.px_range);
+        const replacement_coverage = texture.createCoverage(allocator, device, width, height, coverage_pixels[0..texels]);
+        self.msdf_texture.deinit();
+        self.coverage_texture.deinit();
+        self.msdf_texture = replacement_msdf;
+        self.coverage_texture = replacement_coverage;
+        self.msdf_texture.sdl2d_fallback = &self.coverage_texture;
+    }
 
     pub fn deinit(self: *MsdfFont) void {
         self.msdf_texture.deinit();
@@ -101,7 +125,6 @@ pub const MsdfStaged = struct {
         allocator.free(self.baked.source_bytes[0..self.baked.source_len]);
         self.baked.source_bytes = null;
         self.baked.source_len = 0;
-        c.ui_font_release_atlas(&self.baked);
         const baked = self.baked;
         self.* = undefined;
         return .{
@@ -147,11 +170,7 @@ fn fromBaked(allocator: std.mem.Allocator, device: *platform.gpu.Device, baked: 
     const height: u32 = @intCast(baked.atlas_h);
     const pixels = baked.alpha[0 .. @as(usize, width) * height];
     const atlas = texture.createCoverage(allocator, device, width, height, pixels);
-    // createCoverage copies the coverage into the GPU and into the 2D renderer's texture before it returns, so nothing
-    // reads the CPU copy after this point. Drop it now; the font keeps the metrics, glyphs, and kerning.
-    var owned = baked;
-    c.ui_font_release_atlas(&owned);
-    return .{ .baked = owned, .texture = atlas };
+    return .{ .baked = baked, .texture = atlas };
 }
 
 test "MFNT v1 descriptors load at their baked pixel height" {

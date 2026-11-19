@@ -601,11 +601,19 @@ pub const Context = struct {
             descriptor.deinit();
             return error.OutOfMemory;
         };
+        const page_pixels = allocator.alloc([]u8, descriptor.pages.len) catch {
+            allocator.free(pages);
+            descriptor.deinit();
+            return error.OutOfMemory;
+        };
         var loaded_pages: usize = 0;
+        var loaded_pixels: usize = 0;
         var transferred = false;
         errdefer if (!transferred) {
             for (pages[0..loaded_pages]) |*page| page.deinit();
             allocator.free(pages);
+            for (page_pixels[0..loaded_pixels]) |pixels| allocator.free(pixels);
+            allocator.free(page_pixels);
             descriptor.deinit();
         };
 
@@ -626,6 +634,8 @@ pub const Context = struct {
             };
             defer allocator.free(bytes);
             if (bytes.len != expected_bytes) return error.FontLoadFailed;
+            page_pixels[index] = allocator.dupe(u8, bytes) catch return error.OutOfMemory;
+            loaded_pixels += 1;
             pages[index] = texture_renderer.createCoverage(allocator, contextGpuDevice(self), descriptor.scale_w, descriptor.scale_h, bytes);
             loaded_pages += 1;
         }
@@ -634,6 +644,7 @@ pub const Context = struct {
             .allocator = allocator,
             .descriptor = descriptor,
             .pages = pages,
+            .page_pixels = page_pixels,
         };
         transferred = true;
         return font_store.insertBitmap(self.fonts, bitmap) catch |err| switch (err) {

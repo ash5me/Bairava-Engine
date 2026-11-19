@@ -26,12 +26,15 @@ def verify_source_pins(lock: dict) -> bool:
         toolchain = lock["toolchain"]
         zig_version = re.search(r'\.minimum_zig_version\s*=\s*"([^"]+)"', zon)
         slang_version = re.search(r"""(?m)^  SLANG_VERSION:\s*(['"])([^'"]+)\1\s*$""", workflow)
-        if zig_version is None or slang_version is None:
-            raise ValueError("could not find the Zig or Slang version in its source file")
+        dxc_version = re.search(r"""(?m)^  DXC_VERSION:\s*(['"])([^'"]+)\1\s*$""", workflow)
+        if zig_version is None or slang_version is None or dxc_version is None:
+            raise ValueError("could not find the Zig, Slang, or DXC version in its source file")
         if zig_version.group(1) != toolchain["zig"]:
             raise ValueError(f"Zig version differs from lock (configured {zig_version.group(1)}, locked {toolchain['zig']})")
         if slang_version.group(2) != toolchain["slang"]:
             raise ValueError(f"Slang version differs from lock (configured {slang_version.group(2)}, locked {toolchain['slang']})")
+        if dxc_version.group(2) != toolchain["dxc"]:
+            raise ValueError(f"DXC version differs from lock (configured {dxc_version.group(2)}, locked {toolchain['dxc']})")
 
         packages = lock["zig_packages"]
         if not isinstance(packages, list) or not packages:
@@ -65,6 +68,15 @@ def verify_source_pins(lock: dict) -> bool:
             if not archive.startswith(f"slang-{toolchain['slang']}-"):
                 raise ValueError(f"{archive}: archive name does not match the pinned Slang version")
         print(f"Slang release archives: {len(archive_hashes)} SHA-256 pins verified")
+        dxc_archives = lock["dxc_archives"]
+        if not isinstance(dxc_archives, dict) or not dxc_archives:
+            raise ValueError("dxc_archives must map archive names to SHA-256 hashes")
+        for archive, digest in dxc_archives.items():
+            if not isinstance(archive, str) or not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                raise ValueError(f"{archive!r}: invalid DXC archive SHA-256 pin")
+        if "dxc_2025_07_14.zip" not in dxc_archives:
+            raise ValueError("the pinned DXC release archive is missing")
+        print(f"DXC release archives: {len(dxc_archives)} SHA-256 pins verified")
         return True
     except (OSError, KeyError, TypeError, ValueError) as error:
         fail(f"dependency pin verification failed: {error}")
@@ -106,16 +118,16 @@ def tree_hash(paths: list[str]) -> str:
     return digest.hexdigest()
 
 
-def verify_slang_archive(path: Path) -> bool:
+def verify_release_archive(path: Path, lock_key: str, label: str) -> bool:
     try:
         lock = json.loads(LOCK.read_text(encoding="utf-8"))
-        expected = lock["slang_archives"][path.name]
+        expected = lock[lock_key][path.name]
         digest = hashlib.sha256()
         with path.open("rb") as archive:
             for block in iter(lambda: archive.read(1024 * 1024), b""):
                 digest.update(block)
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
-        fail(f"cannot verify Slang archive {path}: {error}")
+        fail(f"cannot verify {label} archive {path}: {error}")
         return False
     actual = digest.hexdigest()
     if actual != expected:
@@ -146,11 +158,13 @@ def verify_slang_compiler(command: str) -> bool:
 
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--slang-archive":
-        return 0 if verify_slang_archive(Path(sys.argv[2])) else 1
+        return 0 if verify_release_archive(Path(sys.argv[2]), "slang_archives", "Slang") else 1
+    if len(sys.argv) == 3 and sys.argv[1] == "--dxc-archive":
+        return 0 if verify_release_archive(Path(sys.argv[2]), "dxc_archives", "DXC") else 1
     if len(sys.argv) == 3 and sys.argv[1] == "--slang-compiler":
         return 0 if verify_slang_compiler(sys.argv[2]) else 1
     if len(sys.argv) != 1:
-        print("usage: check-dependency-pins.py [--slang-archive PATH | --slang-compiler COMMAND]", file=sys.stderr)
+        print("usage: check-dependency-pins.py [--slang-archive PATH | --dxc-archive PATH | --slang-compiler COMMAND]", file=sys.stderr)
         return 2
 
     try:

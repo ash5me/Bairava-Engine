@@ -33,6 +33,8 @@ const bmfont = @import("bmfont.zig");
 const layout = @import("layout.zig");
 const c = @import("../ui/c.zig").c;
 const Texture = @import("../renderer/texture.zig").Texture;
+const platform = @import("../platform/platform.zig");
+const texture_renderer = @import("../renderer/texture.zig");
 
 pub const FontHandle = font_registry.FontHandle;
 
@@ -62,10 +64,27 @@ pub const BitmapFont = struct {
     allocator: std.mem.Allocator,
     descriptor: bmfont.Font,
     pages: []Texture,
+    page_pixels: [][]u8,
+
+    pub fn recreateGpuResources(self: *BitmapFont, device: *platform.gpu.Device) void {
+        for (self.pages, self.page_pixels) |*page, pixels| {
+            const replacement = texture_renderer.createCoverage(
+                self.allocator,
+                device,
+                self.descriptor.scale_w,
+                self.descriptor.scale_h,
+                pixels,
+            );
+            page.deinit();
+            page.* = replacement;
+        }
+    }
 
     pub fn deinit(self: *BitmapFont) void {
         for (self.pages) |*page| page.deinit();
         self.allocator.free(self.pages);
+        for (self.page_pixels) |pixels| self.allocator.free(pixels);
+        self.allocator.free(self.page_pixels);
         self.descriptor.deinit();
         self.* = undefined;
     }
@@ -99,6 +118,16 @@ pub const FontResource = union(Provider) {
             .runtime_coverage => |*f| f.deinit(),
         }
         self.* = undefined;
+    }
+
+    /// Rebuilds provider textures from retained CPU data. Call only after GPU idle and while the device is valid.
+    pub fn recreateGpuResources(self: *FontResource, allocator: std.mem.Allocator, device: *platform.gpu.Device) void {
+        switch (self.*) {
+            .bfnt_coverage => |*font_value| font_value.recreateGpuResources(allocator, device),
+            .msdf => |*font_value| font_value.recreateGpuResources(allocator, device),
+            .bitmap => |*font_value| font_value.recreateGpuResources(device),
+            .runtime_coverage => {},
+        }
     }
 
     /// The common metrics, in the conventions in the header. This reads only CPU-side data, so it is safe on any thread
