@@ -30,6 +30,7 @@ pub const Input = engine.Input;
 pub const Key = engine.Key;
 pub const Binding = engine.Binding;
 pub const ActionMap = engine.ActionMap;
+pub const ActionBuffer = engine.ActionBuffer;
 pub const ActionDefaults = engine.ActionDefaults;
 pub const bindings = engine.bindings;
 pub const MouseButton = engine.MouseButton;

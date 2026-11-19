@@ -93,6 +93,7 @@ test {
     _ = @import("engine/input/input.zig");
     _ = @import("engine/input/gamepad.zig");
     _ = @import("engine/input/action.zig");
+    _ = @import("engine/input/buffer.zig");
     _ = @import("engine/input/mapping.zig");
     _ = @import("engine/platform/sdl/input.zig");
     _ = @import("engine/platform/sdl/gamepad.zig");

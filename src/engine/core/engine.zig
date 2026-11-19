@@ -56,6 +56,8 @@ pub const Binding = @import("../input/action.zig").Binding;
 /// Maps the game's actions to their bindings. Build one from `ActionDefaults`, and ask it about actions
 /// each update step. See input/action.zig.
 pub const ActionMap = @import("../input/action.zig").ActionMap;
+/// Simulation-owned press windows for selected actions. Input edge queries remain one-update events.
+pub const ActionBuffer = @import("../input/buffer.zig").ActionBuffer;
 /// The starting bindings of an action enum, as a table indexed by action. See input/action.zig.
 pub const ActionDefaults = @import("../input/action.zig").Defaults;
 /// Reads the `bind` lines of the settings file over a game's defaults. See input/mapping.zig.
