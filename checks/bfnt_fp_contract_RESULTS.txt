@@ -1,0 +1,44 @@
+BFNT measurement parity: FMA contraction in text.c (2026-11-19, sandbox, Ubuntu 24.04, gcc 13.3.0)
+=====================================================================================================
+
+Owner's failing run (Windows, D:\repo\Bairava-Engine, Zig 0.16.0-dev.3142+5ccfeb926, zig build test):
+  root test module: 713 pass, 1 fail (714 total)
+  failing test: engine.text.bfnt_measure, "the BFNT measurement port returns the same float bits as text.c ..."
+    expected 1115540685, found 1115540682   (1115540685 = 0x427DCCCD is text.c; 1115540682 = 0x427DCCCA is the port)
+  engine_api_test: 13 of 13 pass (726 of 727 overall with the root's 713)
+  C harnesses in the same run passed: job, asset importer, script, text ("text: all checks passed"), imgui.
+
+Reproduction: checks/bfnt_fp_contract_repro.c replays the Zig test in C (same fonts, kernings, corpus, scales, loop order).
+
+  Build A, text.c fused (-mfma, contraction on):
+    gcc -std=c99 -O2 -mfma -ffp-contract=fast -c src/engine/text/text.c -Isrc/engine/text -Isrc/engine/ui -o text_fma.o
+    gcc -std=c99 -O2 -c checks/bfnt_fp_contract_repro.c -Isrc/engine/text -Isrc/engine/ui -o repro.o
+    gcc -o repro_fma repro.o text_fma.o -lm && ./repro_fma
+    Output:
+      FIRST MISMATCH: font 0 corpus 5 scale 1.5: text.c=1115540685 (0x427DCCCD) port=1115540682 (0x427DCCCA)
+      456 comparisons, 3 mismatches
+
+  Build B, text.c unfused (no FMA, the default x86_64 build):
+    gcc -std=c99 -O2 -c src/engine/text/text.c -Isrc/engine/text -Isrc/engine/ui -o text_plain.o
+    gcc -o repro_plain repro.o text_plain.o -lm && ./repro_plain
+    Output: 456 comparisons, 0 mismatches
+
+  Build C, text.c with FMA available but contraction off (the fix in build.zig, text_c_flags):
+    gcc -std=c99 -O2 -mfma -ffp-contract=off -c src/engine/text/text.c -Isrc/engine/text -Isrc/engine/ui -o text_off.o
+    gcc -o repro_off repro.o text_off.o -lm && ./repro_off
+    Output: 456 comparisons, 0 mismatches. objdump finds 0 vfmadd instructions in text_off.o.
+
+  Fused text.c at -O0 gives 0 mismatches because GCC forms FMAs only in optimized builds. Clang may differ, which is
+  why the fix sets the flag and does not depend on the optimization level.
+
+What this shows
+  - The mismatch is a compiler fusing text.c's `width += kerning * scale` and `width += xadvance * scale`, on a target
+    where FMA exists. The Zig port does one rounding per operation, and Zig does not fuse by default.
+  - The Linux mirror (checks/bfnt_measure_mirror.c) matched text.c with 0 mismatches only because it was built without
+    FMA. It did not exercise the failing configuration.
+  - The fix is build-side: build.zig compiles text.c with -ffp-contract=off at all four sites (test module, engine
+    module, UI test harness, asset builder), through `text_c_flags`.
+
+What this does not show
+  - It does not run the Zig build. The build.zig edit is not compiled in the sandbox, and it is not evidence until
+    `zig build test` passes on the commit that contains it. E-01 needs CI on that commit.

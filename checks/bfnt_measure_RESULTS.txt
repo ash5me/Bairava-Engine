@@ -1,0 +1,10 @@
+BFNT measurement mirror results (Phase 1, D-19: measurement routed through the common text API), 2026-11-19
+Mirror: checks/bfnt_measure_mirror.c (the planned Zig port, line for line) against text.c ui_font_text_width_scaled.
+Build: gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -Isrc/engine/text -Isrc/engine/ui checks/bfnt_measure_mirror.c src/engine/text/text.c -lm
+Run:
+example  "AV" in A at 1.0: 0x1.6cccccp+2
+example  "VAVAV" in A at 2.0: 0x1.9p+4
+example  "\xe6\x97\xa5" (unbaked) in B at 1.0: 0x0p+0
+bfnt measure mirror: 960480 comparisons, 0 mismatches
+Exit status: 0
+The Zig port (src/engine/text/bfnt_measure.zig) and its parity test are not compiled in the sandbox.

@@ -17,6 +17,7 @@ const c = @import("../ui/c.zig").c;
 const font_registry = @import("font_registry.zig");
 const font_resource = @import("font_resource.zig");
 const font_mod = @import("font.zig");
+const bfnt_measure = @import("bfnt_measure.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 
 pub const FontHandle = font_registry.FontHandle;
@@ -63,7 +64,7 @@ pub const FontStore = opaque {
 
     /// The width of `str` in pixels, in the font `handle` names.
     pub fn textWidth(self: *FontStore, handle: FontHandle, str: []const u8) f32 {
-        return c.ui_font_text_width(&bfntFont(stateOf(self), handle).baked, str.ptr, str.len);
+        return bfnt_measure.width(&bfntFont(stateOf(self), handle).baked, str, 1.0);
     }
 
     /// Adds `str` to `list` with its top-left corner at (x, y), in pixels, in the font `handle` names.

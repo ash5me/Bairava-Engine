@@ -1,5 +1,11 @@
 const std = @import("std");
 
+/// Compile flags for text.c. The BFNT measurement parity test (src/engine/text/bfnt_measure.zig) compares text.c
+/// bit for bit with the Zig port, which never fuses a multiply and an add. Clang and GCC do fuse `width += a * b`
+/// into one fused multiply-add when the target has FMA, and the results then differ in the last bits. This flag keeps
+/// text.c on the unfused arithmetic, in every build that compiles it.
+const text_c_flags = [_][]const u8{"-ffp-contract=off"};
+
 /// cglm's C sources (v0.9.7), in the order its CMakeLists.txt lists them. They are vendored under
 /// vendor/cglm/ with its headers and license.
 const cglm_sources = [_][]const u8{
@@ -164,7 +170,7 @@ fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, wi
     addFreeType(b, module);
     module.addCSourceFile(.{ .file = b.path(test_source) });
     module.addCSourceFile(.{ .file = b.path("tests/ui/test_support.c") });
-    module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c"), .flags = &text_c_flags });
     module.addCSourceFile(.{ .file = b.path("tools/assets/font_bake.c") });
     module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     if (with_imgui) module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
@@ -205,7 +211,7 @@ fn configureEngineModule(
     module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     addJobsAndScript(b, module);
     module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
-    module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c"), .flags = &text_c_flags });
     module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
     module.addCSourceFile(.{ .file = b.path("vendor/log.c") });
     module.addCSourceFile(.{ .file = b.path("src/engine/logging/log_file.c") });
@@ -457,7 +463,7 @@ pub fn build(b: *std.Build) void {
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/build.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_image_impl.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
-    asset_builder.root_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    asset_builder.root_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c"), .flags = &text_c_flags });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/font_bake.c") });
     const run_asset_builder = b.addRunArtifact(asset_builder);
     run_asset_builder.addFileArg(b.path("assets/asset_manifest.txt"));
@@ -614,7 +620,7 @@ pub fn build(b: *std.Build) void {
     // imgui.h from src/engine/ui, and its deinit calls text.c. configureEngineModule gives the engine both; the test
     // binary needs the same include path and translation unit. text.c needs only libc, so nothing else is added.
     test_module.addIncludePath(b.path("src/engine/ui"));
-    test_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    test_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c"), .flags = &text_c_flags });
     // The test root now compiles the same C the engine does for the parts it reaches: ui.zig needs imgui.c, and
     // lifecycle.zig reads build_options (configureEngineModule gives the engine both).
     test_module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
