@@ -160,7 +160,7 @@ pub const Canvas = struct {
         }
         list.items[@intCast(list.count)] = .{
             .dst = .{ .x = x, .y = y, .w = w, .h = h },
-            .src = bfntFont(self.fonts, self.font).baked.white,
+            .src = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
             .color = toC(color),
             .solid = 1,
         };
@@ -169,7 +169,7 @@ pub const Canvas = struct {
 
     /// Queues the quads as sprites at depth `z`.
     pub fn queue(self: *Canvas, batch: *sprite.SpriteBatch, z: i32) void {
-        queueQuads(batch, bfntFont(self.fonts, self.font), self.list, z);
+        queueQuads(batch, self.fonts, self.font, self.list, z);
     }
 };
 
@@ -305,7 +305,7 @@ pub const Ui = struct {
 
     /// Queues this frame's widgets as sprites at depth `z`.
     pub fn queue(self: *Ui, batch: *sprite.SpriteBatch, z: i32) void {
-        queueQuads(batch, bfntFont(self.canvas.fonts, self.canvas.font), &self.ctx.list, z);
+        queueQuads(batch, self.canvas.fonts, self.canvas.font, &self.ctx.list, z);
     }
 };
 
@@ -328,30 +328,35 @@ fn toC(color: Color) c.ui_color {
     return .{ .r = color.r, .g = color.g, .b = color.b, .a = color.a };
 }
 
-/// Queues each quad in `list` as one sprite on `batch`. A glyph quad's `src` is its texel rectangle in the font's
-/// atlas. A solid quad draws from the batch's white texture, and its `src` is ignored. When the batch has no white
-/// texture, a solid quad falls back to the font's own block, as every quad did before. `dst` is the pixel rectangle,
-/// and the color's RGB and alpha become the sprite's tint and alpha. `z` puts the UI above or below other sprites.
-fn queueQuads(batch: *sprite.SpriteBatch, font: *Font, list: *const c.ui_quad_list, z: i32) void {
+/// Queues each quad in `list` as one sprite on `batch`. A solid quad draws from the batch's white texture, and its
+/// `src` is ignored. A batch without a white texture draws no fills, so a fill never reads the font's atlas. A glyph
+/// quad's `src` is its texel rectangle in the font's atlas, so the font is looked up only when a glyph is drawn. `dst`
+/// is the pixel rectangle, and the color's RGB and alpha become the sprite's tint and alpha. `z` puts the UI above or
+/// below other sprites.
+fn queueQuads(batch: *sprite.SpriteBatch, fonts: *font_resource.Resources, handle: FontHandle, list: *const c.ui_quad_list, z: i32) void {
     const count: usize = @intCast(list.count);
+    var font: ?*Font = null;
     for (list.items[0..count]) |q| {
         const snap = @floor(q.dst.x + 0.5);
         const snap_y = @floor(q.dst.y + 0.5);
         const snap_w = @max(1.0, @floor(q.dst.w + 0.5));
         const snap_h = @max(1.0, @floor(q.dst.h + 0.5));
         if (q.solid != 0) {
-            if (batch.white) |white| {
-                batch.drawSprite(
-                    white,
-                    .{ .x = 0, .y = 0, .w = @floatFromInt(white.width), .h = @floatFromInt(white.height) },
-                    .{ .x = snap, .y = snap_y, .w = snap_w, .h = snap_h },
-                    .{ .tint = .{ q.color.r, q.color.g, q.color.b }, .alpha = q.color.a, .z = z },
-                );
-                continue;
-            }
+            const white = batch.white orelse continue;
+            batch.drawSprite(
+                white,
+                .{ .x = 0, .y = 0, .w = @floatFromInt(white.width), .h = @floatFromInt(white.height) },
+                .{ .x = snap, .y = snap_y, .w = snap_w, .h = snap_h },
+                .{ .tint = .{ q.color.r, q.color.g, q.color.b }, .alpha = q.color.a, .z = z },
+            );
+            continue;
         }
+        const glyph_font = font orelse blk: {
+            font = bfntFont(fonts, handle);
+            break :blk font.?;
+        };
         batch.drawSprite(
-            &font.texture,
+            &glyph_font.texture,
             .{ .x = q.src.x, .y = q.src.y, .w = q.src.w, .h = q.src.h },
             .{ .x = snap, .y = snap_y, .w = snap_w, .h = snap_h },
             .{ .tint = .{ q.color.r, q.color.g, q.color.b }, .alpha = q.color.a, .z = z },
@@ -511,15 +516,13 @@ test "a glyph keeps the font atlas, and a fill after it starts a run on the whit
     try std.testing.expectEqual(@as(*const Texture, &white), batch.batches[1].texture);
 }
 
-test "without a white texture on the batch, a fill falls back to the font's own block" {
+test "without a white texture on the batch, a fill is not drawn" {
     const allocator = std.testing.allocator;
     const fixtures = @import("../test_fixtures.zig");
-    const Texture = @import("../renderer/texture.zig").Texture;
 
     var fonts = Fonts.init(allocator);
     defer fonts.deinit();
     const handle = try insertFixtureFont(&fonts);
-    const stored = bfntFont(&fonts, handle);
     const list = try allocator.create(c.ui_quad_list);
     defer allocator.destroy(list);
     list.count = 0;
@@ -535,6 +538,34 @@ test "without a white texture on the batch, a fill falls back to the font's own 
     canvas.queue(&batch, 0);
     batch.prepare();
 
+    try std.testing.expectEqual(@as(u32, 0), batch.batch_count);
+}
+
+test "a fill is drawn from the white texture even when the handle names no font" {
+    const allocator = std.testing.allocator;
+    const fixtures = @import("../test_fixtures.zig");
+    const Texture = @import("../renderer/texture.zig").Texture;
+
+    var fonts = Fonts.init(allocator);
+    defer fonts.deinit();
+    const list = try allocator.create(c.ui_quad_list);
+    defer allocator.destroy(list);
+    list.count = 0;
+    list.dropped = 0;
+    // No font is loaded under this handle. A fill never looks one up, so queueing it does not panic.
+    var canvas = Canvas{ .allocator = allocator, .fonts = &fonts, .font = FontHandle.invalid, .list = list };
+    canvas.rect(10, 10, 20, 5, .{ .r = 1, .g = 0, .b = 0, .a = 1 });
+
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = fixtures.batch(&no_vertices, &no_batches);
+    defer fixtures.freeBatch(&batch);
+    const white = fixtures.texture(2, 2);
+    batch.white = &white;
+    batch.begin(320, 180);
+    canvas.queue(&batch, 0);
+    batch.prepare();
+
     try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
-    try std.testing.expectEqual(@as(*const Texture, &stored.texture), batch.batches[0].texture);
+    try std.testing.expectEqual(@as(*const Texture, &white), batch.batches[0].texture);
 }

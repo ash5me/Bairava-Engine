@@ -48,8 +48,11 @@ static ui_rect next_row(ui_context *ui, float h) {
     return r;
 }
 
+/* A fill draws from the backend's own white texture, so it names no atlas texel. */
+static const ui_rect no_texel = { 0, 0, 0, 0 };
+
 static void fill(ui_context *ui, ui_rect r, ui_color c) {
-    ui_quad_push_solid(&ui->list, r, ui->font->white, c);
+    ui_quad_push_solid(&ui->list, r, no_texel, c);
 }
 
 /* The press logic every widget shares. Hover is only claimed while nothing is active, so a widget

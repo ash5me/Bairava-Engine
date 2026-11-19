@@ -234,6 +234,7 @@ pub const Game = struct {
 
     pub fn deinit(self: *Game) void {
         if (self.script) |*vm| vm.deinit();
+        if (self.script_bridge) |bridge| self.allocator.destroy(bridge);
         if (self.ambient_voice) |voice| self.audio.stop(voice);
         if (self.ambient_sound) |*sound| sound.deinit();
         self.level.deinit();
@@ -314,6 +315,9 @@ pub const Game = struct {
             log.err("could not allocate the script bridge, so the game runs without scripts", .{});
             return;
         };
+        // Freed on every failure path. Once the game keeps it, `deinit` frees it instead.
+        var kept = false;
+        defer if (!kept) ctx.allocators.game.destroy(bridge);
         bridge.* = .{ .ctx = ctx };
         var vm = engine.script.Vm.init(config.script_max_steps) catch {
             log.err("could not create the script runtime, so the game runs without scripts", .{});
@@ -337,6 +341,7 @@ pub const Game = struct {
         };
         self.script = vm;
         self.script_bridge = bridge;
+        kept = true;
         log.info("script '{s}' loaded", .{config.script_path});
     }
 

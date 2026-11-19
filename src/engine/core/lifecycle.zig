@@ -276,6 +276,8 @@ pub const Session = struct {
                 counts.hits, counts.misses, counts.failed_loads, counts.loaded,
             });
             self.textures.deinit();
+            // The store struct itself came from the engine allocator in `start`, so it is freed here too.
+            self.engine_allocator.destroy(self.textures);
             self.textures_ready = false;
         }
         // Font resources can hold GPU textures, so they go before the device, after the game and overlay are gone.

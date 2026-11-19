@@ -6,18 +6,16 @@
 
 const std = @import("std");
 
-const collector_mod = @import("../diagnostics/collector.zig");
-const Collector = collector_mod.Collector;
-const console_mod = @import("../diagnostics/console.zig");
-const debug_draw = @import("../diagnostics/debug_draw.zig");
-const spike_log = @import("../diagnostics/spike_log.zig");
-const text_mod = @import("../diagnostics/text.zig");
-const line_capacity = text_mod.max_line_len;
 const sprite = @import("../renderer/sprite.zig");
 const ui = @import("../ui/ui.zig");
 const frame_history = @import("frame_history.zig");
-/// Layout in native pixels. The graph is one column per kept frame, so it is `capacity` pixels wide.
-const graph_w: f32 = frame_history.capacity;
+const collector_mod = @import("../diagnostics/collector.zig");
+const debug_draw = @import("../diagnostics/debug_draw.zig");
+const text_mod = @import("../diagnostics/text.zig");
+const console_mod = @import("../diagnostics/console.zig");
+const spike_log = @import("../diagnostics/spike_log.zig");
+
+const Collector = collector_mod.Collector;
 
 /// Draw order. Above the game's sprites and its UI panel, which use 1000.
 const z: i32 = 2000;
@@ -27,6 +25,8 @@ const z: i32 = 2000;
 const budget_s: f32 = 1.0 / 60.0;
 const full_scale_s: f32 = 2.0 * budget_s;
 
+/// Layout in native pixels. The graph is one column per kept frame, so it is `capacity` pixels wide.
+const graph_w: f32 = frame_history.capacity;
 const graph_h: f32 = 40;
 /// The strip under the frame graph: one column per kept frame, for a plot such as allocations per frame.
 const strip_h: f32 = 16;
@@ -36,6 +36,8 @@ const margin: f32 = 4;
 /// Lines the engine writes, then the game's lines. Each line's buffer is `line_capacity` bytes.
 const engine_lines = 17;
 const max_lines = engine_lines + text_mod.max_lines;
+const line_capacity = text_mod.max_line_len;
+
 const panel_color = ui.Color{ .r = 0.04, .g = 0.04, .b = 0.07, .a = 0.75 };
 const text_color = ui.Color{ .r = 0.92, .g = 0.92, .b = 0.92, .a = 1.0 };
 const budget_color = ui.Color{ .r = 1.0, .g = 1.0, .b = 1.0, .a = 0.35 };
@@ -91,12 +93,11 @@ pub const Overlay = struct {
         const compact_strip_h: f32 = if (compact) 8 else strip_h;
         const max_panel_w = @max(1, @min(view_w - 2 * margin, view_w * 0.44));
         const panel_w = @min(widest + 2 * pad, max_panel_w);
-        const max_panel_h = @max(1, @min(view_h - 2 * margin, view_h * 0.9));
+        const max_panel_h = @max(1, @min(view_h - 2 * margin, view_h * 0.42));
         const fixed_h = pad + compact_graph_h + pad + compact_strip_h + pad + pad;
         const max_text_lines: usize = if (line_h > 0)
             @max(1, @as(usize, @intFromFloat(@floor(@max(0, max_panel_h - fixed_h) / line_h))))
-        else
-            1;
+        else 1;
         const visible_count = @min(count, max_text_lines);
         const panel_h = @min(max_panel_h, fixed_h + @as(f32, @floatFromInt(visible_count)) * line_h);
         const x0 = view_w - panel_w - margin;

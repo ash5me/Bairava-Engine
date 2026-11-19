@@ -1,8 +1,8 @@
 /*
  * ui_solid_check.c: checks the `solid` flag on UI quads (decision D-04, C side).
  *
- * Solid fills (rectangles) are marked solid; glyphs are not. Fills sample the atlas white texel that `src`
- * names today, and no glyph samples that texel. Nothing else about a quad changes.
+ * Solid fills (rectangles) are marked solid; glyphs are not. A fill names no atlas texel, because the backend
+ * draws it from its own white texture, and no glyph samples the atlas white texel. Nothing else about a quad changes.
  *
  * Build and run from the repository root (the same gcc line as the other checks):
  *   gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
@@ -95,7 +95,8 @@ static void test_widget_frame(void) {
         const ui_quad *q = &ui.list.items[i];
         if (q->solid) {
             solids++;
-            CHECK(is_white_texel(q->src), "a solid fill samples the atlas white texel");
+            CHECK(!is_white_texel(q->src), "a solid fill does not sample the atlas white texel");
+            CHECK(q->src.w == 0 && q->src.h == 0, "a solid fill names no atlas rectangle");
         } else {
             glyphs++;
             CHECK(!is_white_texel(q->src), "a widget glyph does not sample the white block");
