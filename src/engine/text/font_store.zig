@@ -22,10 +22,15 @@ const Texture = @import("../renderer/texture.zig").Texture;
 pub const FontHandle = font_registry.FontHandle;
 pub const InsertError = font_registry.InsertError;
 
+/// Releases one font when the store lets go of it. `create` uses `FontResource.deinit`. Tests pass a counting function, so
+/// the store's ownership can be checked without a GPU object behind the font.
+pub const Release = *const fn (*font_resource.FontResource) void;
+
 /// What a `FontStore` points at. Only this file names it.
 const State = struct {
     allocator: std.mem.Allocator,
     resources: font_resource.Resources,
+    release: Release,
 };
 
 /// The session's fonts, as game-facing code sees them. Opaque, so its state is reachable only from this file.
@@ -64,8 +69,14 @@ pub const FontStore = opaque {
 
 /// Creates an empty store. The session calls this once, before any font is loaded.
 pub fn create(allocator: std.mem.Allocator) std.mem.Allocator.Error!*FontStore {
+    return createWithRelease(allocator, &font_resource.FontResource.deinit);
+}
+
+/// As `create`, but `release` runs on each font the store lets go of, in place of `FontResource.deinit`. Only tests pass
+/// another function, so they can count releases of a font that has no GPU object behind it.
+pub fn createWithRelease(allocator: std.mem.Allocator, release: Release) std.mem.Allocator.Error!*FontStore {
     const state = try allocator.create(State);
-    state.* = .{ .allocator = allocator, .resources = font_resource.Resources.init(allocator) };
+    state.* = .{ .allocator = allocator, .resources = font_resource.Resources.init(allocator), .release = release };
     return @ptrCast(state);
 }
 
@@ -77,9 +88,11 @@ pub fn count(store: *const FontStore) usize {
 /// Stores a bitmap font under a new handle. The store takes ownership. If the insert fails, the store releases the font
 /// before it returns the error, so the caller has nothing left to clean up.
 pub fn insertBfnt(store: *FontStore, font_value: font_mod.Font) InsertError!FontHandle {
+    const state = stateOf(store);
     var resource = font_resource.FontResource{ .bfnt_coverage = font_value };
-    return stateOf(store).resources.insert(resource) catch |err| {
-        resource.deinit();
+    return state.resources.insert(resource) catch |err| {
+        // Nothing was stored, so the new font is still ours to release. This is the only release on the failure path.
+        state.release(&resource);
         return err;
     };
 }
@@ -88,7 +101,7 @@ pub fn insertBfnt(store: *FontStore, font_value: font_mod.Font) InsertError!Font
 pub fn destroy(store: *FontStore) void {
     const state = stateOf(store);
     const allocator = state.allocator;
-    state.resources.deinitWith(&font_resource.FontResource.deinit);
+    state.resources.deinitWith(state.release);
     allocator.destroy(state);
 }
 
@@ -124,7 +137,10 @@ const testing = std.testing;
 /// texture with no GPU object, so `discard` can free the store without releasing anything.
 fn emptyFont() font_mod.Font {
     const fixtures = @import("../test_fixtures.zig");
-    return .{ .texture = fixtures.texture(1, 1), .baked = .{ .white = .{ .x = 0, .y = 0, .w = 1, .h = 1 } } };
+    // A C struct literal must name every field, so start from zeros and set the one that matters here.
+    var baked = std.mem.zeroes(c.ui_font);
+    baked.white = .{ .x = 0, .y = 0, .w = 1, .h = 1 };
+    return .{ .texture = fixtures.texture(1, 1), .baked = baked };
 }
 
 test "a stored font keeps its address while more fonts are stored" {
@@ -159,4 +175,102 @@ test "every FontStore method the engine uses is compiled by the test build" {
     _ = &FontStore.check;
     _ = &count;
     _ = &destroy;
+}
+
+// ---- ownership: who releases a font, and when ------------------------------------------------------------------------
+//
+// These tests count releases with `recordRelease`, a stand-in for `FontResource.deinit`. A font's marker is its line
+// height, so each release can be matched to the font it came from.
+
+/// Markers of the fonts released so far, in release order.
+var released_markers: [8]c_int = undefined;
+var released_count: usize = 0;
+
+fn recordRelease(resource: *font_resource.FontResource) void {
+    switch (resource.*) {
+        .bfnt_coverage => |f| {
+            released_markers[released_count] = f.baked.line_height;
+            released_count += 1;
+        },
+        .runtime_coverage => @panic("the store test holds only bfnt fonts"),
+    }
+    resource.* = undefined;
+}
+
+/// How many releases carried `marker`.
+fn releasesOf(marker: c_int) usize {
+    var n: usize = 0;
+    for (released_markers[0..released_count]) |m| {
+        if (m == marker) n += 1;
+    }
+    return n;
+}
+
+fn countingStore(allocator: std.mem.Allocator) !*FontStore {
+    released_count = 0;
+    return createWithRelease(allocator, &recordRelease);
+}
+
+fn markedFont(marker: c_int) font_mod.Font {
+    var font_value = emptyFont();
+    font_value.baked.line_height = marker;
+    return font_value;
+}
+
+test "the store owns a font once it is inserted, so the insert releases nothing" {
+    const store = try countingStore(testing.allocator);
+    const handle = try insertBfnt(store, markedFont(11));
+    try testing.expectEqual(@as(usize, 0), released_count);
+    try testing.expectEqual(@as(usize, 1), count(store));
+    try testing.expectEqual(@as(f32, 11), store.lineHeight(handle));
+    destroy(store);
+    try testing.expectEqual(@as(usize, 1), releasesOf(11));
+}
+
+test "destroy releases each stored font exactly once, and nothing before it" {
+    const store = try countingStore(testing.allocator);
+    _ = try insertBfnt(store, markedFont(21));
+    _ = try insertBfnt(store, markedFont(22));
+    _ = try insertBfnt(store, markedFont(23));
+    try testing.expectEqual(@as(usize, 0), released_count);
+    destroy(store);
+    try testing.expectEqual(@as(usize, 3), released_count);
+    try testing.expectEqual(@as(usize, 1), releasesOf(21));
+    try testing.expectEqual(@as(usize, 1), releasesOf(22));
+    try testing.expectEqual(@as(usize, 1), releasesOf(23));
+}
+
+test "an insert that fails to allocate releases the new font once, and stores nothing" {
+    // Allocation 0 is the store's own State, which must succeed. Allocation 1 is the registry's slot for the new font,
+    // and it fails. The new font is then the only thing that can leak, so it must be released here.
+    var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 1 });
+    const store = try countingStore(failing.allocator());
+    try testing.expectError(error.OutOfMemory, insertBfnt(store, markedFont(31)));
+    try testing.expectEqual(@as(usize, 1), released_count);
+    try testing.expectEqual(@as(usize, 1), releasesOf(31));
+    try testing.expectEqual(@as(usize, 0), count(store));
+    destroy(store);
+    try testing.expectEqual(@as(usize, 1), released_count);
+}
+
+test "an insert that runs out of font ids releases the new font, and keeps the fonts it had" {
+    const store = try countingStore(testing.allocator);
+    _ = try insertBfnt(store, markedFont(41));
+    // The next id to issue is the last one. The id is refused before anything is allocated, which is a second failure
+    // path with no allocation to fail, so it needs its own check.
+    stateOf(store).resources.next_id = std.math.maxInt(font_registry.FontId);
+    try testing.expectError(error.FontIdExhausted, insertBfnt(store, markedFont(42)));
+    try testing.expectEqual(@as(usize, 1), released_count);
+    try testing.expectEqual(@as(usize, 1), releasesOf(42));
+    try testing.expectEqual(@as(usize, 1), count(store));
+    destroy(store);
+    try testing.expectEqual(@as(usize, 2), released_count);
+    try testing.expectEqual(@as(usize, 1), releasesOf(41));
+}
+
+test "discard frees the store without releasing its fonts" {
+    const store = try countingStore(testing.allocator);
+    _ = try insertBfnt(store, markedFont(51));
+    discard(store);
+    try testing.expectEqual(@as(usize, 0), released_count);
 }

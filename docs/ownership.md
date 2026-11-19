@@ -25,7 +25,7 @@ those once and keep them.
 ## Resources handed to the game
 
 The session owns the window, the GPU device, the native target, the sprite batches, the texture
-store, and the audio device. The game receives the resources below. It owns each one from the moment
+store, the font store, and the audio device. The game receives the resources below. It owns each one from the moment
 it is returned and must release it.
 
 | Resource | Created by | Released by |
@@ -33,12 +33,15 @@ it is returned and must release it.
 | Texture | `ctx.loadTexture` | `Texture.deinit`, or the atlas that holds it |
 | Texture handle | `ctx.acquireTexture(name)`, after `ctx.registerTexture` | `ctx.releaseTexture(&handle)`, or the store at shutdown |
 | Atlas | `ctx.loadAtlas` | `LoadedAtlas.deinit` |
-| UI font | `ctx.loadFont`, then passed to `ui.Ui.init` | `Ui.deinit` |
 | Sound | `ctx.loadSound` | `Sound.deinit` |
 | Streamed sound | `ctx.openStreamed` | Nothing to free. Each playing voice opens its own reader and closes it when the voice ends |
 | File bytes | `ctx.readFile(allocator, ...)` | the caller, with the same allocator |
 
-The debug overlay takes ownership of its font when it is created, and `Overlay.deinit` frees it.
+Fonts are the exception. `ctx.loadFont` returns a `FontHandle`, not ownership. The session's font store owns each
+font from the moment it is inserted, and releases it at shutdown, after the GPU is idle. `Ui.init` and `Canvas.create`
+borrow the font: `Ui.deinit` and `Canvas.deinit` free only their own wrapper memory and leave the font alive. If the
+insert fails, the store releases the new font before `loadFont` returns the error. The debug overlay's font is loaded
+the same way, so `Overlay.deinit` frees only its canvas.
 
 ## Texture handles
 
@@ -81,7 +84,7 @@ The shutdown order is therefore:
 1. The debug overlay is released.
 2. `Game.deinit` runs, so the game releases its textures and texture handles while the device still exists.
 3. `Session.stop` runs: audio, sprite batches, target, the texture store (which logs its counters and
-   unloads any texture that is still loaded), GPU device, window, then SDL.
+   unloads any texture that is still loaded), the font store (after the GPU is idle), GPU device, window, then SDL.
 4. The arenas are released.
 5. The log file is closed.
 
@@ -119,5 +122,7 @@ the failing step, using `errdefer` as `game/game.zig` does.
 - Textures acquired by name can be unloaded early. Textures loaded directly, atlases, fonts, and sounds
   cannot yet. Each would need its own store, built the same way as the texture store.
 - Device-lost recovery is not implemented.
-- No test starts a real window or GPU device. Startup ordering and the texture store's GPU teardown
-  are covered by review, not by an automated test.
+- No test starts a real window or GPU device. Font ownership, and the order in which the font store is released
+  against the GPU wait and the device teardown, are covered by `src/engine/text/font_store.zig` and
+  `src/engine/text/font_lifecycle_test.zig`, which replace those GPU calls with fakes. Startup ordering and the
+  texture store's GPU teardown are still covered by review only.

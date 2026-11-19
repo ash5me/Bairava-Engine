@@ -93,6 +93,11 @@ pub const Session = struct {
     /// Decodes requested textures on the workers and uploads them on the main thread. See core/texture_stream.zig.
     streamer: texture_stream.Streamer = undefined,
     streamer_ready: bool = false,
+    /// The GPU calls whose order shutdown depends on: the wait before the fonts are released, and the device teardown.
+    /// `stop` makes them through these fields, so a test can record their order without a device. The defaults are the
+    /// platform calls, so the running engine is unchanged.
+    gpu_wait_idle: *const fn (*platform.gpu.Device) void = platform.gpu.waitIdle,
+    gpu_device_deinit: *const fn (*platform.gpu.Gpu) void = gpuDeviceDeinit,
 
     /// Opens everything, in dependency order: settings are read, then the platform starts, then the
     /// window, the GPU device, and the audio device. A failed step returns its error after releasing
@@ -282,7 +287,7 @@ pub const Session = struct {
         // Font resources can hold GPU textures, so they go before the device, after the game and overlay are gone.
         if (self.fonts_ready) {
             // The fonts' GPU textures may still be read by frames in flight, so the GPU must be idle before they go.
-            platform.gpu.waitIdle(self.gpu.device);
+            self.gpu_wait_idle(self.gpu.device);
             const loaded = font_store.count(self.fonts);
             font_store.destroy(self.fonts);
             self.fonts_ready = false;
@@ -297,7 +302,7 @@ pub const Session = struct {
         }
         if (self.gpu_created) {
             // The device must go before the window, because it is still claimed for that window.
-            self.gpu.deinit();
+            self.gpu_device_deinit(&self.gpu);
             self.gpu_created = false;
         }
         if (self.window_created) {
@@ -330,6 +335,11 @@ fn applyLogLevel(text: []const u8) void {
             continue;
         };
     }
+}
+
+/// The device teardown `stop` uses by default. It is a function so the field can point at a test double.
+fn gpuDeviceDeinit(gpu: *platform.gpu.Gpu) void {
+    gpu.deinit();
 }
 
 /// The modification time of a packaged asset, for the hot reload watcher. Watched assets are packaged.

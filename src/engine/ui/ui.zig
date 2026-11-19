@@ -368,7 +368,10 @@ test "ui anchorBounds places panels relative to the viewport" {
 /// A font with empty metrics, except for a 1x1 white block at the origin. Its texture comes from the test fixtures, with no GPU object.
 fn emptyFont() font_mod.Font {
     const fixtures = @import("../test_fixtures.zig");
-    return .{ .texture = fixtures.texture(1, 1), .baked = .{ .white = .{ .x = 0, .y = 0, .w = 1, .h = 1 } } };
+    // A C struct literal must name every field, so start from zeros and set the one that matters here.
+    var baked = std.mem.zeroes(c.ui_font);
+    baked.white = .{ .x = 0, .y = 0, .w = 1, .h = 1 };
+    return .{ .texture = fixtures.texture(1, 1), .baked = baked };
 }
 
 /// Stores a font with a 2x2 white block at the origin and a 64x64 fixture texture, for the Canvas tests. The tests call
@@ -551,7 +554,9 @@ test "Canvas text layout validates dimensions" {
     // Moved here from engine_api_test.zig: building a store is an engine-internal step, so the public API test cannot do it.
     const fonts = try font_store.create(std.testing.allocator);
     defer font_store.discard(fonts);
-    const handle = try font_store.insertBfnt(fonts, .{ .baked = .{ .line_height = 10 }, .texture = undefined });
+    var baked = std.mem.zeroes(c.ui_font);
+    baked.line_height = 10;
+    const handle = try font_store.insertBfnt(fonts, .{ .baked = baked, .texture = undefined });
     const canvas = Canvas{ .allocator = std.testing.allocator, .fonts = fonts, .font = handle, .list = undefined };
     try std.testing.expectError(error.InvalidWidth, canvas.layoutText(std.testing.allocator, "text", 0, .left));
 }

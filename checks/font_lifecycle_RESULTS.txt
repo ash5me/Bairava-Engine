@@ -1,0 +1,54 @@
+font_lifecycle_RESULTS.txt
+Recorded in the sandbox on 2026-11-19. The Zig was NOT compiled or run here: the sandbox has no Zig toolchain and no network.
+What was run: checks/font_lifecycle_mirror.c, a C mirror of the same control flow, built with -Werror and ASan, UBSan, and LeakSanitizer.
+
+== clean build: gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all checks/font_lifecycle_mirror.c ==
+PASS insert: succeeds
+PASS insert: the store owns the font, so the insert releases nothing
+PASS insert: the store holds one font
+PASS insert: the handle resolves to the font
+PASS destroy after insert: the font is released exactly once
+PASS destroy after insert: no second release
+PASS Canvas deinit: releases nothing
+PASS Canvas deinit: the font is still in the store and answers its handle
+PASS store destroy after Canvas: released exactly once
+PASS Ui deinit: releases nothing
+PASS Ui deinit: the font is still in the store and answers its handle
+PASS store destroy after Ui: released exactly once
+PASS three fonts stored: nothing released yet
+PASS store destroy: three releases for three fonts
+PASS store destroy: each font released exactly once
+PASS store destroy: no font released twice
+PASS failed insert: store created (State allocation succeeds)
+PASS failed insert: reports out of memory
+PASS failed insert: the new font is released exactly once
+PASS failed insert: the store holds nothing
+PASS store destroy after failed insert: no further release
+PASS id exhaustion: reports exhaustion
+PASS id exhaustion: the new font is released exactly once
+PASS id exhaustion: the earlier font is still stored
+PASS store destroy after exhaustion: the earlier font is released once, and no other
+PASS discard: releases no font
+PASS session stop: wait, then both font releases, then the device goes
+PASS session stop: no font is released after the device is gone
+PASS session stop: the font step and the device step are both done
+29 of 29 checks pass
+exit=0   sanitizer reports: 0 bytes of stderr
+
+== planted bugs: each must make the run fail ==
+MUTANT                             EXIT   FAIL-LINES SANITIZER / FIRST FAILING CHECK
+MUT_INSERT_NO_RELEASE              1      4          [LeakSanitizer: detected memory leaks] failed insert: the new font is released exactly once
+MUT_INSERT_RELEASES_ON_SUCCESS     1      1          [AddressSanitizer: attempting double-free] insert: the store owns the font, so the insert releases nothing
+MUT_DESTROY_SKIPS_RELEASE          1      7          [LeakSanitizer: detected memory leaks] destroy after insert: the font is released exactly once
+MUT_DESTROY_RELEASES_TWICE         1      2          destroy after insert: no second release
+MUT_CANVAS_RELEASES                1      4          Canvas deinit: releases nothing
+MUT_UI_RELEASES                    1      2          Ui deinit: releases nothing
+MUT_STOP_DEVICE_FIRST              1      2          session stop: wait, then both font releases, then the device goes
+MUT_STOP_SKIPS_FONTS               1      1          session stop: wait, then both font releases, then the device goes
+
+Notes:
+- MUT_STOP_SKIPS_FONTS: LeakSanitizer reported nothing for this one. Its leak is hidden by a stale pointer, because LSan scans conservatively. The session check still fails, since no font is released.
+- MUT_DESTROY_RELEASES_TWICE is caught by the release counter, not by the sanitizer, because the destructor guards against a second free.
+- A deliberately leaked block is reported by the same LeakSanitizer, so the leak detector works in this sandbox.
+
+Owner check still required: zig build test (with the Zig pinned in CI), then record the result against a commit.

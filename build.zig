@@ -615,6 +615,10 @@ pub fn build(b: *std.Build) void {
     // binary needs the same include path and translation unit. text.c needs only libc, so nothing else is added.
     test_module.addIncludePath(b.path("src/engine/ui"));
     test_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c") });
+    // The test root now compiles the same C the engine does for the parts it reaches: ui.zig needs imgui.c, and
+    // lifecycle.zig reads build_options (configureEngineModule gives the engine both).
+    test_module.addCSourceFile(.{ .file = b.path("src/engine/ui/imgui.c") });
+    test_module.addOptions("build_options", options);
     addJobsAndScript(b, test_module);
     test_module.addImport("ztracy", ztracy.module("root"));
     const tests = b.addTest(.{ .root_module = test_module });
