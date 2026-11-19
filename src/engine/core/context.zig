@@ -201,8 +201,8 @@ pub const Context = struct {
     /// Where the native view was drawn in the window, from the last frame. Mouse positions are
     /// mapped through this, so they match what the player saw.
     layout: view.Layout,
-    /// The camera as the game last drew with it. Read it through `mouseWorld`.
-    camera: *const Camera,
+    /// The gameplay camera. Games may move or follow it during update; `mouseWorld` uses its current position.
+    camera: *Camera,
     /// Sound output. Load sounds with `loadSound` and play them through this. It stays silent when
     /// no playback device could be opened.
     audio: *audio.Audio,
@@ -231,8 +231,8 @@ pub const Context = struct {
     /// Settings file path, relative to the executable folder.
     settings_file: []const u8 = "settings.txt",
 
-    /// The mouse position in world pixels, as the player sees it. It is the cursor's place in the
-    /// view drawn last frame, plus that frame's camera position. Use this in `update` rather than
+    /// The mouse position in world pixels. It is the cursor's place in the current view layout,
+    /// plus the current camera position. Use this in `update` rather than
     /// `input.mouse_x`, which is in window points.
     pub fn mouseWorld(self: *const Context) view.Point {
         return view.windowToWorld(self.layout, self.camera, .{ .x = self.input.mouse_x, .y = self.input.mouse_y });

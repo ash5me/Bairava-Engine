@@ -1,5 +1,13 @@
 const std = @import("std");
 
+pub const Scroll = struct {
+    factor_x: f32 = 1,
+    factor_y: f32 = 1,
+    /// Added after the factor. The game owns this value, such as a speed multiplied by elapsed time.
+    offset_x: f32 = 0,
+    offset_y: f32 = 0,
+};
+
 /// A view into the world, measured in native pixels. `x` and `y` are the world position of the
 /// view's top-left corner. They are not rounded, so smoothing keeps its fractions. Drawing rounds
 /// each sprite's screen position once, with `screenX` and `screenY`.
@@ -90,6 +98,14 @@ pub const Camera = struct {
         return @round(world_y - self.y);
     }
 
+    /// Returns a draw-only camera copy. Gameplay camera state and view/world dimensions are unchanged.
+    pub fn scrolled(self: Camera, scroll: Scroll) Camera {
+        var result = self;
+        result.x = scrolledOrigin(self.x, scroll.factor_x, scroll.offset_x);
+        result.y = scrolledOrigin(self.y, scroll.factor_y, scroll.offset_y);
+        return result;
+    }
+
     fn goalX(self: *const Camera, target_x: f32) f32 {
         return clampAxis(target_x - self.view_w / 2.0, self.view_w, self.world_w);
     }
@@ -98,6 +114,12 @@ pub const Camera = struct {
         return clampAxis(target_y - self.view_h / 2.0, self.view_h, self.world_h);
     }
 };
+
+fn scrolledOrigin(origin: f32, factor: f32, offset: f32) f32 {
+    if (!std.math.isFinite(factor) or !std.math.isFinite(offset)) return origin;
+    const result = origin * factor + offset;
+    return if (std.math.isFinite(result)) result else origin;
+}
 
 /// Keeps a view position within [0, world - view]. If the world is smaller than the view,
 /// the world is centered in it.
@@ -115,4 +137,60 @@ test "camera zoom and center tracking stay finite with invalid input" {
     camera.follow(std.math.nan(f32), 5.0);
     try std.testing.expect(std.math.isFinite(camera.x));
     try std.testing.expect(std.math.isFinite(camera.y));
+}
+
+test "a factor-one scrolled camera matches the original screen coordinates" {
+    var cam = Camera{ .x = 10.5, .y = 23.25, .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    const scrolled = cam.scrolled(.{});
+    const points = [_][2]f32{ .{ 21.0, 40.1 }, .{ 20.4, 17.9 }, .{ 99.375, 54.625 } };
+    for (points) |point| {
+        try std.testing.expectEqual(cam.screenX(point[0]), scrolled.screenX(point[0]));
+        try std.testing.expectEqual(cam.screenY(point[1]), scrolled.screenY(point[1]));
+    }
+    try std.testing.expectEqual(cam.x, scrolled.x);
+    try std.testing.expectEqual(cam.y, scrolled.y);
+}
+
+test "scroll factors preserve gameplay motion at one and scale it at one half" {
+    var cam = Camera{ .x = 10.25, .y = 5, .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    var world_x: f32 = cam.x + 16.3;
+    const initial_fixed = cam.scrolled(.{}).screenX(world_x);
+    var step: u32 = 0;
+    while (step < 20) : (step += 1) {
+        cam.x += 0.37;
+        world_x += 0.37;
+        try std.testing.expectEqual(initial_fixed, cam.scrolled(.{}).screenX(world_x));
+    }
+
+    cam.x = 10.25;
+    world_x = 40.5;
+    const initial_half = cam.scrolled(.{ .factor_x = 0.5 }).screenX(world_x);
+    cam.x += 4;
+    try std.testing.expectEqual(initial_half - 2, cam.scrolled(.{ .factor_x = 0.5 }).screenX(world_x));
+}
+
+test "factor zero pins an axis to its offset independently" {
+    const cam = Camera{ .x = 40, .y = 90, .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    const fixed = cam.scrolled(.{ .factor_x = 0, .offset_x = 12.5 });
+    try std.testing.expectEqual(@as(f32, 12.5), fixed.x);
+    try std.testing.expectEqual(cam.y, fixed.y);
+    try std.testing.expectEqual(@as(f32, 8), fixed.screenX(20));
+
+    const separate_axes = cam.scrolled(.{ .factor_x = 0.25, .factor_y = 0.5, .offset_x = 3, .offset_y = 7 });
+    try std.testing.expectEqual(@as(f32, 13), separate_axes.x);
+    try std.testing.expectEqual(@as(f32, 52), separate_axes.y);
+}
+
+test "non-finite scroll inputs fall back to identity per axis" {
+    const cam = Camera{ .x = 10.25, .y = 20.5, .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    const scrolled = cam.scrolled(.{
+        .factor_x = std.math.nan(f32),
+        .offset_x = 100,
+        .factor_y = 0,
+        .offset_y = std.math.inf(f32),
+    });
+    try std.testing.expectEqual(cam.x, scrolled.x);
+    try std.testing.expectEqual(cam.y, scrolled.y);
+    try std.testing.expect(std.math.isFinite(scrolled.x));
+    try std.testing.expect(std.math.isFinite(scrolled.y));
 }

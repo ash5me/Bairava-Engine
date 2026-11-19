@@ -64,6 +64,7 @@ pub const bindings = @import("../input/mapping.zig");
 pub const MouseButton = @import("../platform/types.zig").MouseButton;
 pub const GamepadButton = @import("../platform/types.zig").GamepadButton;
 pub const GamepadAxis = @import("../platform/types.zig").GamepadAxis;
+pub const camera = @import("../renderer/camera.zig");
 pub const Camera = @import("../renderer/camera.zig").Camera;
 pub const Rect = @import("../renderer/sprite.zig").Rect;
 pub const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
@@ -111,6 +112,8 @@ pub const entity = @import("../ecs/entity.zig");
 pub const tilemap = @import("../scene/tilemap.zig");
 /// Queues tile map layers as sprites, one per visible tile. The map itself stays SDL-free.
 pub const tilemap_draw = @import("../renderer/tilemap_draw.zig");
+/// Repeating, draw-only planes for parallax backgrounds. See renderer/parallax.zig.
+pub const parallax = @import("../renderer/parallax.zig");
 
 /// Walkable grid, A* paths, and the path follower for AI. See docs/navigation.md.
 pub const navigation = @import("../navigation/navigation.zig");
