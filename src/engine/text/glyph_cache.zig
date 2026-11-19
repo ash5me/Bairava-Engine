@@ -32,7 +32,8 @@ const FontId = font_registry.FontId;
 pub const default_page_size: u32 = 1024;
 pub const default_page_count: u32 = 4;
 pub const max_page_size: u32 = 8192;
-pub const max_page_count: u32 = 64;
+/// D-14: four pages is the agreed atlas ceiling (four 1024 by 1024 R8 pages, 4 MiB). A larger count is refused.
+pub const max_page_count: u32 = 4;
 /// Texels of empty space on the right and bottom of every glyph.
 pub const padding: u32 = 1;
 /// Side of the solid white block at the origin of page 0.
@@ -862,4 +863,9 @@ test "fonts whose ids differ only above bit 31 are different fonts" {
     try testing.expectEqual(@as(u32, 1), cache.removeFont(high));
     try testing.expect(cache.lookup(keyOf(1, 5)) != null);
     try testing.expect(cache.lookup(keyOf(high, 5)) == null);
+}
+
+test "the page ceiling is the four pages D-14 allows, and a fifth is refused" {
+    try testing.expectEqual(@as(u32, 4), max_page_count);
+    try testing.expectError(error.InvalidOptions, Cache.init(testing.allocator, .{ .page_count = max_page_count + 1 }));
 }

@@ -23,7 +23,7 @@
 #define DEFAULT_PAGE_SIZE 1024u
 #define DEFAULT_PAGE_COUNT 4u
 #define MAX_PAGE_SIZE 8192u
-#define MAX_PAGE_COUNT 64u
+#define MAX_PAGE_COUNT 4u /* D-14: four pages, the agreed atlas ceiling */
 #define PADDING 1u
 #define WHITE_SIZE 2u
 #define MAX_PENDING 512u
@@ -939,6 +939,7 @@ static void t_options(void) {
     Cache c;
     CHECK_ERR(cache_init(&c, 2, DEFAULT_PAGE_COUNT), ERR_INVALID_OPTIONS, "page_size 2 refused");
     CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, 0), ERR_INVALID_OPTIONS, "page_count 0 refused");
+    CHECK_ERR(cache_init(&c, DEFAULT_PAGE_SIZE, MAX_PAGE_COUNT + 1), ERR_INVALID_OPTIONS, "page_count above the D-14 ceiling refused");
     CHECK_ERR(cache_init(&c, MAX_PAGE_SIZE + 1, DEFAULT_PAGE_COUNT), ERR_INVALID_OPTIONS, "too large refused");
 }
 

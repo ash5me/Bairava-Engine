@@ -188,3 +188,10 @@ Unmapped: 0. The regenerated checks/glyph_cache_parity.txt is included in this c
 Not checked here. The Zig does not compile in the sandbox, so the type changes and the new Zig test are unverified
 until zig build test runs on the pinned toolchain. The hash fold changes slot placement for every key. That is
 internal to the cache and changes no observable result, and the existing probe-chain checks pass after the change.
+
+Revision 7, 2026-11-19 (D-14 conformance)
+  max_page_count lowered from 64 to 4 (glyph_cache.zig); MAX_PAGE_COUNT lowered from 64 to 4 (mirror).
+  A check that refuses a fifth page is added (mirror) and a test is added (glyph_cache.zig).
+  gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all checks/glyph_cache_mirror.c -lm
+  -> 2200 checks, 0 failures, PASSED.
+  The Zig change is not compiled in the sandbox.
