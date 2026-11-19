@@ -120,6 +120,7 @@ test {
     _ = @import("engine/navigation/agent.zig");
     _ = @import("engine/ai.zig");
     _ = @import("game/enemy_ai.zig");
+    _ = @import("game/player.zig");
 }
 
 const testTexture = fixtures.texture;
@@ -1028,6 +1029,120 @@ test "a rate of zero snaps the camera to its target" {
     cam.follow(0, 0);
     cam.followSmooth(500, 500, 1.0 / 60.0, 0);
     try std.testing.expectEqual(@as(f32, 480), cam.x);
+}
+
+test "empty camera constraints preserve the original follow and smooth behavior" {
+    var plain = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    var constrained = plain;
+    plain.followSmooth(500, 500, 1.0 / 60.0, 10);
+    constrained.followSmoothWith(500, 500, 1.0 / 60.0, 10, .{});
+    try std.testing.expectEqual(plain.x, constrained.x);
+    try std.testing.expectEqual(plain.y, constrained.y);
+    var i: u32 = 0;
+    while (i < 20) : (i += 1) {
+        plain.followSmooth(700, 400, 1.0 / 60.0, 10);
+        constrained.followSmoothWith(700, 400, 1.0 / 60.0, 10, .{});
+    }
+    try std.testing.expectEqual(plain.x, constrained.x);
+    try std.testing.expectEqual(plain.y, constrained.y);
+    plain.followSmooth(250, 250, 0.1, 0);
+    constrained.followSmoothWith(250, 250, 0.1, 0, .{});
+    try std.testing.expectEqual(plain.x, constrained.x);
+    try std.testing.expectEqual(plain.y, constrained.y);
+}
+
+test "camera dead-zone holds position for jitter and follows only the overflow" {
+    var cam = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    cam.follow(500, 500);
+    const zone = camera.Constraint{ .dead_x = 0.1, .dead_y = 0.1 };
+    cam.followWith(503, 498, zone);
+    try std.testing.expectEqual(@as(f32, 480), cam.x);
+    try std.testing.expectEqual(@as(f32, 480), cam.y);
+    cam.followWith(505, 500, zone);
+    try std.testing.expectEqual(@as(f32, 481), cam.x);
+    try std.testing.expectEqual(@as(f32, 480), cam.y);
+}
+
+test "camera lead shifts the goal, is not swallowed by the dead-zone, and is capped to half-view" {
+    var cam = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    cam.follow(0, 0);
+    cam.followWith(500, 500, .{ .lead_x = 20 });
+    try std.testing.expectEqual(@as(f32, 500), cam.x);
+
+    cam.follow(500, 500);
+    cam.followWith(501, 500, .{ .lead_x = 10, .dead_x = 0.1 });
+    try std.testing.expectEqual(@as(f32, 490), cam.x);
+
+    cam.follow(0, 0);
+    cam.followWith(500, 500, .{ .lead_x = 100 });
+    try std.testing.expectEqual(@as(f32, 500), cam.x);
+}
+
+test "camera hard limit pulls a lagging camera while a disabled limit leaves easing alone" {
+    var free = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    free.follow(0, 0);
+    var limited = free;
+    free.followSmoothWith(500, 500, 0.01, 1, .{});
+    limited.followSmoothWith(500, 500, 0.01, 1, .{ .limit_x = 0.35, .limit_y = 0.35 });
+    try std.testing.expect(free.x > 0 and free.x < 466);
+    try std.testing.expectEqual(@as(f32, 466), limited.x);
+    try std.testing.expectEqual(@as(f32, 466), limited.y);
+
+    limited.followSmoothWith(2000, 2000, 0.1, 0, .{ .limit_x = 0.1, .limit_y = 0.1 });
+    try std.testing.expectEqual(@as(f32, 960), limited.x);
+    try std.testing.expectEqual(@as(f32, 960), limited.y);
+}
+
+test "first constrained placement skips dead-zone and hard limit, and small worlds stay centered" {
+    var cam = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    cam.followSmoothWith(500, 500, 1.0 / 60.0, 10, .{
+        .lead_x = 20,
+        .dead_x = 0.4,
+        .limit_x = 0.01,
+    });
+    try std.testing.expectEqual(@as(f32, 500), cam.x);
+
+    cam.world_w = 20;
+    cam.world_h = 20;
+    cam.followSmoothWith(900, 900, 1.0 / 60.0, 10, .{
+        .lead_x = 20,
+        .lead_y = -20,
+        .dead_x = 0.5,
+        .dead_y = 0.5,
+        .limit_x = 0.5,
+        .limit_y = 0.5,
+    });
+    try std.testing.expectEqual(@as(f32, -10), cam.x);
+    try std.testing.expectEqual(@as(f32, -10), cam.y);
+}
+
+test "invalid camera constraint values behave as zero without suppressing follow" {
+    var cam = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    cam.follow(0, 0);
+    cam.followSmoothWith(100, 100, 0.1, 0, .{
+        .lead_x = std.math.nan(f32),
+        .lead_y = std.math.inf(f32),
+        .dead_x = std.math.nan(f32),
+        .dead_y = -1,
+        .limit_x = std.math.inf(f32),
+        .limit_y = -1,
+    });
+    try std.testing.expectEqual(@as(f32, 80), cam.x);
+    try std.testing.expectEqual(@as(f32, 80), cam.y);
+}
+
+test "constrained camera smoothing agrees at 30 and 120 Hz for a constant goal" {
+    var slow = camera.Camera{ .view_w = 40, .view_h = 40, .world_w = 1000, .world_h = 1000 };
+    var fast = slow;
+    slow.follow(0, 0);
+    fast.follow(0, 0);
+    const constraint = camera.Constraint{ .dead_x = 0.1, .dead_y = 0.1 };
+    var i: u32 = 0;
+    while (i < 30) : (i += 1) slow.followSmoothWith(500, 500, 1.0 / 30.0, 6, constraint);
+    i = 0;
+    while (i < 120) : (i += 1) fast.followSmoothWith(500, 500, 1.0 / 120.0, 6, constraint);
+    try std.testing.expectApproxEqAbs(slow.x, fast.x, 1e-3);
+    try std.testing.expectApproxEqAbs(slow.y, fast.y, 1e-3);
 }
 
 test "a zoomed-in view is clamped inside the world at its smaller size" {

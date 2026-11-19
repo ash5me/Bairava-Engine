@@ -36,6 +36,9 @@ pub const Player = struct {
     /// Top-left corner as of the update before that. Drawing blends between the two.
     prev_x: f32,
     prev_y: f32,
+    /// Collision-resolved world velocity from the most recent update.
+    velocity_x: f32 = 0,
+    velocity_y: f32 = 0,
     /// Direction the player last moved in. It stays put when the player stops.
     facing: Facing = .down,
     /// Whether the player moved on the last update.
@@ -79,6 +82,8 @@ pub const Player = struct {
         const y = transform.position[1];
         self.prev_x = x;
         self.prev_y = y;
+        self.velocity_x = 0;
+        self.velocity_y = 0;
         self.facing = facing;
         self.moving = moving;
         self.setParameters();
@@ -147,6 +152,13 @@ pub const Player = struct {
         const feet = map.moveBox(Player.feetAt(self.transform.position[0], self.transform.position[1]), dx * speed * dt, dy * speed * dt);
         self.transform.position[0] = feet.x;
         self.transform.position[1] = feet.y - collide_top;
+        const velocity = velocityBetween(
+            .{ .x = self.prev_x, .y = self.prev_y },
+            .{ .x = self.transform.position[0], .y = self.transform.position[1] },
+            dt,
+        );
+        self.velocity_x = velocity.x;
+        self.velocity_y = velocity.y;
 
         engine.log.assert(std.math.isFinite(self.transform.position[0]) and std.math.isFinite(self.transform.position[1]), @src(), "player position is not finite: ({d}, {d})", .{ self.transform.position[0], self.transform.position[1] });
     }
@@ -189,6 +201,23 @@ pub const Player = struct {
         drawFrame(batch, atlas, sheet, pose.frame, x, y, depth_y, z, pose.weight);
     }
 };
+
+fn velocityBetween(previous: Point, current: Point, dt: f32) Point {
+    if (!std.math.isFinite(dt) or dt == 0) return .{ .x = 0, .y = 0 };
+    return .{
+        .x = (current.x - previous.x) / dt,
+        .y = (current.y - previous.y) / dt,
+    };
+}
+
+test "player velocity uses resolved positions and ignores invalid time steps" {
+    const moved = velocityBetween(.{ .x = 10, .y = 20 }, .{ .x = 14, .y = 17 }, 0.5);
+    try std.testing.expectEqual(@as(f32, 8), moved.x);
+    try std.testing.expectEqual(@as(f32, -6), moved.y);
+    const invalid = velocityBetween(.{ .x = 0, .y = 0 }, .{ .x = 100, .y = 100 }, std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0), invalid.x);
+    try std.testing.expectEqual(@as(f32, 0), invalid.y);
+}
 
 /// Queues one animation frame at (x, y), in view pixels, at `alpha`.
 fn drawFrame(batch: *engine.SpriteBatch, atlas: *const engine.Texture, sheet: engine.atlas.Region, frame: *const engine.animation.Frame, x: f32, y: f32, depth_y: f32, z: i32, alpha: f32) void {

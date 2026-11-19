@@ -32,6 +32,14 @@ pub const renderer: engine.Renderer = .sdl_gpu;
 /// How fast the camera catches up with the player, as a rate per second. Higher is snappier. Zero
 /// turns smoothing off, so the camera snaps to the player.
 pub const camera_rate: f32 = 10.0;
+/// Camera look-ahead time. The camera lead is the player's collision-resolved velocity times this value.
+pub const camera_lead_seconds: f32 = 0.25;
+/// Soft follow-zone half-extents as fractions of the view.
+pub const camera_dead_x: f32 = 0.08;
+pub const camera_dead_y: f32 = 0.08;
+/// Hard keep-inside half-extents as fractions of the view.
+pub const camera_limit_x: f32 = 0.35;
+pub const camera_limit_y: f32 = 0.35;
 /// Zoom limits and step. 1 is the normal view. The bounds must include 1, so the reset key lands
 /// inside them, and the minimum must be positive, because zoom eases in logarithmic steps.
 pub const zoom_min: f32 = 0.5;

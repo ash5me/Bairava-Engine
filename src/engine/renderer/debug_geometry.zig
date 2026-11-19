@@ -11,6 +11,8 @@ const Camera = @import("camera.zig").Camera;
 const grid_color = debug_draw.Color{ .r = 1, .g = 1, .b = 1, .a = 0.22 };
 const solid_color = debug_draw.Color{ .r = 0.95, .g = 0.25, .b = 0.25, .a = 0.35 };
 const camera_color = debug_draw.Color{ .r = 0.35, .g = 0.9, .b = 1.0, .a = 0.9 };
+const dead_zone_color = debug_draw.Color{ .r = 1.0, .g = 0.8, .b = 0.2, .a = 0.9 };
+const limit_zone_color = debug_draw.Color{ .r = 1.0, .g = 0.35, .b = 0.8, .a = 0.9 };
 
 /// Cells that can be on screen along one axis, with one cell of margin, clamped to the map.
 const Range = struct {
@@ -74,6 +76,30 @@ pub fn cameraBounds(draw: *debug_draw.Draw, cam: *const Camera) void {
     draw.outline(cam.screenX(0), cam.screenY(0), cam.world_w, cam.world_h, camera_color);
 }
 
+/// Outlines the follow dead-zone and hard limit around the current view center.
+pub fn cameraGuides(draw: *debug_draw.Draw, cam: *const Camera, constraint: Camera.Constraint) void {
+    drawCameraGuide(draw, cam, constraint.dead_x, constraint.dead_y, dead_zone_color);
+    drawCameraGuide(draw, cam, constraint.limit_x, constraint.limit_y, limit_zone_color);
+}
+
+fn drawCameraGuide(draw: *debug_draw.Draw, cam: *const Camera, raw_x: f32, raw_y: f32, color: debug_draw.Color) void {
+    const fraction_x = safeFraction(raw_x);
+    const fraction_y = safeFraction(raw_y);
+    if (fraction_x == 0 and fraction_y == 0) return;
+    const center_x = cam.x + cam.view_w / 2.0;
+    const center_y = cam.y + cam.view_h / 2.0;
+    const left = cam.screenX(center_x - fraction_x * cam.view_w);
+    const right = cam.screenX(center_x + fraction_x * cam.view_w);
+    const top = cam.screenY(center_y - fraction_y * cam.view_h);
+    const bottom = cam.screenY(center_y + fraction_y * cam.view_h);
+    draw.outline(left, top, right - left, bottom - top, color);
+}
+
+fn safeFraction(value: f32) f32 {
+    if (!std.math.isFinite(value)) return 0;
+    return std.math.clamp(value, 0, 0.5);
+}
+
 fn testMap(tiles: []u8, solid: *[256]bool) tilemap.TileMap {
     return .{ .cols = 4, .rows = 3, .tiles = tiles, .solid = solid.* };
 }
@@ -110,4 +136,19 @@ test "the camera bounds follow the camera, so a scrolled view moves them" {
     try std.testing.expectEqual(@as(f32, -10), draw.slice()[0].x);
     try std.testing.expectEqual(@as(f32, -4), draw.slice()[0].y);
     try std.testing.expectEqual(@as(f32, 100), draw.slice()[0].w);
+}
+
+test "camera guides show dead-zone and hard-limit rectangles around the view center" {
+    const cam = Camera{ .x = 10, .y = 4, .view_w = 64, .view_h = 48, .world_w = 100, .world_h = 80 };
+    var draw = debug_draw.Draw{};
+    cameraGuides(&draw, &cam, .{ .dead_x = 0.25, .dead_y = 0.25, .limit_x = 0.5, .limit_y = 0.5 });
+    try std.testing.expectEqual(@as(usize, 2), draw.count);
+    try std.testing.expectEqual(@as(f32, 16), draw.slice()[0].x);
+    try std.testing.expectEqual(@as(f32, 12), draw.slice()[0].y);
+    try std.testing.expectEqual(@as(f32, 32), draw.slice()[0].w);
+    try std.testing.expectEqual(@as(f32, 24), draw.slice()[0].h);
+    try std.testing.expectEqual(@as(f32, 0), draw.slice()[1].x);
+    try std.testing.expectEqual(@as(f32, 0), draw.slice()[1].y);
+    try std.testing.expectEqual(@as(f32, 64), draw.slice()[1].w);
+    try std.testing.expectEqual(@as(f32, 48), draw.slice()[1].h);
 }

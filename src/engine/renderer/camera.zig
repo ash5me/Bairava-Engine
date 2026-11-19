@@ -8,10 +8,25 @@ pub const Scroll = struct {
     offset_y: f32 = 0,
 };
 
+pub const Constraint = struct {
+    /// World-pixel look-ahead, applied after the dead-zone and capped to half the view.
+    lead_x: f32 = 0,
+    lead_y: f32 = 0,
+    /// Dead-zone half-extents as view fractions, clamped to [0, 0.5].
+    dead_x: f32 = 0,
+    dead_y: f32 = 0,
+    /// Hard keep-inside half-extents as view fractions, clamped to [0, 0.5].
+    limit_x: f32 = 0,
+    limit_y: f32 = 0,
+};
+const FollowConstraint = Constraint;
+
 /// A view into the world, measured in native pixels. `x` and `y` are the world position of the
 /// view's top-left corner. They are not rounded, so smoothing keeps its fractions. Drawing rounds
 /// each sprite's screen position once, with `screenX` and `screenY`.
 pub const Camera = struct {
+    pub const Constraint = FollowConstraint;
+
     x: f32 = 0,
     y: f32 = 0,
     view_w: f32,
@@ -28,6 +43,12 @@ pub const Camera = struct {
 
     /// Centers the view on a world point, clamped so the view never shows past the world edges.
     pub fn follow(self: *Camera, target_x: f32, target_y: f32) void {
+        self.followWith(target_x, target_y, .{});
+    }
+
+    /// Centers the view using a dead-zone and lead, then applies the optional hard keep-inside
+    /// region. Constraints are fractions of the current view except for lead, which is in pixels.
+    pub fn followWith(self: *Camera, target_x: f32, target_y: f32, constraint: FollowConstraint) void {
         if (!std.math.isFinite(target_x) or !std.math.isFinite(target_y) or
             !std.math.isFinite(self.view_w) or !std.math.isFinite(self.view_h) or
             !std.math.isFinite(self.world_w) or !std.math.isFinite(self.world_h) or
@@ -35,30 +56,48 @@ pub const Camera = struct {
         {
             return;
         }
-        self.x = goalX(self, target_x);
-        self.y = goalY(self, target_y);
+        const was_placed = self.placed;
+        self.x = goalAxis(self.x, target_x, self.view_w, self.world_w, constraint.lead_x, constraint.dead_x, was_placed);
+        self.y = goalAxis(self.y, target_y, self.view_h, self.world_h, constraint.lead_y, constraint.dead_y, was_placed);
         self.placed = true;
+        if (was_placed) {
+            self.x = applyLimit(self.x, target_x, self.view_w, self.world_w, constraint.limit_x);
+            self.y = applyLimit(self.y, target_y, self.view_h, self.world_h, constraint.limit_y);
+        }
     }
 
     /// Like `follow`, but eases toward the target. `rate` is how fast the camera closes the gap, per
     /// second. Each `dt` seconds it covers `1 - e^(-rate * dt)` of the distance that remains, so the
     /// result doesn't depend on the frame rate. A rate of zero or less snaps, as `follow` does.
     pub fn followSmooth(self: *Camera, target_x: f32, target_y: f32, dt: f32, rate: f32) void {
-        if (!std.math.isFinite(target_x) or !std.math.isFinite(target_y) or !std.math.isFinite(dt) or
-            !std.math.isFinite(rate) or !std.math.isFinite(self.view_w) or !std.math.isFinite(self.view_h) or
+        self.followSmoothWith(target_x, target_y, dt, rate, .{});
+    }
+
+    /// Like `followWith`, but eases toward its clamped goal at an exponential rate.
+    pub fn followSmoothWith(self: *Camera, target_x: f32, target_y: f32, dt: f32, rate: f32, constraint: FollowConstraint) void {
+        if (!std.math.isFinite(target_x) or !std.math.isFinite(target_y) or
+            !std.math.isFinite(self.view_w) or !std.math.isFinite(self.view_h) or
             !std.math.isFinite(self.world_w) or !std.math.isFinite(self.world_h) or
             self.view_w <= 0 or self.view_h <= 0)
         {
-            self.follow(target_x, target_y);
             return;
         }
-        if (!self.placed or rate <= 0) {
-            self.follow(target_x, target_y);
+        if (!self.placed) {
+            self.followWith(target_x, target_y, constraint);
             return;
         }
-        const t = 1.0 - @exp(-rate * dt);
-        self.x += (goalX(self, target_x) - self.x) * t;
-        self.y += (goalY(self, target_y) - self.y) * t;
+        const goal_x = goalAxis(self.x, target_x, self.view_w, self.world_w, constraint.lead_x, constraint.dead_x, true);
+        const goal_y = goalAxis(self.y, target_y, self.view_h, self.world_h, constraint.lead_y, constraint.dead_y, true);
+        if (!std.math.isFinite(dt) or !std.math.isFinite(rate) or rate <= 0) {
+            self.x = goal_x;
+            self.y = goal_y;
+        } else {
+            const t = 1.0 - @exp(-rate * dt);
+            self.x += (goal_x - self.x) * t;
+            self.y += (goal_y - self.y) * t;
+        }
+        self.x = applyLimit(self.x, target_x, self.view_w, self.world_w, constraint.limit_x);
+        self.y = applyLimit(self.y, target_y, self.view_h, self.world_h, constraint.limit_y);
     }
 
     /// Eases `zoom` toward `target`. The steps are geometric, so going from 1x to 2x takes as long
@@ -113,15 +152,46 @@ pub const Camera = struct {
         result.y = scrolledOrigin(self.y, scroll.factor_y, scroll.offset_y);
         return result;
     }
-
-    fn goalX(self: *const Camera, target_x: f32) f32 {
-        return clampAxis(target_x - self.view_w / 2.0, self.view_w, self.world_w);
-    }
-
-    fn goalY(self: *const Camera, target_y: f32) f32 {
-        return clampAxis(target_y - self.view_h / 2.0, self.view_h, self.world_h);
-    }
 };
+
+fn goalAxis(origin: f32, target: f32, view: f32, world: f32, raw_lead: f32, raw_dead: f32, placed: bool) f32 {
+    const lead = safeLead(raw_lead, view);
+    var windowed = target;
+    if (placed) {
+        const dead = safeFraction(raw_dead);
+        const center = origin + view / 2.0;
+        const half = dead * view;
+        if (dead > 0) {
+            if (target < center - half) {
+                windowed = target + half;
+            } else if (target > center + half) {
+                windowed = target - half;
+            } else {
+                windowed = center;
+            }
+        }
+    }
+    return clampAxis(windowed + lead - view / 2.0, view, world);
+}
+
+fn applyLimit(origin: f32, target: f32, view: f32, world: f32, raw_limit: f32) f32 {
+    const limit = safeFraction(raw_limit);
+    if (limit == 0) return origin;
+    const half = limit * view;
+    const min_origin = target - half - view / 2.0;
+    const max_origin = target + half - view / 2.0;
+    return clampAxis(std.math.clamp(origin, min_origin, max_origin), view, world);
+}
+
+fn safeFraction(value: f32) f32 {
+    if (!std.math.isFinite(value)) return 0;
+    return std.math.clamp(value, 0, 0.5);
+}
+
+fn safeLead(value: f32, view: f32) f32 {
+    if (!std.math.isFinite(value)) return 0;
+    return std.math.clamp(value, -view / 2.0, view / 2.0);
+}
 
 fn scrolledOrigin(origin: f32, factor: f32, offset: f32) f32 {
     if (!std.math.isFinite(factor) or !std.math.isFinite(offset)) return origin;

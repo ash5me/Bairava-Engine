@@ -599,7 +599,16 @@ pub const Game = struct {
         const center = self.player.drawCenter(dc.alpha);
         dc.cam.world_w = self.level.widthPx();
         dc.cam.world_h = self.level.heightPx();
-        dc.cam.followSmooth(center.x, center.y, dc.dt, config.camera_rate);
+        const camera_constraint = engine.Camera.Constraint{
+            .lead_x = self.player.velocity_x * config.camera_lead_seconds,
+            .lead_y = self.player.velocity_y * config.camera_lead_seconds,
+            .dead_x = config.camera_dead_x,
+            .dead_y = config.camera_dead_y,
+            .limit_x = config.camera_limit_x,
+            .limit_y = config.camera_limit_y,
+        };
+        dc.cam.followSmoothWith(center.x, center.y, dc.dt, config.camera_rate, camera_constraint);
+        if (dc.show.camera) engine.debug_geometry.cameraGuides(dc.debug, dc.cam, camera_constraint);
 
         // Explicit z bands keep terrain ordering independent of actor feet depth.
         const tiles = &self.atlas.texture;

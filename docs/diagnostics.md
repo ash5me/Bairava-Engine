@@ -91,7 +91,8 @@ Geometry is queued during `draw` and only while its switch is on. Check the swit
 
 `dc.debug` takes view-space shapes (`outline`, `fill`, `point`). Map world positions with
 `dc.cam.screenX` and `dc.cam.screenY` first, as sprites are mapped. The camera bounds are drawn by the
-engine when `dc.show.camera` is on.
+engine when `dc.show.camera` is on. The sample also draws its camera dead-zone and hard-limit
+rectangles around the current view center while that switch is on.
 
 The shape list holds `diagnostics.debug_draw.max_shapes` shapes per frame. Extra shapes are counted in
 `dropped` and not drawn.
