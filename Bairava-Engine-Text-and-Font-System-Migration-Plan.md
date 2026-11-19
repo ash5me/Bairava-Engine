@@ -1,6 +1,6 @@
 # Bairava Engine — Text and Font System Migration Plan
 
-**Status (updated 2026-11-18):** Phase 0 decisions D-01 through D-06, D-08, D-09, and D-12 are accepted as recorded in section 6.2. E-01 is passed on commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded` (Windows, Linux, macOS; evidence in section 6.4). **Phases 1 and 2 implementation have not started.** Phase 3/4/5 CPU work exists in the reviewed branch, but implementation and integration status remain as recorded in the phase sections; E-01 does not close GPU/device gates or imply Phases 1, 2, 4, or 5 are complete.  
+**Status (updated 2026-11-19):** Phase 0 decisions D-01 through D-06, D-08, D-09, and D-12, and D-21 (2026-11-19), are accepted as recorded in section 6.2. E-03 is done with caveat by owner waiver (2026-11-19; section 6.4). The D-21 public-surface gate is not yet met (Phase 1 exit gate). E-01 is passed on commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded` (Windows, Linux, macOS; evidence in section 6.4). **Phases 1 and 2 implementation have not started.** Phase 3/4/5 CPU work exists in the reviewed branch, but implementation and integration status remain as recorded in the phase sections; E-01 does not close GPU/device gates or imply Phases 1, 2, 4, or 5 are complete.  
 **Scope:** Merge the runtime text/shaping pipeline (Architecture 1) with the multi-source font system (Architecture 2)  
 **Repository reviewed:** `ash5me/Bairava-Engine` default branch  
 **Target:** A unified text system that supports hand-authored bitmap fonts, the existing prebaked coverage fonts, runtime-rasterized outline fonts, and optional MSDF fonts while continuing to use Bairava's existing renderer and `SpriteBatch`.
@@ -289,6 +289,7 @@ Phase 1 decisions come first. They fix the font representation, the `Canvas` API
 | D-18 | MSDF on the SDL3 2D renderer: none. The 2D path uses a prebaked coverage fallback. | Phase 0 exit; Phase 6 | Open |
 | D-19 | The old C text path after cutover: keep it as a BFNT compatibility adapter, or remove it once every consumer has migrated. | Phase 8 | Open |
 | D-20 | BFNT metrics for `FontMetrics`: a BFNT font's descent is `line_height` minus `ascent`, and its line gap is zero, because the file stores neither. This changes no file format and only affects `FontMetrics`. | Phase 1 | **Accepted (owner, 2026-11-18)** |
+| D-21 | **Public API boundary: the strict gate is retained.** No HarfBuzz type and no internal font-resource type (`FontResource`, `Resources` or any `Registry` instance, a provider type, `font.zig`'s `Font`, or `c.ui_font`) may appear in a game-facing interface: an export of `bairava.zig`, a `Context` or `Canvas`/`Ui` signature, or a field or return type that game code can reach. The gate is not amended to allow either type. Game code holds `FontHandle` only. Enforced by the D-21 section of `scripts/boundary_scan.py`. Its known exposures are listed in `D21_DEBT`, pending owner approval, and are open under the Phase 1 exit gate. | Phase 1 | **Accepted by owner direction (2026-11-19).** |
 
 ## 6.3 Status markers
 
@@ -301,11 +302,11 @@ An item is N/A only by evidence (for example, a file that never calls the text A
 
 ## 6.4 Environment gates
 
-These gates need a toolchain or hardware the work environment may not have. Each one closes only on a recorded run: a CI job link, a log file, or a screenshot path, tied to the commit it ran on. Sandbox evidence (CPU tests, C mirrors, characterization harnesses, static checks) is recorded, but it does not close an environment gate.
+These gates need a toolchain or hardware the work environment may not have. Each one closes only on a recorded run: a CI job link, a log file, or a screenshot path, tied to the commit it ran on. Sandbox evidence (CPU tests, C mirrors, characterization harnesses, static checks) is recorded, but it does not close an environment gate. An owner waiver is different: it is recorded as a waiver, with its caveat, and is not counted as a run (see E-03).
 
 - **E-01, pinned toolchain and CI — PASSED.** GitHub Actions run [#112](https://github.com/ash5me/Bairava-Engine/actions/runs/44223038398), commit `f4abef0f7528e36658eb1d5c106d88b9f1769ded`, used Zig `0.16.0-dev.3142+5ccfeb926`. Linux job [ubuntu-latest](https://github.com/ash5me/Bairava-Engine/actions/runs/44223038398/job/134529366519), Windows job [windows-latest](https://github.com/ash5me/Bairava-Engine/actions/runs/44223038398/job/134529366769), and macOS job [macos-latest](https://github.com/ash5me/Bairava-Engine/actions/runs/44223038398/job/134529366794) all completed successfully. Each job passed development, debug, and release builds, asset checks/importer CLI checks, and unit/UI tests; macOS also passed its Metal shader build. This closes the pinned-toolchain compile/CI evidence for the code at that SHA, including the Phase 3 HarfBuzz build/test check. It does **not** close Phase 4's GPU burst/synchronization gate, Phase 5's flush/device/visual checks, or any phase implementation exit. E-01 evidence is commit-specific; rerun it after relevant code changes.
 - **E-02, GPU device with validation — OPEN.** A run with `-Dgpu-debug=true` on a display with an SDL_GPU device. Required for the Phase 4 burst (including a forced whole-page upload and clean validation) and GPU synchronization exit, and the Phase 5 flush wiring check.
-- **E-03, reference screenshots — OPEN.** Capture on the current BFNT path, in both renderer modes, before any `Canvas` change: `ui_font_9px` text, the debug overlay, and the widgets. Closes: the Phase 0 baseline, the Phase 1 comparison, the Phase 5 visual exit, and Phase 8.
+- **E-03, reference screenshots — DONE WITH CAVEAT (owner waiver, 2026-11-19).** Capture on the current BFNT path, in both renderer modes, before any `Canvas` change: `ui_font_9px` text, the debug overlay, and the widgets. Closes: the Phase 0 baseline, the Phase 1 comparison, the Phase 5 visual exit, and Phase 8. *Caveat:* the owner marked this gate done. The repository records no screenshot, log, or commit for the visual comparison, so this is a waiver and not a recorded run. The waiver closes the gate only. The capture items that name E-03 stay `[ ]` until their own images are recorded, and the repository holds no evidence for either renderer mode. E-04 (the SDL3 2D device run) is still open.
 - **E-04, SDL3 2D renderer on a device — OPEN.** Requires `sdl2d_available` to be set (`application.zig`) and the 2D path to run. Closes: the Phase 4 and Phase 5 both-renderer items, the Phase 6 MSDF fallback, and the Phase 7 device-recreation tests.
 
 ## 6.5 N/A and conditional items
@@ -351,7 +352,7 @@ A reviewed design decision record containing: supported font formats, font-sourc
 - [ ] TrueType/CFF behavior is explicitly decided (D-10/D-11 remain open).
 - [ ] HarfBuzz and MSDF dependency/tooling choices are explicit and licensable.
 - [ ] SDL_GPU and SDL3 2D behavior for every rendering mode is documented.
-- [ ] Existing behavior has baseline tests or screenshots (E-03 remains open).
+- [ ] Existing behavior has baseline tests or screenshots (E-03 is done with caveat by owner waiver, 2026-11-19; see section 6.4).
 - [ ] No unresolved design question would force a data-format or public-API rewrite in a later phase. D-01–D-06, D-08, and D-12 are accepted; other Phase 0 decisions remain open.
 
 ---
@@ -360,7 +361,7 @@ A reviewed design decision record containing: supported font formats, font-sourc
 
 **Purpose:** Establish the common API and data contracts while the current BFNT implementation still works.
 
-**Decisions:** D-01 to D-07 are accepted. **Implementation status:** not started (owner status, 2026-11-18). **Environment:** E-01 is passed for the recorded commit; E-03 remains open for the baseline comparison.
+**Decisions:** D-01 to D-07 are accepted. **Implementation status:** not started (owner status, 2026-11-18). **Environment:** E-01 is passed for the recorded commit; E-03 is done with caveat by owner waiver, so the baseline comparison is not evidenced.
 
 ### Needs — must implement
 
@@ -388,9 +389,10 @@ A common text/font interface with an adapter to the existing BFNT implementation
 ### Exit gate — Phase 1 is complete only when
 
 - [ ] Existing UI and debug text renders and measures the same as the captured baseline (E-03). The sample draws no text and is excluded (section 6.5).
-- [ ] Existing `.bfnt` v1/v2/v4 compatibility behavior remains covered by tests (where those versions are supported by the current loader).
+- [x] Existing `.bfnt` v1/v2/v4 compatibility behavior remains covered by tests (where those versions are supported by the current loader). *(2026-11-19: v2 has explicit coverage in `tests/ui/test_text.c`, `check_v2_format`, and no longer depends on v1 and v4 passing. The repository has no v2 `.bfnt` file, and the baker writes only v4, so the test writes a v2 file from the documented layout. It checks the header, the glyph and kerning fields, the default fallback, the drawn quads and widths, and the rejections specific to v2. An earlier check that labeled version 2 'unsupported' was in fact rejecting a v2 file for its 48-byte header length, so it now uses version 5. The Zig wrapper in `font.zig` has no version logic and calls the same C loader. Results and the mutation check are in `checks/bfnt_v2_RESULTS.txt`. `zig build test-ui` was not run, because the sandbox has no Zig, so the owner's pinned run still needs to confirm it.)*
 - [ ] Rectangle drawing works without referencing a font atlas. Blocked: D-04, E-03.
-- [ ] New interfaces compile without exposing SDL or HarfBuzz types to game-facing code. E-01 passed on the recorded CI commit, but this Phase 1 interface work remains unimplemented.
+- [ ] New interfaces compile without exposing SDL, HarfBuzz, or internal font-resource types to game-facing code (D-21). E-01 passed on the recorded CI commit, but this Phase 1 interface work remains unimplemented.
+- [ ] D-21 holds on the public surface. `scripts/boundary_scan.py` now checks it (its D-21 section; its self-test; and `checks/boundary_d21_negative_tests.py`, 7 of 7 cases). Seven known exposures are listed in `D21_DEBT` and remain open work: `ui.Font` and `ui.Fonts` (`ui.zig:20`, `:24`); the registry parameter of `Canvas.create` and `Ui.init` (`ui.zig:91`, `:201`), where `src/game/game.zig:169` passes `ctx.fonts`; the fields `Canvas.fonts` (`ui.zig:85`) and `Context.fonts` (`context.zig:182`); and `Context.fontOf` (`context.zig:457`), which returns `FontResource`. The `Canvas.fonts` field was missing from the first list. The debt list needs owner approval, or the gate fails until these are fixed. No HarfBuzz name appears outside `src/engine/text/`.
 - [ ] Resource ownership and shutdown order are documented and tested.
 
 ---
@@ -714,6 +716,8 @@ This note records the second pass on Phase 1 in the sandbox. The owner status ab
 
 **Owner local rerun (2026-11-18, Windows): `zig build test` and `zig build` both reported as succeeding.** This is an owner report without a saved log or a commit hash, so it is recorded as reported and not as evidence. `zig build` does not compile `font_resource.zig`, which nothing in the application imports. That file is covered only by `zig build test`. To count as evidence, the run needs its commit hash and a saved log. Until then, the Phase 1 test gate stays open. This run does not close E-01, E-02, E-03, or E-04.
 
+
+**Owner local run (2026-11-19, Windows): `zig build test` exited with code 0.** The owner reported the exit code after running the command in PowerShell. Earlier the same day, a run printed `failed command` for `test.exe` with no failing test named, and that failure is not explained. The commit and a saved log for the exit-0 run have not been reported. Recorded as reported, not as evidence. The same run printed `text: all checks passed`, from the C text harness that `zig build test` also runs. Whether that harness included the BFNT v2 changes was not confirmed.
 The commit and a saved log have not been reported for any run. Until a passing log is recorded, the Phase 1 test gate stays open. These runs are not CI gate runs, and they do not close E-01, E-02, E-03, or E-04.
 
 
@@ -861,7 +865,7 @@ A documented, tested, multi-source text/font system with an explicit supported-f
 | Order | Phase | Primary result | Must be true before proceeding |
 |---:|---|---|---|
 | 0 | Baseline and decisions | Agreed capability and compatibility matrix | All format, shaping, renderer, and dependency decisions resolved |
-| 1 | Shared model and compatibility | One font/text contract over existing BFNT | D-01 to D-07 are Accepted; implementation and E-03 baseline comparison still required |
+| 1 | Shared model and compatibility | One font/text contract over existing BFNT | D-01 to D-07 are Accepted; implementation required. E-03 is waived with caveat, and its baseline comparison is not evidenced |
 | 2 | Bitmap importer and renderer | First-class hand-authored pixel fonts | D-08 and D-09 are Accepted; Phase 1 must close, then importer/asset and visual tests must pass |
 | 3 | HarfBuzz and runtime font face | CPU shaping service | Cross-platform dependency build and shaping fixtures pass (E-01) |
 | 4 | Runtime rasterizer and glyph cache | On-demand coverage glyphs | Cache, upload, atlas lifetime, and synchronization tests pass |

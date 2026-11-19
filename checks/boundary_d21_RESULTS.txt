@@ -1,0 +1,70 @@
+Boundary scanner: D-21 and HarfBuzz checks, verification record
+==============================================================
+Recorded 2026-11-19 in the sandbox. This is sandbox evidence for a static check. It is not an environment gate
+(plan section 6.4). It does not compile Zig.
+
+What changed
+- scripts/boundary_scan.py: new D-21 section (public-surface scan from src/engine/bairava.zig, the D21_DEBT list,
+  and a HarfBuzz scan outside src/engine/text/). --fail also fails on new exposures, stale debt entries, and
+  HarfBuzz names. The SDL logic is unchanged.
+- checks/boundary_d21_negative_tests.py: seven end-to-end cases in scratch copies of the repository.
+
+Commands (from the repository root)
+  python3 scripts/boundary_scan.py --self-test
+  python3 scripts/boundary_scan.py --fail
+  python3 checks/boundary_d21_negative_tests.py
+
+1. Self-test
+Boundary self-test: 3/3 negative fixtures rejected; 4/4 public-surface and HarfBuzz cases as expected
+self-test exit 0
+
+2. Scan, deliverable tree
+PUBLIC SURFACE AND HARFBUZZ NAMES (D-21, plan section 6.2)
+Public root src/engine/bairava.zig: 75 surface(s), 35 whole module(s) and 40 declaration(s).
+KNOWN EXPOSURES (debt listed in D21_DEBT): 7 line(s)
+  src/engine/core/context.zig:182 [field] fonts: *font_resource.Resources,
+      Context.fonts field holds the internal font registry
+  src/engine/core/context.zig:457 [pub fn] pub fn fontOf(self: *const Context, font_handle: font_registry.FontHandle) font_registry.LookupError!*const font_resourc
+      Context.fontOf returns the internal FontResource
+  src/engine/ui/ui.zig:20 [re-export] pub const Font = @import("../text/font.zig").Font;
+      ui.Font re-exports the BFNT Font, which holds the C ui_font
+  src/engine/ui/ui.zig:24 [re-export] pub const Fonts = font_resource.Resources;
+      ui.Fonts re-exports the internal font registry
+  src/engine/ui/ui.zig:85 [field] fonts: *font_resource.Resources,
+      Canvas.fonts field holds the internal font registry
+  src/engine/ui/ui.zig:91 [pub fn] pub fn create(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Canvas {
+      Canvas.create takes the internal font registry
+  src/engine/ui/ui.zig:201 [pub fn] pub fn init(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Ui {
+      Ui.init takes the internal font registry
+NEW EXPOSURES: 0
+STALE DEBT ENTRIES: 0
+HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+
+scan --fail exit 0
+
+SDL section: identical to the upload's report (same run, lines before the D-21 section).
+
+3. End-to-end cases
+PASS N1 new pub fn exposing the registry in a debt-listed file: exit 1; NEW EXPOSURES: 1  (fails --fail); STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N2 HarfBuzz name in a reachable file outside the text package: exit 1; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 1  (fails --fail)
+PASS N3 debt entry whose line was removed (stale): exit 1; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 1  (fails --fail: remove from D21_DEBT); HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N4 private struct holding the registry (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N5 texture staging type, not a font type (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N6 public function that takes only FontHandle (allowed): exit 0; NEW EXPOSURES: 0; STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+PASS N7 public root re-exports the registry: exit 1; NEW EXPOSURES: 1  (fails --fail); STALE DEBT ENTRIES: 0; HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+7/7 cases as expected
+negative tests exit 0
+
+Mutation check on the self-test (each rule broken in a scratch copy):
+  drop staging lookbehind ................ caught
+  field rule ignores struct kind ......... caught
+  drop C include check ................... caught
+  drop test-block skip ................... not a valid mutant. The rule could not match any valid Zig line, so it was
+                                           removed from the scanner rather than given a fixture.
+
+Limits (also in the scanner's docstring)
+- Text-based. It does not compile Zig, and it does not resolve types through names that are not themselves
+  forbidden, so a forbidden type reached only through such a name is found only if that name's declaration is on
+  the surface.
+- The seven known exposures are an owner decision. The debt list is what lets the gate pass today; removing an
+  entry without fixing its exposure makes the gate fail, and so does adding a new exposure.

@@ -33,6 +33,12 @@ so text in comments and strings does not count as a reference. SDL names that
 appear only inside strings (for example a panic message) are listed as
 information, not as violations.
 
+D-21 (plan section 6.2): a second, text-based check. It follows the public root src/engine/bairava.zig through
+its re-exports and flags a HarfBuzz name, or an internal font-resource name, where it appears on that surface:
+in a re-export, a pub fn signature, or a field of a pub struct. Known exposures are listed in D21_DEBT by exact
+line text. A new exposure, a stale debt entry, or a HarfBuzz name outside src/engine/text/ fails --fail. The
+check does not compile Zig, and it does not follow a type through a name that is not itself forbidden.
+
 Usage:
   python3 scripts/boundary_scan.py                 report; exit 0
   python3 scripts/boundary_scan.py --fail          exit 1 on reachable violations
@@ -228,6 +234,315 @@ def reachable_zig():
     return seen
 
 
+# ---------------------------------------------------------------------------
+# D-21 (plan section 6.2): no HarfBuzz name and no internal font-resource type on the public surface.
+# Text-based: it follows the public root through its re-exports and does not compile Zig.
+# ---------------------------------------------------------------------------
+
+PUBLIC_ROOT = "src/engine/bairava.zig"
+TEXT_PACKAGE = "src/engine/text/"
+
+FONT_INTERNAL_RE = re.compile(
+    r"\b(FontResource|Resources|font_resource|ui_font|Font|Fonts|Registry|font_mod)\b"
+    r"|(?<!staging\.)(?<![A-Za-z0-9_])Staged\b"
+)
+HB_NAME_RE = re.compile(r"\b(hb_\w+|harfbuzz)\b")
+HB_INCLUDE_RE = re.compile(r"#\s*include\s*[<\"][^>\"]*\bhb[^>\"]*[>\"]")
+
+TOP_CONST_RE = re.compile(r"^(pub\s+)?const\s+(\w+)\s*=\s*(.*)$")
+TOP_FN_RE = re.compile(r"^(pub\s+)?fn\s+(\w+)")
+TOP_REEXPORT_RHS_RE = re.compile(
+    r"^pub\s+const\s+\w+\s*=\s*(?!(?:packed\s+|extern\s+)?(?:struct|union|enum|opaque)\b)(.*);\s*$")
+IMPORT_EXPR_RE = re.compile(r'@import\("([^"]+)"\)(?:\.(\w+))?')
+ALIAS_RE = re.compile(r"^(\w+)\.(\w+)\s*;\s*$")
+BARE_RE = re.compile(r"^(\w+)\s*;\s*$")
+STRUCT_HDR_RE = re.compile(r"^\s*(pub\s+)?const\s+\w+\s*=\s*(?:packed\s+|extern\s+)?struct\b")
+FN_HDR_RE = re.compile(r"^\s*(pub\s+)?fn\b")
+TEST_HDR_RE = re.compile(r"^\s*test\b")
+PUB_FN_RE = re.compile(r"^\s*pub\s+fn\b")
+FIELD_RE = re.compile(r"^\s+(?:pub\s+)?[A-Za-z_]\w*\s*:\s*(.+?),?\s*$")
+
+# Known D-21 exposures, as the upload stands on 2026-11-19. Each entry matches a line by its exact stripped
+# text. Remove an entry when its exposure is fixed: an entry that matches nothing fails --fail as stale. A new
+# exposure is not on this list, so it fails. Owner approval of this list is the open decision in the plan.
+D21_DEBT = [
+    ("src/engine/ui/ui.zig", 'pub const Font = @import("../text/font.zig").Font;',
+     "ui.Font re-exports the BFNT Font, which holds the C ui_font"),
+    ("src/engine/ui/ui.zig", "pub const Fonts = font_resource.Resources;",
+     "ui.Fonts re-exports the internal font registry"),
+    ("src/engine/ui/ui.zig", "fonts: *font_resource.Resources,",
+     "Canvas.fonts field holds the internal font registry"),
+    ("src/engine/ui/ui.zig",
+     "pub fn create(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Canvas {",
+     "Canvas.create takes the internal font registry"),
+    ("src/engine/ui/ui.zig",
+     "pub fn init(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Ui {",
+     "Ui.init takes the internal font registry"),
+    ("src/engine/core/context.zig", "fonts: *font_resource.Resources,",
+     "Context.fonts field holds the internal font registry"),
+    ("src/engine/core/context.zig",
+     "pub fn fontOf(self: *const Context, font_handle: font_registry.FontHandle) font_registry.LookupError!*const font_resource.FontResource {",
+     "Context.fontOf returns the internal FontResource"),
+]
+
+
+def _pairs_from_text(text, is_c=False):
+    """One entry per line: (line without its // comment, code with comments and string bodies removed)."""
+    out, in_block = [], False
+    for raw in text.splitlines():
+        if not is_c and raw.lstrip().startswith("\\\\"):  # Zig multi-line string
+            out.append(("", ""))
+            continue
+        code, _strings, in_block = split_code(raw, is_c, in_block)
+        out.append((raw.split("//", 1)[0], code))
+    return out
+
+
+def _pairs(path):
+    return _pairs_from_text(path.read_text(encoding="utf-8", errors="replace"),
+                            path.suffix in (".c", ".h"))
+
+
+def _top_decls(pairs):
+    """Top-level declarations: name -> (is_pub, first line index, right-hand side)."""
+    decls = {}
+    for i, (nc, _code) in enumerate(pairs):
+        m = TOP_CONST_RE.match(nc)
+        if m:
+            decls.setdefault(m.group(2), (bool(m.group(1)), i, m.group(3).strip()))
+            continue
+        m = TOP_FN_RE.match(nc)
+        if m:
+            decls.setdefault(m.group(2), (bool(m.group(1)), i, ""))
+    return decls
+
+
+def _block_end(pairs, start):
+    """Last line of the brace block that opens on or after `start`; `start` itself when no block opens."""
+    depth, opened = 0, False
+    for j in range(start, len(pairs)):
+        for ch in pairs[j][1]:
+            if ch == "{":
+                depth += 1
+                opened = True
+            elif ch == "}":
+                depth -= 1
+        if opened and depth <= 0:
+            return j
+    return start
+
+
+def _module(path, rel):
+    target = (path.parent / rel).resolve()
+    try:
+        target.relative_to(SRC)
+    except ValueError:
+        return None
+    return target if target.suffix == ".zig" and target.is_file() else None
+
+
+def _surfaces(path, name, seen):
+    """What the name `name` of the module at `path` puts on the public surface.
+
+    Returns (kind, file, first line, last line): kind "file" for a whole module, "decl" for one declaration.
+    """
+    if (path, name) in seen:
+        return []
+    seen.add((path, name))
+    pairs = _pairs(path)
+    decls = _top_decls(pairs)
+    if name not in decls:
+        return []
+    _is_pub, idx, rhs = decls[name]
+    imp = IMPORT_EXPR_RE.search(rhs)
+    if imp:
+        target = _module(path, imp.group(1))
+        if target is None:
+            return []
+        if imp.group(2) is None:
+            return [("file", target, 0, 0)]
+        return _surfaces(target, imp.group(2), seen)
+    alias = ALIAS_RE.match(rhs)
+    if alias and alias.group(1) in decls:
+        owner_import = IMPORT_EXPR_RE.search(decls[alias.group(1)][2])
+        if owner_import:
+            target = _module(path, owner_import.group(1))
+            return _surfaces(target, alias.group(2), seen) if target else []
+        return _surfaces(path, alias.group(1), seen)
+    bare = BARE_RE.match(rhs)
+    if bare and bare.group(1) in decls:
+        return _surfaces(path, bare.group(1), seen)
+    return [("decl", path, idx, _block_end(pairs, idx))]
+
+
+def public_surfaces():
+    """Every surface a game can name through the public root, starting from the root's own re-exports."""
+    root = ROOT / PUBLIC_ROOT
+    seen = set()
+    out = [("file", root, 0, 0)]
+    for name, (is_pub, _idx, _rhs) in _top_decls(_pairs(root)).items():
+        if is_pub:
+            out += _surfaces(root, name, seen)
+    return out
+
+
+def _header_kind(code):
+    m = STRUCT_HDR_RE.match(code)
+    if m:
+        return "pubstruct" if m.group(1) else "struct"
+    if FN_HDR_RE.match(code):
+        return "fn"
+    if TEST_HDR_RE.match(code):
+        return "test"
+    return "other"
+
+
+def _scan(kind, pairs, start, end):
+    """Hits on one surface, as (line number, kind of hit, text). A "file" surface is the whole module."""
+    hits, stack = [], []
+    for i, (nc, code) in enumerate(pairs):
+        in_scope = kind == "file" or start <= i <= end
+        if in_scope and code.strip():
+            structs = [k for k in stack if k in ("pubstruct", "struct")]
+            innermost = structs[-1] if structs else None
+            top = stack[-1] if stack else None
+            text = nc.strip()
+            if kind == "file":
+                rhs = TOP_REEXPORT_RHS_RE.match(code)
+                if rhs and FONT_INTERNAL_RE.search(rhs.group(1)):
+                    hits.append((i + 1, "re-export", text))
+            if PUB_FN_RE.match(code) and innermost in (None, "pubstruct") and FONT_INTERNAL_RE.search(code):
+                hits.append((i + 1, "pub fn", text))
+            elif top == "pubstruct":
+                field = FIELD_RE.match(code)
+                if field and FONT_INTERNAL_RE.search(field.group(1)):
+                    hits.append((i + 1, "field", text))
+        header = _header_kind(code)
+        used = False
+        for ch in code:
+            if ch == "{":
+                stack.append("other" if used else header)
+                used = True
+            elif ch == "}" and stack:
+                stack.pop()
+    return hits
+
+
+def scan_public_surface():
+    hits, surfaces = {}, public_surfaces()
+    for kind, path, start, end in surfaces:
+        rel = path.relative_to(ROOT).as_posix()
+        for ln, k, text in _scan(kind, _pairs(path), start, end):
+            hits.setdefault((rel, ln), (k, text))
+    return hits, surfaces
+
+
+def classify_d21(hits):
+    debt = {(rel, text): why for rel, text, why in D21_DEBT}
+    known, new, matched = [], [], set()
+    for (rel, ln), (k, text) in sorted(hits.items()):
+        if (rel, text) in debt:
+            known.append((rel, ln, k, text, debt[(rel, text)]))
+            matched.add((rel, text))
+        else:
+            new.append((rel, ln, k, text))
+    stale = [(rel, text, why) for (rel, text), why in debt.items() if (rel, text) not in matched]
+    return known, new, stale
+
+
+def hb_hits_from_pairs(rel, pairs):
+    hits = []
+    for ln, (nc, code) in enumerate(pairs, 1):
+        if HB_NAME_RE.search(code) or HB_INCLUDE_RE.search(nc):
+            hits.append((rel, ln, nc.strip()))
+    return hits
+
+
+def scan_hb_names():
+    out = []
+    for p in sorted(SRC.rglob("*")):
+        if not p.is_file() or p.suffix not in (".zig", ".c", ".h"):
+            continue
+        rel = p.relative_to(ROOT).as_posix()
+        if rel.startswith(TEXT_PACKAGE):
+            continue
+        out += hb_hits_from_pairs(rel, _pairs(p))
+    return out
+
+
+def render_d21():
+    """Returns (report text, new exposures, stale debt entries, HarfBuzz hits)."""
+    hits, surfaces = scan_public_surface()
+    known, new, stale = classify_d21(hits)
+    hb = scan_hb_names()
+    whole = sum(1 for s in surfaces if s[0] == "file")
+    decl = len(surfaces) - whole
+    out = [
+        "PUBLIC SURFACE AND HARFBUZZ NAMES (D-21, plan section 6.2)",
+        f"Public root {PUBLIC_ROOT}: {len(surfaces)} surface(s), {whole} whole module(s) and {decl} declaration(s).",
+        f"KNOWN EXPOSURES (debt listed in D21_DEBT): {len(known)} line(s)",
+    ]
+    for rel, ln, k, text, why in known:
+        out.append(f"  {rel}:{ln} [{k}] {text[:120]}")
+        out.append(f"      {why}")
+    out.append(f"NEW EXPOSURES: {len(new)}" + ("  (fails --fail)" if new else ""))
+    for rel, ln, k, text in new:
+        out.append(f"  {rel}:{ln} [{k}] {text[:120]}")
+    out.append(f"STALE DEBT ENTRIES: {len(stale)}" + ("  (fails --fail: remove from D21_DEBT)" if stale else ""))
+    for rel, text, _why in stale:
+        out.append(f"  {rel}: {text[:120]}")
+    out.append(f"HARFBUZZ NAMES OUTSIDE {TEXT_PACKAGE}: {len(hb)}" + ("  (fails --fail)" if hb else ""))
+    for rel, ln, text in hb:
+        out.append(f"  {rel}:{ln} {text[:120]}")
+    out.append("")
+    return "\n".join(out), new, stale, hb
+
+
+def self_test_d21():
+    """Runs the D-21 and HarfBuzz scans on small inline cases. Returns a list of failure messages."""
+    failures = []
+
+    def expect(label, got, want):
+        if got != want:
+            failures.append(f"{label}: expected lines {sorted(want)}, got {sorted(got)}")
+
+    module = [
+        'pub const Font = @import("../text/font.zig").Font;',              # 1 re-export of a forbidden name
+        "pub const Fonts = font_resource.Resources;",                      # 2 re-export of a forbidden name
+        "pub const FontHandle = font_registry.FontHandle;",                # 3 the handle is allowed
+        "pub fn stage(prebaked: []const u8) error{InvalidFont}!Staged {",  # 4 signature names Staged
+        "const Private = struct {",                                        # 5
+        "    fonts: *font_resource.Resources,",                            # 6 private struct: not public
+        "};",                                                              # 7
+        "pub const Store = struct {",                                      # 8
+        "    fonts: *font_resource.Resources,",                            # 9 public field
+        "    staged: ?font.Staged = null,",                                # 10 public field
+        "    pub fn fontOf(self: *const Store) *const FontResource {",     # 11 public method signature
+        "        return undefined;",                                       # 12
+        "    }",                                                           # 13
+        "    fn helper(staged: *const staging.Staged) void {}",            # 14 private method, texture type
+        "};",                                                              # 15
+        "pub fn uploadStaged(staged: *const staging.Staged) void {}",     # 16 texture staging, not a font
+        'test "not public" {',                                             # 17
+        "    const r: Resources = undefined;",                             # 18 inside a test
+        "    _ = r;",                                                      # 19
+        "}",                                                               # 20
+    ]
+    pairs = _pairs_from_text("\n".join(module))
+    expect("module surface", {ln for ln, _k, _t in _scan("file", pairs, 0, 0)}, {1, 2, 4, 9, 10, 11})
+    decl_start = next(i for i, line in enumerate(module) if line.startswith("pub const Store"))
+    decl_end = next(i for i in range(decl_start, len(module)) if module[i] == "};")
+    expect("declaration surface",
+           {ln for ln, _k, _t in _scan("decl", pairs, decl_start, decl_end)}, {9, 10, 11})
+
+    hb_pairs = _pairs_from_text("const raw = hb_buffer_create();\n// hb_comment_only\nconst s = \"hb_text\";")
+    expect("HarfBuzz call", {ln for _r, ln, _t in hb_hits_from_pairs("x.zig", hb_pairs)}, {1})
+    c_pairs = _pairs_from_text("#include <hb.h>\n#include <stdio.h>", is_c=True)
+    expect("HarfBuzz include", {ln for _r, ln, _t in hb_hits_from_pairs("x.c", c_pairs)}, {1})
+    return failures
+
+
+
 def counts(hits):
     out = {}
     for cats in hits.values():
@@ -335,9 +650,12 @@ def main():
             if expected not in found:
                 print(f"self-test failed: {filename} did not report {expected}", file=sys.stderr)
                 failed = True
+        for msg in self_test_d21():
+            print(f"self-test failed: {msg}", file=sys.stderr)
+            failed = True
         if failed:
             return 1
-        print("Boundary self-test: 3/3 negative fixtures rejected")
+        print("Boundary self-test: 3/3 negative fixtures rejected; 4/4 public-surface and HarfBuzz cases as expected")
         return 0
 
     if not SRC.is_dir():
@@ -348,6 +666,8 @@ def main():
     results = [scan_file(p, p.relative_to(ROOT).as_posix()) for p in paths]
     reach = reachable_zig()
     text = render(results, reach)
+    d21_text, d21_new, d21_stale, d21_hb = render_d21()
+    text = text + "\n" + d21_text
     print(text)
     if args.report:
         Path(args.report).write_text(text + "\n", encoding="utf-8")
@@ -364,7 +684,12 @@ def main():
                   f"{len(viol)} line(s) outside the allowlist ({', '.join(cats)}). "
                   f"Full list in the job log.")
 
-    if args.fail and violating:
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for rel, ln, k, t in d21_new:
+            print(f"::warning file={rel},line={ln},title=D-21 public surface::{k}: {t}")
+        for rel, ln, t in d21_hb:
+            print(f"::warning file={rel},line={ln},title=HarfBuzz outside text::{t}")
+    if args.fail and (violating or d21_new or d21_stale or d21_hb):
         return 1
     return 0
 

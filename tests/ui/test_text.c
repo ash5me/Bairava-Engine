@@ -13,6 +13,7 @@
 
 static ui_font font;
 static ui_quad_list list; /* static, because the quad list is large */
+static ui_quad_list second; /* a second list, for comparing what two fonts draw */
 
 static int near(float a, float b) {
     float d = a - b;
@@ -241,8 +242,8 @@ static void check_prebaked_roundtrip(void) {
     data[0] = 'X';
     expect_prebaked_rejected(data, len, font.pixel_height); /* bad magic */
     data[0] = 'B';
-    data[4] = 2;
-    expect_prebaked_rejected(data, len, font.pixel_height); /* unsupported version */
+    data[4] = 5;
+    expect_prebaked_rejected(data, len, font.pixel_height); /* unsupported version 5. Version 2 is supported; see check_v2_format. */
     data[4] = 3;
     put_u16le(data + 6, 56);
     expect_prebaked_rejected(data, len, font.pixel_height); /* SDF atlases (v3) are no longer supported */
@@ -290,6 +291,53 @@ static unsigned char *write_v4(const ui_font *f, int fallback, size_t *len_out) 
     put_u16le(data + 46, (unsigned short)f->white.h);
     put_u32le(data + 48, (unsigned int)f->kerning_count);
     put_u32le(data + 52, (unsigned int)fallback);
+    for (i = 0; i < f->count; i++, pos += 20) {
+        const ui_glyph *g = &f->glyphs[i];
+        unsigned char *dst = data + pos;
+        put_u16le(dst, g->x0); put_u16le(dst + 2, g->y0);
+        put_u16le(dst + 4, g->x1); put_u16le(dst + 6, g->y1);
+        memcpy(&bits, &g->xoff, sizeof bits); put_u32le(dst + 8, bits);
+        memcpy(&bits, &g->yoff, sizeof bits); put_u32le(dst + 12, bits);
+        memcpy(&bits, &g->xadvance, sizeof bits); put_u32le(dst + 16, bits);
+    }
+    for (i = 0; i < f->kerning_count; i++, pos += 12) {
+        unsigned char *dst = data + pos;
+        put_u32le(dst, f->kernings[i].left);
+        put_u32le(dst + 4, f->kernings[i].right);
+        memcpy(&bits, &f->kernings[i].advance, sizeof bits); put_u32le(dst + 8, bits);
+    }
+    for (p = 0; p < pixels; p++) data[pos + p] = f->alpha[p];
+    *len_out = len;
+    return data;
+}
+
+/* Serializes `f` as a BFNT v2 file: a 52-byte header that records a kerning count and has no fallback field,
+ * so the loader gives it the default. Layout: header, glyph records, kerning records, atlas. The caller frees
+ * the result. No v2 file ships in the repository, and the baker writes only v4, so this writer is the fixture. */
+static unsigned char *write_v2(const ui_font *f, size_t *len_out) {
+    size_t pixels = (size_t)f->atlas_w * (size_t)f->atlas_h;
+    size_t len = 52 + (size_t)f->count * 20 + (size_t)f->kerning_count * 12 + pixels;
+    unsigned char *data = calloc(len, 1);
+    size_t pos = 52, p;
+    unsigned int bits;
+    int i;
+    if (data == NULL) return NULL;
+    memcpy(data, "BFNT", 4);
+    put_u16le(data + 4, 2);
+    put_u16le(data + 6, 52);
+    memcpy(&bits, &f->pixel_height, sizeof bits); put_u32le(data + 8, bits);
+    put_u32le(data + 12, (unsigned int)f->first);
+    put_u32le(data + 16, (unsigned int)f->count);
+    put_u32le(data + 20, (unsigned int)f->ascent);
+    put_u32le(data + 24, (unsigned int)f->line_height);
+    put_u32le(data + 28, (unsigned int)f->atlas_w);
+    put_u32le(data + 32, (unsigned int)f->atlas_h);
+    put_u32le(data + 36, (unsigned int)pixels);
+    put_u16le(data + 40, (unsigned short)f->white.x);
+    put_u16le(data + 42, (unsigned short)f->white.y);
+    put_u16le(data + 44, (unsigned short)f->white.w);
+    put_u16le(data + 46, (unsigned short)f->white.h);
+    put_u32le(data + 48, (unsigned int)f->kerning_count);
     for (i = 0; i < f->count; i++, pos += 20) {
         const ui_glyph *g = &f->glyphs[i];
         unsigned char *dst = data + pos;
@@ -376,6 +424,156 @@ static void check_fallback(const char *path) {
     ui_font_destroy(&letters);
 }
 
+/* A font built by hand, so every value the v2 check depends on is known. The atlas is 8 by 8 with a 2 by 2 white
+ * block in the corner. Each glyph is a 2 by 2 rectangle at (2, 2) with advance 3 + (codepoint % 4): 'A' advances 4,
+ * 'B' advances 5, and '?' advances 6. Kerning: 1 pair adds ('A', 'B') by -1; 2 pairs also add ('B', 'A') by -0.5,
+ * which sorts after it. The caller frees the font with ui_font_destroy. */
+static void make_v2_fixture(ui_font *f, int first, int count, int kern_pairs) {
+    static const float kern_advance[2] = { -1.0f, -0.5f };
+    static const unsigned int kern_left[2] = { 'A', 'B' }, kern_right[2] = { 'B', 'A' };
+    int i, x, y;
+    memset(f, 0, sizeof *f);
+    f->first = first;
+    f->count = count;
+    f->fallback = ui_font_default_fallback(first, count);
+    f->pixel_height = 8.0f;
+    f->ascent = 8;
+    f->line_height = 10;
+    f->atlas_w = 8;
+    f->atlas_h = 8;
+    f->white = (ui_rect){ 0, 0, 2, 2 };
+    f->alpha = calloc(64, 1);
+    f->glyphs = calloc((size_t)count, sizeof *f->glyphs);
+    f->kernings = kern_pairs > 0 ? calloc((size_t)kern_pairs, sizeof *f->kernings) : NULL;
+    f->kerning_count = kern_pairs;
+    if (f->alpha == NULL || f->glyphs == NULL || (kern_pairs > 0 && f->kernings == NULL)) {
+        ui_test_failures++;
+        return;
+    }
+    for (y = 0; y < 8; y++)
+        for (x = 0; x < 8; x++)
+            f->alpha[y * 8 + x] = (x < 2 && y < 2) ? 255 : (unsigned char)(10 * (x + y) + 1);
+    for (i = 0; i < count; i++) {
+        ui_glyph *g = &f->glyphs[i];
+        g->x0 = 2; g->y0 = 2; g->x1 = 4; g->y1 = 4;
+        g->xoff = 0; g->yoff = -6;
+        g->xadvance = 3.0f + (float)((first + i) % 4);
+    }
+    for (i = 0; i < kern_pairs; i++) {
+        f->kernings[i].left = kern_left[i];
+        f->kernings[i].right = kern_right[i];
+        f->kernings[i].advance = kern_advance[i];
+    }
+}
+
+static int same_glyph(const ui_glyph *a, const ui_glyph *b) {
+    return a->x0 == b->x0 && a->y0 == b->y0 && a->x1 == b->x1 && a->y1 == b->y1 &&
+           a->xoff == b->xoff && a->yoff == b->yoff && a->xadvance == b->xadvance;
+}
+
+static int same_quad(const ui_quad *a, const ui_quad *b) {
+    return a->dst.x == b->dst.x && a->dst.y == b->dst.y && a->dst.w == b->dst.w && a->dst.h == b->dst.h &&
+           a->src.x == b->src.x && a->src.y == b->src.y && a->src.w == b->src.w && a->src.h == b->src.h &&
+           a->color.r == b->color.r && a->color.g == b->color.g && a->color.b == b->color.b && a->color.a == b->color.a;
+}
+
+/* BFNT v2 is not covered by the v1 and v4 checks: each version has its own header length and its own optional
+ * field. This writes a real v2 file and checks what the loader makes of it, field by field, then the rejections
+ * that depend on the v2 layout. */
+static void check_v2_format(void) {
+    ui_font src, loaded, plain, wide;
+    ui_color red = { 1, 0, 0, 1 };
+    unsigned char *data;
+    unsigned char kept[24];
+    size_t len = 0;
+    int i, same;
+
+    /* 'A' and 'B' with two kerning pairs. No '?' is in the range, so the default fallback is none. */
+    make_v2_fixture(&src, 65, 2, 2);
+    data = write_v2(&src, &len);
+    CHECK(data != NULL);
+    if (data == NULL) {
+        ui_font_destroy(&src);
+        return;
+    }
+    CHECK(data[4] == 2 && data[5] == 0 && data[6] == 52 && data[7] == 0); /* the fixture is really v2 */
+    CHECK(ui_font_load_prebaked(data, len, src.pixel_height, &loaded) == 0);
+    if (loaded.alpha != NULL) {
+        CHECK(loaded.first == 65 && loaded.count == 2 && loaded.kerning_count == 2);
+        CHECK(loaded.pixel_height == 8.0f && loaded.ascent == 8 && loaded.line_height == 10);
+        CHECK(loaded.atlas_w == 8 && loaded.atlas_h == 8);
+        CHECK(loaded.white.x == 0 && loaded.white.y == 0 && loaded.white.w == 2 && loaded.white.h == 2);
+        CHECK(memcmp(loaded.alpha, src.alpha, 64) == 0);
+        same = 1;
+        for (i = 0; i < 2; i++) same &= same_glyph(&loaded.glyphs[i], &src.glyphs[i]);
+        CHECK(same);
+        CHECK(loaded.kernings[0].left == 'A' && loaded.kernings[0].right == 'B' && loaded.kernings[0].advance == -1.0f);
+        CHECK(loaded.kernings[1].left == 'B' && loaded.kernings[1].right == 'A' && loaded.kernings[1].advance == -0.5f);
+        /* v2 has no fallback field, so it gets the default, which is none here. The 52 bytes where v4 reads
+         * the fallback hold the first glyph in a v2 file, so reading them would give a different value. */
+        CHECK(loaded.fallback == -1);
+        CHECK(near(ui_font_text_width(&loaded, "A", 1), 4.0f));
+        CHECK(near(ui_font_text_width(&loaded, "AB", 2), 8.0f)); /* 4 + 5 - 1 */
+        CHECK(near(ui_font_text_width(&loaded, "BA", 2), 8.5f)); /* 5 + 4 - 0.5 */
+        CHECK(near(ui_font_text_width(&loaded, "C", 1), 0.0f));   /* not baked, and no fallback, so nothing */
+
+        /* Drawing the loaded font gives the same quads as drawing the font it was written from. */
+        list.count = 0;
+        second.count = 0;
+        ui_font_draw_text(&src, &list, 0, 0, "ABBA", 4, red);
+        ui_font_draw_text(&loaded, &second, 0, 0, "ABBA", 4, red);
+        CHECK(list.count == 4 && second.count == list.count);
+        same = second.count == list.count;
+        for (i = 0; same && i < list.count; i++) same = same_quad(&list.items[i], &second.items[i]);
+        CHECK(same);
+        ui_font_destroy(&loaded);
+    }
+
+    /* Rejections specific to the v2 layout. Each change is undone afterward. */
+    expect_prebaked_rejected(data, len, 9.0f); /* baked at 8 px, asked for 9 */
+    data[6] = 48; expect_prebaked_rejected(data, len, 8.0f); data[6] = 52; /* v1's header length on a v2 file */
+    data[6] = 56; expect_prebaked_rejected(data, len, 8.0f); data[6] = 52; /* v4's header length on a v2 file */
+    put_u32le(data + 48, 3); expect_prebaked_rejected(data, len, 8.0f); put_u32le(data + 48, 2); /* kerning count disagrees with the length */
+    put_u32le(data + 96, 70); expect_prebaked_rejected(data, len, 8.0f); put_u32le(data + 96, 'B'); /* right is outside 'A'..'B' */
+    memcpy(kept, data + 92, 24);
+    memcpy(data + 92, kept + 12, 12); memcpy(data + 104, kept, 12); /* kerning pairs out of (left, right) order */
+    expect_prebaked_rejected(data, len, 8.0f);
+    memcpy(data + 92, kept, 24);
+    data[4] = 5; expect_prebaked_rejected(data, len, 8.0f); data[4] = 2; /* an unsupported version with a v2 header length */
+    expect_prebaked_rejected(data, len - 1, 8.0f); /* truncated kerning and atlas */
+    free(data);
+    ui_font_destroy(&src);
+
+    /* No kerning pairs: the count is zero, the table is absent, and widths are plain advances. */
+    make_v2_fixture(&plain, 65, 2, 0);
+    data = write_v2(&plain, &len);
+    if (data != NULL) {
+        CHECK(ui_font_load_prebaked(data, len, 8.0f, &loaded) == 0);
+        if (loaded.alpha != NULL) {
+            CHECK(loaded.kerning_count == 0 && loaded.kernings == NULL);
+            CHECK(near(ui_font_text_width(&loaded, "AB", 2), 9.0f)); /* 4 + 5, no kerning */
+            ui_font_destroy(&loaded);
+        }
+        free(data);
+    }
+    ui_font_destroy(&plain);
+
+    /* A range that holds '?' gets '?' as its default fallback, and a codepoint outside the range draws it. */
+    make_v2_fixture(&wide, 32, 95, 1);
+    data = write_v2(&wide, &len);
+    if (data != NULL) {
+        CHECK(ui_font_load_prebaked(data, len, 8.0f, &loaded) == 0);
+        if (loaded.alpha != NULL) {
+            CHECK(loaded.fallback == '?');
+            CHECK(near(ui_font_text_width(&loaded, "\x01", 1), 6.0f)); /* U+0001 is not baked, so it measures as '?' */
+            CHECK(near(ui_font_text_width(&loaded, "AB", 2), 8.0f));
+            ui_font_destroy(&loaded);
+        }
+        free(data);
+    }
+    ui_font_destroy(&wide);
+}
+
 /* After the atlas is uploaded its CPU copy is released. Measuring and drawing must still work, and
  * releasing again is harmless. This runs last, because the atlas is gone afterward. */
 static void check_release(void) {
@@ -410,6 +608,7 @@ int main(int argc, char **argv) {
     check_width();
     check_draw();
     check_prebaked_roundtrip();
+    check_v2_format();
     check_fallback(argv[1]);
     check_release();
     check_mono(argv[1]);

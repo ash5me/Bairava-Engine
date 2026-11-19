@@ -1,0 +1,56 @@
+BFNT v2 coverage: verification record
+=====================================
+Recorded 2026-11-19 in the sandbox. This is sandbox evidence for a C test. It is not an environment gate (plan section 6.4).
+
+Scope
+- Changed: tests/ui/test_text.c only. src/engine/text/text.c is unchanged.
+- Added: write_v2 (a BFNT v2 serializer that follows docs/text.md and text.c), make_v2_fixture (a hand-built font with
+  known metrics and kerning), same_glyph and same_quad, and check_v2_format, which main calls after
+  check_prebaked_roundtrip.
+- Corrected: the check that set data[4] = 2 and was labeled "unsupported version". Version 2 is supported, so that
+  file was rejected only because its header length was 48, not 52. It now sets data[4] = 5.
+
+Why a writer and not a shipped file
+- The upload has no v2 .bfnt file. Both shipped fonts are v4 (checked by reading bytes 4 and 6).
+- tools/assets/font_bake.c writes only v4 (docs/text.md, "The builder writes BFNT v4").
+
+Environment (sandbox)
+- gcc 13.3.0 (Ubuntu 24.04). Flags: -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=address,undefined
+  -fno-sanitize-recover=undefined.
+- stb_truetype.h: upstream v1.28, fetched from raw.githubusercontent.com/nothings/stb (master).
+  SHA-256 428cfe93520f2aed5e413a220b0db5bba5b17e2ebe5a64e4a8efa9eeeb67ec5f, which matches the raw hash that
+  docs/Bairava_Phase0/Bairava-Engine-Rendering-Migration-Plan.phase0-status.md records for commit 9600522.
+  The commit itself was not checked against that hash.
+- stb_truetype_impl.c: one line that defines STB_TRUETYPE_IMPLEMENTATION and includes the header. It is a shim,
+  not the repository's file, because vendor/ is absent from the upload.
+- FreeType 2.13.2 headers (libfreetype-dev 2.13.2+dfsg-1ubuntu0.2). vendor/freetype-2.15.0 is absent from the upload.
+- Built in a scratch copy with vendor/ added. Nothing vendored was added to the deliverable tree.
+
+Command (in the scratch copy)
+  gcc $CFLAGS tests/ui/test_text.c tests/ui/test_support.c src/engine/text/text.c tools/assets/font_bake.c \
+      vendor/stb_truetype_impl.c -lfreetype -lm -o test_text
+  ./test_text tests/fixtures/NotoSansTamil.ttf
+
+Result, deliverable sources
+  build: ok
+  text: all checks passed
+  exit 0
+
+Mutation check: deliberate breaks in text.c, each run against the original test file and the new one
+  Control (unmodified loader): original exit 0, new exit 0.
+  M1  v2 header length treated as 48          original: pass (missed)   new: FAIL, 3 checks
+  M2  kerning table read only for v4          original: pass (missed)   new: FAIL, 2 checks
+  M3  v2 reads the fallback from offset 52    original: pass (missed)   new: FAIL, 3 checks
+  M4  v1 and v2 get no default fallback       original: FAIL, 1 check   new: FAIL, 3 checks
+  M5  kerning order not enforced              original: pass (missed)   new: FAIL, 3 checks
+  M6  kerning ignored when measuring          original: pass (missed)   new: FAIL, 3 checks
+  Summary: the original file catches 1 of 6. The new file catches 6 of 6.
+  M5 also reports LeakSanitizer leaks. The broken loader accepts the malformed font, and the test then never frees
+  it. The leaks are the 64, 40, and 24 bytes of its atlas, glyph, and kerning allocations, so they are a side effect
+  of the failure and not a defect in the test.
+
+Not run
+- zig build test-ui. The sandbox has no Zig (the pinned toolchain is 0.16.0-dev.3142+5ccfeb926), and it cannot
+  fetch the SDL and ztracy dependencies. The Zig wrapper in src/engine/text/font.zig calls ui_font_load_prebaked and
+  has no version logic, so the C test covers its BFNT behavior. The owner's pinned run still needs to confirm
+  test-ui with this change.
