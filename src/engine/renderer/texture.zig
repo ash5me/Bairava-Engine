@@ -11,11 +11,15 @@ const TextureHandle = opaque {};
 pub const Texture = struct {
     gpu_state: *TextureHandle,
     sdl2d_state: ?*platform.Renderer2dTexture = null,
+    sdl2d_fallback: ?*const Texture = null,
     width: u32,
     height: u32,
     has_upload_fence: bool,
     /// True for an alpha-only atlas (see createCoverage). It samples through the coverage pipeline and is never lit.
     coverage: bool = false,
+    /// True for an RGBA MSDF atlas. It uses a per-texture linear sampler and the MSDF pipeline.
+    msdf: bool = false,
+    msdf_px_range: f32 = 0,
 
     /// Releases the GPU resources. The owning engine runtime must outlive the texture.
     pub fn deinit(self: *Texture) void {
@@ -37,6 +41,14 @@ pub const Texture = struct {
 /// Uploads tightly packed RGBA8 pixels (4 bytes per pixel, row 0 at the top).
 pub fn createRgba8(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, pixels: []const u8) Texture {
     return wrapWithSdl(backend.texture.uploadRgba8(allocator, device, width, height, pixels), width, height, pixels);
+}
+
+/// Uploads a packed RGBA8 MSDF atlas. Its SDL3 2D copy is supplied by the coverage sibling, not the distance field.
+pub fn createMsdf(allocator: std.mem.Allocator, device: *backend.Device, width: u32, height: u32, pixels: []const u8, px_range: f32) Texture {
+    var result = wrap(backend.texture.uploadMsdf(allocator, device, width, height, pixels, px_range), width, height);
+    result.msdf = true;
+    result.msdf_px_range = px_range;
+    return result;
 }
 
 /// Uploads one coverage byte per texel (row 0 at the top) as a coverage texture: the glyph atlas of a prebaked font.
@@ -180,5 +192,6 @@ fn expandCoverage(allocator: std.mem.Allocator, alpha: []const u8) []u8 {
 }
 
 pub fn sdl2dState(texture_ref: *const Texture) ?*platform.Renderer2dTexture {
+    if (texture_ref.sdl2d_fallback) |fallback| return sdl2dState(fallback);
     return if (texture_ref.sdl2d_state) |state| @ptrCast(state) else null;
 }

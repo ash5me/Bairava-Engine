@@ -10,32 +10,41 @@ const image = @import("../../../assets/loaders/image.zig");
 pub const State = struct {
     device: *c.SDL_GPUDevice,
     texture: *c.SDL_GPUTexture,
-    sampler: *c.SDL_GPUSampler,
+    nearest_sampler: ?*c.SDL_GPUSampler,
+    linear_sampler: ?*c.SDL_GPUSampler,
     upload_fence: ?*c.SDL_GPUFence,
     allocator: std.mem.Allocator,
+    msdf_px_range: f32 = 0,
 };
 
 /// Uploads tightly packed RGBA8 pixels. Sampling is nearest-neighbor, so pixel art stays sharp when it is scaled up.
 pub fn uploadRgba8(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const u8) *State {
-    return upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height);
+    return upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height, .nearest);
+}
+
+/// Uploads an MSDF atlas with its own clamp-to-edge linear sampler. Other textures remain nearest-filtered.
+pub fn uploadMsdf(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const u8, px_range: f32) *State {
+    const state = upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, pixels, width, height, .linear);
+    state.msdf_px_range = px_range;
+    return state;
 }
 
 /// Uploads one coverage byte per texel as an R8 texture, for the glyph atlas of a prebaked font. Sampling returns the
 /// coverage in the red channel, which the coverage fragment shader reads. A quarter of the memory of RGBA8.
 pub fn uploadCoverage(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, alpha: []const u8) *State {
-    return upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8_UNORM, alpha, width, height);
+    return upload(allocator, device, width, height, c.SDL_GPU_TEXTUREFORMAT_R8_UNORM, alpha, width, height, .nearest);
 }
 
 /// Uploads a prebuilt block-compressed image. The caller checks `supportsCompression` first.
 pub fn uploadCompressed(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, compression: image.Compression, blocks: []const u8) *State {
     const format = gpuFormat(compression) orelse unreachable;
-    return upload(allocator, device, width, height, format, blocks, 0, 0);
+    return upload(allocator, device, width, height, format, blocks, 0, 0, .nearest);
 }
 
 /// Creates a texture the GPU can both sample and draw into. The native view is one of these.
 pub fn createTarget(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat) *State {
     const texture = createTexture(device, width, height, format, c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
-    return wrap(allocator, device, texture, createSampler(device), null);
+    return wrap(allocator, device, texture, createSampler(device, .nearest), null, .nearest);
 }
 
 /// True when the device can sample the block-compressed format.
@@ -70,7 +79,7 @@ pub fn gpuTexture(state: *const State) *c.SDL_GPUTexture {
 
 /// The texture and sampler pair a fragment shader reads through.
 pub fn binding(state: *const State) c.SDL_GPUTextureSamplerBinding {
-    return .{ .texture = state.texture, .sampler = state.sampler };
+    return .{ .texture = state.texture, .sampler = state.linear_sampler orelse state.nearest_sampler.? };
 }
 
 /// One rectangle of a coverage texture to overwrite. Row r of the rectangle is `w` bytes at `coverage[r * stride]`, so a
@@ -153,12 +162,15 @@ pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, 
 /// Releases the GPU objects, then the state. The device must still exist.
 pub fn destroy(state: *State) void {
     if (state.upload_fence) |fence| c.SDL_ReleaseGPUFence(state.device, fence);
-    c.SDL_ReleaseGPUSampler(state.device, state.sampler);
+    if (state.nearest_sampler) |sampler| c.SDL_ReleaseGPUSampler(state.device, sampler);
+    if (state.linear_sampler) |sampler| c.SDL_ReleaseGPUSampler(state.device, sampler);
     c.SDL_ReleaseGPUTexture(state.device, state.texture);
     state.allocator.destroy(state);
 }
 
-fn upload(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, pixels: []const u8, pixels_per_row: u32, rows_per_layer: u32) *State {
+const Filter = enum { nearest, linear };
+
+fn upload(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SDL_GPUTextureFormat, pixels: []const u8, pixels_per_row: u32, rows_per_layer: u32, filter: Filter) *State {
     const texture = createTexture(device, width, height, format, c.SDL_GPU_TEXTUREUSAGE_SAMPLER);
 
     // Stage the pixels in an upload buffer, then copy them into the texture.
@@ -203,12 +215,19 @@ fn upload(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, width: u32, he
     const fence = c.SDL_SubmitGPUCommandBufferAndAcquireFence(cmd) orelse {
         std.debug.panic("SDL_SubmitGPUCommandBufferAndAcquireFence failed: {s}", .{c.SDL_GetError()});
     };
-    return wrap(allocator, device, texture, createSampler(device), fence);
+    return wrap(allocator, device, texture, createSampler(device, filter), fence, filter);
 }
 
-fn wrap(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, texture: *c.SDL_GPUTexture, sampler: *c.SDL_GPUSampler, fence: ?*c.SDL_GPUFence) *State {
+fn wrap(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, texture: *c.SDL_GPUTexture, sampler: *c.SDL_GPUSampler, fence: ?*c.SDL_GPUFence, filter: Filter) *State {
     const state = allocator.create(State) catch @panic("out of memory");
-    state.* = .{ .device = device, .texture = texture, .sampler = sampler, .upload_fence = fence, .allocator = allocator };
+    state.* = .{
+        .device = device,
+        .texture = texture,
+        .nearest_sampler = if (filter == .nearest) sampler else null,
+        .linear_sampler = if (filter == .linear) sampler else null,
+        .upload_fence = fence,
+        .allocator = allocator,
+    };
     return state;
 }
 
@@ -235,10 +254,10 @@ fn createTexture(device: *c.SDL_GPUDevice, width: u32, height: u32, format: c.SD
     };
 }
 
-fn createSampler(device: *c.SDL_GPUDevice) *c.SDL_GPUSampler {
+fn createSampler(device: *c.SDL_GPUDevice, filter: Filter) *c.SDL_GPUSampler {
     var info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
-    info.min_filter = c.SDL_GPU_FILTER_NEAREST;
-    info.mag_filter = c.SDL_GPU_FILTER_NEAREST;
+    info.min_filter = if (filter == .linear) c.SDL_GPU_FILTER_LINEAR else c.SDL_GPU_FILTER_NEAREST;
+    info.mag_filter = if (filter == .linear) c.SDL_GPU_FILTER_LINEAR else c.SDL_GPU_FILTER_NEAREST;
     info.mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
     info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;

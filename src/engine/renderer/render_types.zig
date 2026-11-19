@@ -47,6 +47,9 @@ pub const indices_per_quad = 6;
 /// at about 16 thousand.
 pub const index_size = @sizeOf(u32);
 
+/// Fragment material selected by a sprite texture.
+pub const Material = enum { color, coverage, msdf };
+
 /// The corners of one quad in the two triangles, as offsets into the quad's four vertices. drawSprite
 /// writes the corners top-left, bottom-left, bottom-right, top-right, so these triangles are the ones
 /// six separate vertices used to make.

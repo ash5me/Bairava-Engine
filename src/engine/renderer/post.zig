@@ -137,7 +137,7 @@ pub const Chain = struct {
 
             backend.post.pushSettings(cmd, &self.settings);
             const pass_handle = renderer.beginPass(cmd, texture.backendTexture(target), clear_black);
-            sprite.draw(batch, pass_handle);
+            sprite.draw(batch, cmd, pass_handle);
             renderer.endPass(pass_handle);
 
             input = target;

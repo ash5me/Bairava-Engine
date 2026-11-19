@@ -140,8 +140,8 @@ pub const Batch = struct {
     texture: *const Texture,
     /// The normal map the run's sprites are lit with, or null for a run drawn unlit.
     normal: ?*const Texture,
-    /// True for a run of alpha-only atlas sprites (see Texture.coverage), drawn through the coverage pipeline.
-    coverage: bool = false,
+    /// Fragment path selected by the texture.
+    material: render_types.Material = .color,
     first_vertex: u32,
     vertex_count: u32,
 };
@@ -187,10 +187,9 @@ pub const SpriteBatch = struct {
 
     /// Builds the pipeline and GPU buffers. `color_format` is the swapchain format
     /// the sprites render into. `fragment` is the shader the quads run through.
-    /// `lit` is the fragment stage for normal-mapped runs, or null for a batch that draws none. `coverage` is the
-    /// fragment stage for alpha-only atlas runs (fonts), or null.
-    fn init(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat, fragment: backend.shader.Source, lit: ?backend.shader.Source, coverage: ?backend.shader.Source) SpriteBatch {
-        const gpu_state = backend.sprite.create(allocator, device, color_format, initial_sprites * vertices_per_quad, fragment, lit, coverage);
+    /// `lit`, `coverage`, and `msdf` are the optional fragment stages for their material classes.
+    fn init(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat, fragment: backend.shader.Source, lit: ?backend.shader.Source, coverage: ?backend.shader.Source, msdf: ?backend.shader.Source) SpriteBatch {
+        const gpu_state = backend.sprite.create(allocator, device, color_format, initial_sprites * vertices_per_quad, fragment, lit, coverage, msdf);
         var batch = SpriteBatch{
             .gpu_state = @ptrCast(gpu_state),
             .allocator = allocator,
@@ -316,7 +315,7 @@ pub const SpriteBatch = struct {
         if (self.sprite_count == self.quads.len) self.growQuads(self.sprite_count + 1);
         // A lit sprite with no normal map of its own samples the flat map, which faces the viewer.
         const normal: ?*const Texture = if (opts.normal) |map| map else if (opts.lit) self.flat_normal else null;
-        if (normal != null and texture_ref.coverage) std.debug.panic("an alpha-only font atlas cannot be lit", .{});
+        if (normal != null and (texture_ref.coverage or texture_ref.msdf)) std.debug.panic("font atlases cannot be lit", .{});
         self.quads[self.sprite_count] = .{
             .texture = texture_ref,
             .normal = normal,
@@ -359,7 +358,7 @@ pub const SpriteBatch = struct {
                 self.batches[self.batch_count] = .{
                     .texture = quad.texture,
                     .normal = quad.normal,
-                    .coverage = quad.texture.coverage,
+                    .material = if (quad.texture.msdf) .msdf else if (quad.texture.coverage) .coverage else .color,
                     .first_vertex = self.vertex_count,
                     .vertex_count = 0,
                 };
@@ -386,7 +385,7 @@ pub const SpriteBatch = struct {
     }
 
     /// Records one draw call per batch. Call inside a render pass, after upload().
-    fn draw(self: *SpriteBatch, pass: ?*backend.RenderPass) void {
+    fn draw(self: *SpriteBatch, cmd: *backend.CommandBuffer, pass: ?*backend.RenderPass) void {
         const zone = profile.zoneNamed(@src(), "sprite draw");
         defer zone.End();
         if (self.batch_count == 0) return;
@@ -401,7 +400,10 @@ pub const SpriteBatch = struct {
                 if (!map.isReady()) continue;
                 normal_state = texture.backendState(map);
             }
-            backend.sprite.drawRun(gpuOf(self), pass, texture.backendState(batch.texture), normal_state, batch.coverage, batch.first_vertex, batch.vertex_count);
+            if (batch.material == .msdf) {
+                backend.sprite.pushMsdfParams(cmd, batch.texture.msdf_px_range, batch.texture.width, batch.texture.height);
+            }
+            backend.sprite.drawRun(gpuOf(self), pass, texture.backendState(batch.texture), normal_state, batch.material, batch.first_vertex, batch.vertex_count);
             self.draw_calls += 1;
         }
     }
@@ -458,21 +460,21 @@ pub const SpriteBatch = struct {
 /// A batch of sprites. Sprites with no normal map use the default sprite shader, and sprites with one are lit
 /// by the batch's lights through the lit shader.
 pub fn create(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat) SpriteBatch {
-    return SpriteBatch.init(allocator, device, color_format, backend.sprite.sprite_fragment, backend.sprite.lit_fragment, backend.sprite.coverage_fragment);
+    return SpriteBatch.init(allocator, device, color_format, backend.sprite.sprite_fragment, backend.sprite.lit_fragment, backend.sprite.coverage_fragment, backend.sprite.msdf_fragment);
 }
 
 /// A batch whose quads run through one post-processing effect's shader. It takes the same vertices as a
 /// sprite batch, so a post-processing chain can queue one full-view quad through it.
 pub fn createEffect(allocator: std.mem.Allocator, device: *backend.Device, color_format: backend.TextureFormat, effect: render_types.Effect) SpriteBatch {
-    return SpriteBatch.init(allocator, device, color_format, backend.post.fragmentSource(effect), null, null);
+    return SpriteBatch.init(allocator, device, color_format, backend.post.fragmentSource(effect), null, null, null);
 }
 
 pub fn upload(batch: *SpriteBatch, cmd: *backend.CommandBuffer) void {
     batch.upload(cmd);
 }
 
-pub fn draw(batch: *SpriteBatch, pass: ?*backend.RenderPass) void {
-    batch.draw(pass);
+pub fn draw(batch: *SpriteBatch, cmd: *backend.CommandBuffer, pass: ?*backend.RenderPass) void {
+    batch.draw(cmd, pass);
 }
 
 /// Draws the queued quads through SDL3's 2D renderer. This path intentionally uses the

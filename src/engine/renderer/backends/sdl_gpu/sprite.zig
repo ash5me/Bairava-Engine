@@ -53,6 +53,22 @@ pub const coverage_fragment = shader.Source{
     .resources = .{ .samplers = 1 },
 };
 
+/// The MSDF fragment shader reconstructs coverage from the median of an RGBA atlas's RGB channels.
+pub const msdf_fragment = shader.Source{
+    .name = "default_msdf.frag",
+    .entry = "msdfFragmentMain",
+    .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
+    .code = .{ .spirv = embedded.default_msdf_frag, .dxil = embedded.default_msdf_frag_dxil, .msl = embedded.default_msdf_frag_msl },
+    .resources = .{ .samplers = 1, .uniform_buffers = 1 },
+};
+
+const MsdfParams = extern struct {
+    px_range: f32,
+    atlas_width: f32,
+    atlas_height: f32,
+    padding: f32 = 0,
+};
+
 /// The GPU objects of one sprite batch. The engine keeps a pointer to the state, and `destroy` frees it.
 pub const State = struct {
     device: *c.SDL_GPUDevice,
@@ -64,6 +80,8 @@ pub const State = struct {
     lit_pipeline: ?*c.SDL_GPUGraphicsPipeline,
     /// The pipeline for alpha-only atlas runs (fonts). Null when the batch was created without a coverage shader.
     coverage_pipeline: ?*c.SDL_GPUGraphicsPipeline,
+    /// The pipeline for MSDF runs. Null when the batch was created without an MSDF shader.
+    msdf_pipeline: ?*c.SDL_GPUGraphicsPipeline,
     index_buffer: *c.SDL_GPUBuffer,
     ib_binding: c.SDL_GPUBufferBinding,
     index_filled: bool = false,
@@ -75,7 +93,7 @@ pub const State = struct {
 /// for alpha-only atlases; each of the last two is null for a batch that draws none of that kind. `initial_vertices` is the starting capacity; the vertex buffer is
 /// replaced when a frame needs more. `color_format` is the swapchain format the sprites render into. Every
 /// fragment shader must read the samplers and uniform blocks declared in its source.
-pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat, initial_vertices: usize, fragment: shader.Source, lit: ?shader.Source, coverage: ?shader.Source) *State {
+pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_format: c.SDL_GPUTextureFormat, initial_vertices: usize, fragment: shader.Source, lit: ?shader.Source, coverage: ?shader.Source, msdf: ?shader.Source) *State {
     const format = shader.pickFormat(device);
     const vert = shader.load(device, format, vertex_source);
     defer c.SDL_ReleaseGPUShader(device, vert);
@@ -83,6 +101,7 @@ pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_form
     const pipeline = makePipeline(device, format, vert, fragment, color_format);
     const lit_pipeline: ?*c.SDL_GPUGraphicsPipeline = if (lit) |source| makePipeline(device, format, vert, source, color_format) else null;
     const coverage_pipeline: ?*c.SDL_GPUGraphicsPipeline = if (coverage) |source| makePipeline(device, format, vert, source, color_format) else null;
+    const msdf_pipeline: ?*c.SDL_GPUGraphicsPipeline = if (msdf) |source| makePipeline(device, format, vert, source, color_format) else null;
 
     // The GPU buffers start at the initial size and are replaced when a frame needs more. The index buffer
     // has one set of six indices for each quad the vertex buffer holds.
@@ -96,6 +115,7 @@ pub fn create(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, color_form
         .pipeline = pipeline,
         .lit_pipeline = lit_pipeline,
         .coverage_pipeline = coverage_pipeline,
+        .msdf_pipeline = msdf_pipeline,
         .vertex_buffer = vertex_buffer,
         .vb_binding = .{ .buffer = vertex_buffer, .offset = 0 },
         .upload_buffer = upload_buffer,
@@ -135,6 +155,16 @@ pub fn pushLights(cmd: *c.SDL_GPUCommandBuffer, lights: *const render_types.Ligh
     c.SDL_PushGPUFragmentUniformData(cmd, 0, lights, @sizeOf(render_types.LightUniforms));
 }
 
+/// Pushes the MSDF pixel range and atlas dimensions for the next MSDF draw.
+pub fn pushMsdfParams(cmd: *c.SDL_GPUCommandBuffer, px_range: f32, atlas_width: u32, atlas_height: u32) void {
+    const params = MsdfParams{
+        .px_range = px_range,
+        .atlas_width = @floatFromInt(atlas_width),
+        .atlas_height = @floatFromInt(atlas_height),
+    };
+    c.SDL_PushGPUFragmentUniformData(cmd, 0, &params, @sizeOf(MsdfParams));
+}
+
 /// Binds the vertex and index buffers for this batch's draws. Call inside a render pass, after `upload`. The
 /// pipeline is bound per run, because a run's pipeline depends on whether its sprites are lit.
 pub fn beginDraw(state: *const State, pass: ?*c.SDL_GPURenderPass) void {
@@ -146,15 +176,20 @@ pub fn beginDraw(state: *const State, pass: ?*c.SDL_GPURenderPass) void {
 /// of them. A run with a normal map binds the lit pipeline and both samplers. An alpha-only run (`coverage`) binds the
 /// coverage pipeline and one sampler. Any other run binds the plain pipeline and one sampler. The indices name absolute vertices, so the draw starts at this run's first quad in the index
 /// buffer and uses no base vertex.
-pub fn drawRun(state: *const State, pass: ?*c.SDL_GPURenderPass, tex: *const texture.State, normal: ?*const texture.State, coverage: bool, first_vertex: u32, vertex_count: u32) void {
+pub fn drawRun(state: *const State, pass: ?*c.SDL_GPURenderPass, tex: *const texture.State, normal: ?*const texture.State, material: render_types.Material, first_vertex: u32, vertex_count: u32) void {
     if (normal) |map| {
         const lit = state.lit_pipeline orelse std.debug.panic("a normal-mapped sprite needs a batch with a lit pipeline", .{});
         c.SDL_BindGPUGraphicsPipeline(pass, lit);
         const samplers = [2]c.SDL_GPUTextureSamplerBinding{ texture.binding(tex), texture.binding(map) };
         c.SDL_BindGPUFragmentSamplers(pass, 0, &samplers, 2);
-    } else if (coverage) {
+    } else if (material == .coverage) {
         const coverage_pipeline = state.coverage_pipeline orelse std.debug.panic("an alpha-only atlas needs a batch with a coverage pipeline", .{});
         c.SDL_BindGPUGraphicsPipeline(pass, coverage_pipeline);
+        const sampler = texture.binding(tex);
+        c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+    } else if (material == .msdf) {
+        const msdf_pipeline = state.msdf_pipeline orelse std.debug.panic("an MSDF atlas needs a batch with an MSDF pipeline", .{});
+        c.SDL_BindGPUGraphicsPipeline(pass, msdf_pipeline);
         const sampler = texture.binding(tex);
         c.SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
     } else {
@@ -175,6 +210,7 @@ pub fn destroy(state: *State, allocator: std.mem.Allocator) void {
     c.SDL_ReleaseGPUBuffer(state.device, state.vertex_buffer);
     if (state.lit_pipeline) |lit| c.SDL_ReleaseGPUGraphicsPipeline(state.device, lit);
     if (state.coverage_pipeline) |coverage| c.SDL_ReleaseGPUGraphicsPipeline(state.device, coverage);
+    if (state.msdf_pipeline) |msdf| c.SDL_ReleaseGPUGraphicsPipeline(state.device, msdf);
     c.SDL_ReleaseGPUGraphicsPipeline(state.device, state.pipeline);
     allocator.destroy(state);
 }

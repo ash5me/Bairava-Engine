@@ -12,9 +12,11 @@ and reflected in the version records that ship with release artifacts.
 | Zig | `minimum_zig_version` in `build.zig.zon`; CI installs that exact version |
 | SDL | Full Git commit and Zig package content hash in `build.zig.zon` |
 | ztracy | Full Git commit and Zig package content hash in `build.zig.zon` |
+| msdfgen | Full Git commit and Zig package content hash in `build.zig.zon`; source-tree hash and license in [`dependency-lock.json`](dependency-lock.json); linked only into the host asset builder |
 | Slang compiler | Version in `.github/workflows/ci.yml`; per-platform archive digests in [`dependency-lock.json`](dependency-lock.json) |
 | cglm, FreeType, stb, log.c, Parson | Versions, upstream references, and source-tree SHA-256 values in [`dependency-lock.json`](dependency-lock.json) |
 | HarfBuzz | Version, upstream reference, and source-tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); vendored under `vendor/harfbuzz-15.1.0/` (`src/` and `COPYING`) |
+| msdfgen | Version 1.13.0, commit `1874bcf7d9624ccc85b4bc9a85d78116f690f35b`, MIT license, and source-tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); vendored under `vendor/msdfgen-1.13/` |
 | Test font (Noto Sans Tamil) | Upstream commit and tree SHA-256 in [`dependency-lock.json`](dependency-lock.json); files under `tests/fixtures/`, used only by `zig build test` |
 | Test font (Chemmozhi Paranar) | SHA-256 in [`dependency-lock.json`](dependency-lock.json); file under `tests/fixtures/`, used only by `zig build test`. License accepted by the owner (see "Test fixtures") |
 

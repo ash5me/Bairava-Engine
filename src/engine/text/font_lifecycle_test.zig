@@ -40,6 +40,7 @@ fn countRelease(resource: *font_resource.FontResource) void {
             released_markers[released_count] = f.baked.line_height;
             released_count += 1;
         },
+        .msdf => @panic("the lifecycle test holds only bfnt fonts"),
         .bitmap => @panic("the lifecycle test holds only bfnt fonts"),
         .runtime_coverage => @panic("the lifecycle test holds only bfnt fonts"),
     }

@@ -206,6 +206,7 @@ def test_builder(builder, work):
     write_rgba_png(image_path, 2, 2, image_pixels)
     write_test_wav(assets / "wind.wav")
     (assets / "font.ttf").write_bytes((ROOT / "assets" / "font.ttf").read_bytes())
+    (assets / "font2.ttf").write_bytes((ROOT / "assets" / "font2.ttf").read_bytes())
 
     manifest = project / "manifest.txt"
     manifest.write_text(
@@ -215,6 +216,7 @@ def test_builder(builder, work):
                 "wind1 audio assets/wind.wav wind.wav -",
                 "font_10px font assets/font.ttf font_10px.bfnt - 10 32 224",
                 "font_8px font assets/font.ttf font_8px.bfnt - 8 32 224",
+                "font_msdf font assets/font2.ttf font_msdf.mfnt - 24 63 msdf",
             )
         )
         + "\n",
@@ -259,9 +261,48 @@ def test_builder(builder, work):
         assert len(font) > 56 + 224 * 20
     assert not (output / "font.ttf").exists(), "a font's source must not be copied into the runtime assets"
 
+    msdf = (output / "font_msdf.mfnt").read_bytes()
+    assert msdf[:4] == b"MFNT"
+    assert struct.unpack_from("<HH", msdf, 4) == (1, 64)
+    assert struct.unpack_from("<ff", msdf, 8) == (24.0, 4.0)
+    glyph_count = struct.unpack_from("<I", msdf, 16)[0]
+    assert glyph_count > 0
+    assert struct.unpack_from("<I", msdf, 20)[0] == 63
+    width, height = struct.unpack_from("<II", msdf, 36)
+    source_len, coverage_len, msdf_len, records_len = struct.unpack_from("<IIII", msdf, 44)
+    assert width > 0 and height > 0 and width <= 1024 and height <= 1024
+    assert coverage_len == width * height
+    assert msdf_len == width * height * 4
+    assert records_len == glyph_count * 28
+    assert len(msdf) == 64 + records_len + coverage_len + msdf_len + source_len
+    assert any(msdf[64 + records_len : 64 + records_len + coverage_len])
+    assert any(msdf[64 + records_len + coverage_len : 64 + records_len + coverage_len + msdf_len])
+
     assert "wind1 audio wind.wav" in index
     assert "font_10px font font_10px.bfnt" in index
     assert "font_8px font font_8px.bfnt" in index
+
+
+def test_rejects_msdf_atlas_over_limit(builder, work):
+    project = work / "msdf_over_limit"
+    (project / "assets").mkdir(parents=True)
+    (project / "assets" / "font.ttf").write_bytes((ROOT / "assets" / "font.ttf").read_bytes())
+    manifest = project / "manifest.txt"
+    manifest.write_text(
+        "font_msdf font assets/font.ttf font_msdf.mfnt - 512 63 msdf\n",
+        encoding="utf-8",
+    )
+    output = project / "runtime"
+    result = subprocess.run(
+        [str(builder), str(manifest), str(output)],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0, "builder accepted an MSDF atlas that exceeds 1024x1024"
+    assert "exceeds the 1024-by-1024 atlas limit" in result.stderr, result.stderr
+    assert not (output / "font_msdf.mfnt").exists()
 
 
 def test_rejects_mode_fields(builder, work):
@@ -279,7 +320,7 @@ def test_rejects_mode_fields(builder, work):
         check=False,
     )
     assert result.returncode != 0, "builder accepted a font row with a leftover SDF mode field"
-    assert "font rasterization must be gray or mono" in result.stderr, result.stderr
+    assert "font rasterization must be gray or mono" in result.stderr or "font mode must be gray, mono, or msdf" in result.stderr, result.stderr
     assert not (output / "font_sdf.bfnt").exists()
 
 

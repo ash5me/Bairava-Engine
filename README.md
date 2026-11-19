@@ -34,7 +34,7 @@ Optional tools and targets:
 - GPU validation: build with `-Dgpu-debug=true`
 - ASTC textures: install Arm `astcenc` on `PATH`
 
-SDL3 3.4.2, ztracy, stb_image, stb_image_write, stb_rect_pack, stb_truetype, FreeType, cglm, Parson, and log.c are pinned or vendored. stb_truetype and FreeType are linked only into the offline asset builder and the UI tests, never into the game. See the [dependency policy](docs/dependency-policy.md) and [dependency lock](docs/dependency-lock.json) before updating them.
+SDL3 3.4.2, ztracy, msdfgen 1.13.0, stb_image, stb_image_write, stb_rect_pack, stb_truetype, FreeType, cglm, Parson, and log.c are pinned or vendored. stb_truetype, FreeType, and msdfgen are linked only into offline asset tooling and UI tests, never into the game. See the [dependency policy](docs/dependency-policy.md) and [dependency lock](docs/dependency-lock.json) before updating them.
 
 ## Quick start
 

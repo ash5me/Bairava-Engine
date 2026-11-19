@@ -21,6 +21,11 @@
       "name": "ztracy",
       "url": "git+https://github.com/zig-gamedev/ztracy#2d06ebe148f6d8e68a060123c5d64064b032db43",
       "hash": "ztracy-0.14.0-dev-zHJSq-r5GwBAkYF_zObYWu72FoSnDpkx5QCQh6GYMXNH"
+    },
+    {
+      "name": "msdfgen",
+      "url": "git+https://github.com/Chlumsky/msdfgen.git#1874bcf7d9624ccc85b4bc9a85d78116f690f35b",
+      "hash": "N-V-__8AACyUBwCQGRHpKwDSxzd2DHqHkeRj0UJs58fhHS9w"
     }
   ],
   "dependencies": [
@@ -88,6 +93,17 @@
       ],
       "sha256": "6c1fac27a81a9728e7da272ce22a8cc1f1e79d5bd980f8b2aa97bd93cadfee0c",
       "evidence": "checks/pinned_harfbuzz_15.1.0_dump.txt"
+    },
+    {
+      "name": "msdfgen",
+      "version": "1.13.0",
+      "source": "https://github.com/Chlumsky/msdfgen",
+      "commit": "1874bcf7d9624ccc85b4bc9a85d78116f690f35b",
+      "license": "MIT (vendor/msdfgen-1.13/LICENSE.txt)",
+      "paths": [
+        "vendor/msdfgen-1.13"
+      ],
+      "sha256": "a89aaf5f5c83f44d8f5ad081ccfc9de77a68124d3bfbe5f81aedd9a5f8388d64"
     },
     {
       "name": "Noto Sans Tamil (test fixture)",

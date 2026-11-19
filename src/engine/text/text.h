@@ -10,12 +10,15 @@
  * it and nothing otherwise. Kerning comes only from the baked table. Text is UTF-8 decoded into codepoints
  * and is not shaped.
  *
- * Nothing in this header or in text.c depends on FreeType or stb_truetype.
+ * MFNT is a separate MSDF v1 format. It carries an RGBA distance atlas, its matching coverage sibling, glyph-ID plane
+ * bounds, a fallback codepoint, and the original TrueType bytes used for HarfBuzz shaping. It is not BFNT v3.
+ * Neither format is rasterized at runtime by this C module.
  */
 #ifndef UI_TEXT_H
 #define UI_TEXT_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "../ui/ui_draw.h"
 
@@ -43,13 +46,20 @@ typedef struct ui_font {
     ui_kerning *kernings;  /* sorted by (left, right), for binary search */
     int kerning_count;
     ui_rect white;         /* a solid 2x2 block in the atlas, for filled rectangles */
+    int is_msdf;           /* MFNT v1; glyphs are indexed by shaped glyph ID, not Unicode codepoint */
+    float px_range;        /* MSDF pixel range; zero for BFNT */
+    unsigned int fallback_codepoint;
+    unsigned int fallback_glyph_id;
+    unsigned char *msdf_rgba; /* RGBA8 MSDF atlas; NULL for BFNT */
+    unsigned char *source_bytes; /* embedded TrueType source for the HarfBuzz face; NULL for BFNT */
+    size_t source_len;
 } ui_font;
 
 /* The fallback a font gets when it does not record one: '?' when the range includes it, otherwise -1 (none).
  * The baker uses it for every font, and the loader uses it for v1 and v2 files, which predate the field. */
 int ui_font_default_fallback(int first, int count);
 
-/* Loads a BFNT v1, v2, or v4 font: its metrics, glyphs, kerning, fallback, and atlas. The file must have been
+/* Loads a BFNT v1, v2, or v4 font, or MFNT v1: metrics, glyphs, kerning, fallback, and atlas. The file must have been
  * baked at `expected_pixel_height`, or it is rejected. Returns 0 on success. On failure `font` is left empty. */
 int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_pixel_height, ui_font *font);
 void ui_font_destroy(ui_font *font);

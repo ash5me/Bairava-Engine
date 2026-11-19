@@ -444,7 +444,7 @@ pub fn run(comptime Game: type, config: Config) !void {
         }
         sprite.upload(&session.world_batch, frame.cmd);
         const world_pass = renderer.beginPass(frame.cmd, texture.backendTexture(&session.target), clear);
-        sprite.draw(&session.world_batch, world_pass);
+        sprite.draw(&session.world_batch, frame.cmd, world_pass);
         renderer.endPass(world_pass);
         if (gate.enabled) collector.stats.record(.draw, secondsBetween(draw_start, clockIf()));
 
@@ -490,7 +490,7 @@ pub fn run(comptime Game: type, config: Config) !void {
             session.screen_batch.drawSprite(presented, view_rect, dst_rect, .{});
             sprite.upload(&session.screen_batch, frame.cmd);
             const screen_pass = renderer.beginPass(frame.cmd, frame.swapchain, black);
-            sprite.draw(&session.screen_batch, screen_pass);
+            sprite.draw(&session.screen_batch, frame.cmd, screen_pass);
             renderer.endPass(screen_pass);
         }
 

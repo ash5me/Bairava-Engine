@@ -38,6 +38,8 @@ pub const Stats = struct {
     fonts: usize,
     /// Fonts drawn from a prebaked `.bfnt` coverage atlas.
     bfnt_coverage: usize,
+    /// Fonts baked into an offline MSDF atlas with a coverage fallback.
+    msdf: usize,
     /// Fonts drawn from hand-authored bitmap coverage pages.
     bitmap: usize,
     /// Fonts rasterized at runtime from a TrueType face.
@@ -49,10 +51,8 @@ pub const Description = struct {
     source: Source,
     mode: Mode,
 
-    pub const Source = enum { bfnt_prebaked, bitmap, runtime_outline };
-    /// `prebaked_coverage` reads a coverage atlas from a file. `gray_coverage` rasterizes glyphs at runtime. Gray is the
-    /// only mode the runtime path produces (Phase 4, decision 1).
-    pub const Mode = enum { prebaked_coverage, bitmap_coverage, gray_coverage };
+    pub const Source = enum { bfnt_prebaked, msdf_outline, bitmap, runtime_outline };
+    pub const Mode = enum { prebaked_coverage, msdf, bitmap_coverage, gray_coverage };
 };
 
 /// Releases one font when the store lets go of it. `create` uses `FontResource.deinit`. Tests pass a counting function, so
@@ -78,6 +78,8 @@ pub const FontStore = opaque {
     pub fn textWidth(self: *FontStore, handle: FontHandle, str: []const u8) f32 {
         return switch (resourceOf(stateOf(self), handle).*) {
             .bfnt_coverage => |*font_value| bfnt_measure.width(&font_value.baked, str, 1.0),
+            .msdf => |*font_value| msdfShaper(font_value).measure(str, .{}) catch |err|
+                std.debug.panic("could not measure MSDF font text: {s}", .{@errorName(err)}),
             .bitmap => |*font_value| bitmapWidth(&font_value.descriptor, str),
             .runtime_coverage => |*font_value| runtimeShaper(font_value).measure(str, .{}) catch |err|
                 std.debug.panic("could not measure outline font text: {s}", .{@errorName(err)}),
@@ -89,6 +91,7 @@ pub const FontStore = opaque {
     pub fn drawText(self: *FontStore, handle: FontHandle, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) DrawError!void {
         switch (resourceOf(stateOf(self), handle).*) {
             .bfnt_coverage => |*font_value| drawBfntText(font_value, list, x, y, str, color),
+            .msdf => |*font_value| try drawMsdfText(stateOf(self), handle, font_value, list, x, y, str, color),
             .bitmap => |*font_value| drawBitmapText(&font_value.descriptor, list, x, y, str, color),
             .runtime_coverage => |*font_value| try drawRuntimeText(
                 stateOf(self),
@@ -184,6 +187,15 @@ pub fn layoutTextOf(
             alignment,
             .{},
         ),
+        .msdf => |*font_value| return shaped_layout.layout(
+            allocator,
+            msdfShaper(font_value),
+            text,
+            max_width,
+            resource.metrics().line_height,
+            alignment,
+            .{},
+        ),
         .bfnt_coverage, .bitmap => {
             const measure_context = LayoutMeasureContext{ .store = store, .handle = handle };
             return text_layout.layout(
@@ -211,12 +223,12 @@ pub fn drawShapedLayoutOf(
 ) DrawError!void {
     const state = stateOf(store);
     const resource = resourceOf(state, handle);
-    const font_value = switch (resource.*) {
-        .runtime_coverage => |*value| value,
-        .bfnt_coverage, .bitmap => return error.LayoutFontMismatch,
-    };
     if (shaped_layout.fontIdOf(layout) != handle.id) return error.LayoutFontMismatch;
-    try appendRuntimeRecords(state, handle, font_value, list, layout, x, y, color);
+    switch (resource.*) {
+        .runtime_coverage => |*font_value| try appendRuntimeRecords(state, handle, font_value, list, layout, x, y, color),
+        .msdf => |*font_value| try appendMsdfRecords(font_value, list, layout, x, y, color),
+        .bfnt_coverage, .bitmap => return error.LayoutFontMismatch,
+    }
 }
 
 /// The single BFNT atlas texture. Solid fills never sample it. This remains BFNT-only; bitmap fonts have multiple pages.
@@ -230,6 +242,7 @@ pub fn glyphTextureForPageOf(store: *FontStore, handle: FontHandle, page: u32) *
     const resource = resourceOf(stateOf(store), handle);
     return switch (resource.*) {
         .bfnt_coverage => |*font_value| if (page == 0) &font_value.texture else std.debug.panic("BFNT font has no page {d}", .{page}),
+        .msdf => |*font_value| if (page == 0) &font_value.msdf_texture else std.debug.panic("MSDF font has no page {d}", .{page}),
         .bitmap => |*font_value| if (page < font_value.pages.len)
             &font_value.pages[@intCast(page)]
         else
@@ -252,6 +265,26 @@ pub fn insertBfnt(store: *FontStore, font_value: font_mod.Font) InsertError!Font
         state.release(&resource);
         return err;
     };
+}
+
+/// Stores a baked MSDF font and initializes its reusable shaper after the resource reaches a stable registry address.
+pub fn insertMsdf(store: *FontStore, font_value: font_resource.MsdfFont) InsertError!FontHandle {
+    const state = stateOf(store);
+    var resource = font_resource.FontResource{ .msdf = font_value };
+    const handle = state.resources.insert(resource) catch |err| {
+        state.release(&resource);
+        return err;
+    };
+    const stored = state.resources.get(handle) catch unreachable;
+    const msdf = &stored.msdf;
+    msdf.shaper = shaper.Shaper.init(&msdf.face) catch |err| {
+        var failed = state.resources.remove(handle) catch unreachable;
+        state.release(&failed);
+        return err;
+    };
+    msdf.shaper.?.font_id = handle.id;
+    msdf.msdf_texture.sdl2d_fallback = &msdf.coverage_texture;
+    return handle;
 }
 
 /// Stores a normalized bitmap font and its uploaded pages. The store releases both descriptor allocations and textures.
@@ -317,6 +350,10 @@ fn runtimeShaper(font_value: *font_resource.RuntimeCoverage) *shaper.Shaper {
     return if (font_value.shaper) |*value| value else unreachable;
 }
 
+fn msdfShaper(font_value: *font_resource.MsdfFont) *shaper.Shaper {
+    return if (font_value.shaper) |*value| value else unreachable;
+}
+
 const LayoutMeasureContext = struct {
     store: *FontStore,
     handle: FontHandle,
@@ -373,6 +410,78 @@ fn drawRuntimeText(
     defer layout.deinit();
 
     try appendRuntimeRecords(state, handle, font_value, list, &layout, x, y, color);
+}
+
+fn drawMsdfText(
+    state: *State,
+    handle: FontHandle,
+    font_value: *font_resource.MsdfFont,
+    list: *c.ui_quad_list,
+    x: f32,
+    y: f32,
+    str: []const u8,
+    color: c.ui_color,
+) DrawError!void {
+    var layout = try shaped_layout.layout(
+        state.allocator,
+        msdfShaper(font_value),
+        str,
+        std.math.floatMax(f32),
+        resourceOf(state, handle).metrics().line_height,
+        .left,
+        .{},
+    );
+    defer layout.deinit();
+    try appendMsdfRecords(font_value, list, &layout, x, y, color);
+}
+
+fn appendMsdfRecords(
+    font_value: *font_resource.MsdfFont,
+    list: *c.ui_quad_list,
+    layout: *const shaped_layout.Layout,
+    x: f32,
+    y: f32,
+    color: c.ui_color,
+) DrawError!void {
+    const ascent: f32 = @floatFromInt(font_value.baked.ascent);
+    for (layout.lines, 0..) |line, line_index| {
+        const baseline = @round(y + @as(f32, @floatFromInt(line_index)) * layout.line_height) + ascent;
+        var pen = x + line.x_offset;
+        for (shaped_layout.glyphsOf(layout, line_index)) |glyph| {
+            const glyph_id = if (glyph.glyph_id != 0 and glyph.glyph_id < font_value.face.glyph_count)
+                glyph.glyph_id
+            else
+                font_value.baked.fallback_glyph_id;
+            const record = font_value.baked.glyphs[glyph_id];
+            const width: f32 = @floatFromInt(record.x1 - record.x0);
+            const height: f32 = @floatFromInt(record.y1 - record.y0);
+            if (width > 0 and height > 0) {
+                if (list.count >= c.UI_MAX_QUADS) {
+                    list.dropped += 1;
+                } else {
+                    list.items[@intCast(list.count)] = .{
+                        .dst = .{
+                            .x = @round(pen + glyph.x_offset + record.xoff),
+                            .y = baseline + @round(glyph.y_offset + record.yoff),
+                            .w = width,
+                            .h = height,
+                        },
+                        .src = .{
+                            .x = @floatFromInt(record.x0),
+                            .y = @floatFromInt(record.y0),
+                            .w = width,
+                            .h = height,
+                        },
+                        .color = color,
+                        .page = 0,
+                        .solid = 0,
+                    };
+                    list.count += 1;
+                }
+            }
+            pen += glyph.x_advance;
+        }
+    }
 }
 
 fn appendRuntimeRecords(
@@ -458,17 +567,21 @@ fn bfntFont(state: *State, handle: FontHandle) *font_mod.Font {
     const resource = resourceOf(state, handle);
     return switch (resource.*) {
         .bfnt_coverage => |*font_value| font_value,
+        .msdf => std.debug.panic("font handle {d} is an MSDF font and has no BFNT atlas", .{handle.id}),
         .bitmap => std.debug.panic("font handle {d} is a bitmap font and has no BFNT atlas", .{handle.id}),
         .runtime_coverage => std.debug.panic("font handle {d} is an outline font and has no BFNT atlas", .{handle.id}),
     };
 }
 
 fn statsOf(state: *const State) Stats {
-    var result = Stats{ .fonts = state.resources.count(), .bfnt_coverage = 0, .bitmap = 0, .runtime_coverage = 0 };
+    var result = Stats{ .fonts = state.resources.count(), .bfnt_coverage = 0, .msdf = 0, .bitmap = 0, .runtime_coverage = 0 };
     for (state.resources.entries.items) |entry| {
         switch (entry.value.*) {
             .bfnt_coverage => {
                 result.bfnt_coverage += 1;
+            },
+            .msdf => {
+                result.msdf += 1;
             },
             .bitmap => {
                 result.bitmap += 1;
@@ -485,6 +598,7 @@ fn describeOf(state: *State, handle: FontHandle) Description {
     const resource = state.resources.peek(handle) catch |err| std.debug.panic("UI font handle {d} does not name a loaded font: {s}", .{ handle.id, @errorName(err) });
     return switch (resource.*) {
         .bfnt_coverage => .{ .source = .bfnt_prebaked, .mode = .prebaked_coverage },
+        .msdf => .{ .source = .msdf_outline, .mode = .msdf },
         .bitmap => .{ .source = .bitmap, .mode = .bitmap_coverage },
         .runtime_coverage => .{ .source = .runtime_outline, .mode = .gray_coverage },
     };
@@ -544,6 +658,7 @@ test "an empty store reports no fonts" {
     const stats = store.stats();
     try testing.expectEqual(@as(usize, 0), stats.fonts);
     try testing.expectEqual(@as(usize, 0), stats.bfnt_coverage);
+    try testing.expectEqual(@as(usize, 0), stats.msdf);
     try testing.expectEqual(@as(usize, 0), stats.bitmap);
     try testing.expectEqual(@as(usize, 0), stats.runtime_coverage);
 }
@@ -711,6 +826,7 @@ fn recordRelease(resource: *font_resource.FontResource) void {
             released_markers[released_count] = f.baked.line_height;
             released_count += 1;
         },
+        .msdf => @panic("the release-count test holds only bfnt fonts"),
         .bitmap => |*f| {
             released_markers[released_count] = f.descriptor.size;
             released_count += 1;

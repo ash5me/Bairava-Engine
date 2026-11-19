@@ -40,6 +40,10 @@
             .url = "git+https://github.com/zig-gamedev/ztracy#2d06ebe148f6d8e68a060123c5d64064b032db43",
             .hash = "ztracy-0.14.0-dev-zHJSq-r5GwBAkYF_zObYWu72FoSnDpkx5QCQh6GYMXNH",
         },
+        .msdfgen = .{
+            .url = "git+https://github.com/Chlumsky/msdfgen.git#1874bcf7d9624ccc85b4bc9a85d78116f690f35b",
+            .hash = "N-V-__8AACyUBwCQGRHpKwDSxzd2DHqHkeRj0UJs58fhHS9w",
+        },
     },
     .paths = .{
         "build.zig",

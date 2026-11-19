@@ -7,6 +7,8 @@ const std = @import("std");
 const c = @import("../ui/c.zig").c;
 const platform = @import("../platform/platform.zig");
 const texture = @import("../renderer/texture.zig");
+const runtime_font = @import("runtime_font.zig");
+const shaper = @import("shaper.zig");
 const Texture = texture.Texture;
 
 /// A font on the GPU: the baked metrics and glyphs from C, plus the atlas texture they sample. The CPU copy of
@@ -19,6 +21,24 @@ pub const Font = struct {
     pub fn deinit(self: *Font) void {
         self.texture.deinit();
         c.ui_font_destroy(&self.baked);
+    }
+};
+
+/// An offline MFNT font: a glyph-ID table, HarfBuzz face, GPU MSDF atlas, and SDL3 2D coverage sibling.
+pub const MsdfFont = struct {
+    baked: c.ui_font,
+    msdf_texture: Texture,
+    coverage_texture: Texture,
+    face: runtime_font.RuntimeFont,
+    shaper: ?shaper.Shaper = null,
+
+    pub fn deinit(self: *MsdfFont) void {
+        if (self.shaper) |*value| value.deinit();
+        self.face.deinit();
+        self.msdf_texture.deinit();
+        self.coverage_texture.deinit();
+        c.ui_font_destroy(&self.baked);
+        self.* = undefined;
     }
 };
 
@@ -41,12 +61,84 @@ pub const Staged = struct {
     }
 };
 
+pub const MsdfStaged = struct {
+    baked: c.ui_font,
+
+    pub fn upload(
+        self: *MsdfStaged,
+        allocator: std.mem.Allocator,
+        device: *platform.gpu.Device,
+    ) (runtime_font.Error || error{InvalidFont})!MsdfFont {
+        if (self.baked.is_msdf == 0 or self.baked.px_range != 4.0 or self.baked.source_bytes == null or
+            self.baked.source_len == 0 or self.baked.msdf_rgba == null or self.baked.alpha == null)
+        {
+            c.ui_font_destroy(&self.baked);
+            self.* = undefined;
+            return error.InvalidFont;
+        }
+        var face = runtime_font.RuntimeFont.init(
+            allocator,
+            self.baked.source_bytes[0..self.baked.source_len],
+            self.baked.pixel_height,
+        ) catch |err| {
+            c.ui_font_destroy(&self.baked);
+            self.* = undefined;
+            return err;
+        };
+        errdefer face.deinit();
+        if (face.glyph_count != @as(u32, @intCast(self.baked.count))) {
+            c.ui_font_destroy(&self.baked);
+            self.* = undefined;
+            return error.InvalidFont;
+        }
+        const width: u32 = @intCast(self.baked.atlas_w);
+        const height: u32 = @intCast(self.baked.atlas_h);
+        const texels = @as(usize, width) * height;
+        const msdf_pixels = self.baked.msdf_rgba[0 .. texels * 4];
+        const coverage_pixels = self.baked.alpha[0..texels];
+        const msdf_texture = texture.createMsdf(allocator, device, width, height, msdf_pixels, self.baked.px_range);
+        const coverage_texture = texture.createCoverage(allocator, device, width, height, coverage_pixels);
+        allocator.free(self.baked.source_bytes[0..self.baked.source_len]);
+        self.baked.source_bytes = null;
+        self.baked.source_len = 0;
+        c.ui_font_release_atlas(&self.baked);
+        const baked = self.baked;
+        self.* = undefined;
+        return .{
+            .baked = baked,
+            .msdf_texture = msdf_texture,
+            .coverage_texture = coverage_texture,
+            .face = face,
+        };
+    }
+
+    pub fn deinit(self: *MsdfStaged) void {
+        c.ui_font_destroy(&self.baked);
+        self.* = undefined;
+    }
+};
+
 /// Parses a prebaked `.bfnt` file on the calling CPU thread. No GPU resource is created. The file must have been
 /// baked at exactly `pixel_height`. Any other size, or a malformed file, is an error.
 pub fn stage(prebaked: []const u8, pixel_height: f32) error{InvalidFont}!Staged {
     if (prebaked.len == 0) return error.InvalidFont;
     var baked: c.ui_font = undefined;
     if (c.ui_font_load_prebaked(prebaked.ptr, prebaked.len, pixel_height, &baked) != 0) return error.InvalidFont;
+    if (baked.is_msdf != 0) {
+        c.ui_font_destroy(&baked);
+        return error.InvalidFont;
+    }
+    return .{ .baked = baked };
+}
+
+pub fn stageMsdf(prebaked: []const u8, pixel_height: f32) error{InvalidFont}!MsdfStaged {
+    if (prebaked.len == 0) return error.InvalidFont;
+    var baked: c.ui_font = undefined;
+    if (c.ui_font_load_prebaked(prebaked.ptr, prebaked.len, pixel_height, &baked) != 0) return error.InvalidFont;
+    if (baked.is_msdf == 0) {
+        c.ui_font_destroy(&baked);
+        return error.InvalidFont;
+    }
     return .{ .baked = baked };
 }
 

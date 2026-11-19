@@ -10,8 +10,7 @@
 //! - `bitmap`: a normalized BMFont descriptor and its uploaded coverage pages.
 //! - `runtime_coverage`: a TrueType face (runtime_font.zig) and its reusable shaper. Its glyphs are rasterized on
 //!   demand into the Phase 4 glyph cache, which owns the atlas, so the face itself holds no atlas.
-//! `msdf` remains a future provider (Phase 6). Adding one means a new `Provider` and `FontResource` variant, and every
-//! switch on them then fails to compile until it handles the new variant.
+//! - `msdf`: an offline MFNT v1 glyph-ID atlas, embedded outline face, and matching coverage sibling.
 //!
 //! Metrics conventions, all in pixels, y down, unrounded. Consumers round them the way text.c does (a rounded line
 //! top, then a rounded ascent):
@@ -37,9 +36,10 @@ const Texture = @import("../renderer/texture.zig").Texture;
 
 pub const FontHandle = font_registry.FontHandle;
 
-/// The providers a font can be built by. MSDF remains future work in Phase 6.
+/// The providers a font can be built by.
 pub const Provider = enum {
     bfnt_coverage,
+    msdf,
     bitmap,
     runtime_coverage,
 };
@@ -71,9 +71,12 @@ pub const BitmapFont = struct {
     }
 };
 
+pub const MsdfFont = font_mod.MsdfFont;
+
 /// One font's provider-specific state. Only the provider touches it, and game code never does.
 pub const FontResource = union(Provider) {
     bfnt_coverage: font_mod.Font,
+    msdf: MsdfFont,
     bitmap: BitmapFont,
     runtime_coverage: RuntimeCoverage,
 
@@ -81,6 +84,7 @@ pub const FontResource = union(Provider) {
     pub fn provider(self: *const FontResource) Provider {
         return switch (self.*) {
             .bfnt_coverage => .bfnt_coverage,
+            .msdf => .msdf,
             .bitmap => .bitmap,
             .runtime_coverage => .runtime_coverage,
         };
@@ -90,6 +94,7 @@ pub const FontResource = union(Provider) {
     pub fn deinit(self: *FontResource) void {
         switch (self.*) {
             .bfnt_coverage => |*f| f.deinit(),
+            .msdf => |*f| f.deinit(),
             .bitmap => |*f| f.deinit(),
             .runtime_coverage => |*f| f.deinit(),
         }
@@ -101,6 +106,7 @@ pub const FontResource = union(Provider) {
     pub fn metrics(self: *const FontResource) FontMetrics {
         return switch (self.*) {
             .bfnt_coverage => |*f| bfntMetrics(&f.baked),
+            .msdf => |*f| bfntMetrics(&f.baked),
             .bitmap => |*f| bitmapMetrics(&f.descriptor),
             .runtime_coverage => |*f| runtimeMetrics(&f.face),
         };

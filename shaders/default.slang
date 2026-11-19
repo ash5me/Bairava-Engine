@@ -61,6 +61,37 @@ float4 fontFragmentMain(VSOutput input) : SV_Target {
     return float4(input.color.rgb, coverage * input.color.a);
 }
 
+#ifdef MSDF_SHADER
+struct MsdfParams {
+    float pxRange;
+    float atlasWidth;
+    float atlasHeight;
+    float padding;
+};
+
+#ifdef DXIL_TARGET
+ConstantBuffer<MsdfParams> msdfParams : register(b0, space3);
+#else
+[vk::binding(0, 3)]
+ConstantBuffer<MsdfParams> msdfParams;
+#endif
+
+float median3(float r, float g, float b) {
+    return max(min(r, g), min(max(r, g), b));
+}
+
+[shader("fragment")]
+float4 msdfFragmentMain(VSOutput input) : SV_Target {
+    float3 field = sampleTex(input.uv).rgb;
+    float signedDistance = median3(field.r, field.g, field.b) - 0.5;
+    float2 unitRange = msdfParams.pxRange / float2(msdfParams.atlasWidth, msdfParams.atlasHeight);
+    float2 screenTexSize = 1.0 / max(fwidth(input.uv), float2(0.000001, 0.000001));
+    float screenPxRange = max(0.5 * dot(unitRange, screenTexSize), 1.0);
+    float opacity = clamp(signedDistance * screenPxRange + 0.5, 0.0, 1.0);
+    return float4(input.color.rgb, opacity * input.color.a);
+}
+#endif
+
 // Settings every post-processing pass reads. The layout matches PostParams in renderer/render_types.zig: one row of
 // four floats. x is the vignette strength, y the dimmed scanline brightness, z the grayscale amount, and w is unused.
 #ifdef POST_SHADER

@@ -517,6 +517,28 @@ pub const Context = struct {
         };
     }
 
+    /// Loads an MFNT v1 asset baked at exactly `pixel_height`. GPU rendering uses its MSDF atlas; SDL3 2D
+    /// rendering uses the coverage sibling baked from the same outline.
+    pub fn loadMsdfFont(self: *const Context, relative: []const u8, pixel_height: f32) AssetError!font_registry.FontHandle {
+        const allocator = self.allocators.asset;
+        const bytes = self.readFile(allocator, relative) catch |err| return switch (err) {
+            error.FileNotFound => error.FileNotFound,
+            error.PathTooLong => error.PathTooLong,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.ReadFailed,
+        };
+        defer allocator.free(bytes);
+        var staged = font.stageMsdf(bytes, pixel_height) catch return error.FontLoadFailed;
+        const font_value = staged.upload(allocator, contextGpuDevice(self)) catch |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FontLoadFailed,
+        };
+        return font_store.insertMsdf(self.fonts, font_value) catch |err| switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.FontIdExhausted => error.FontLoadFailed,
+        };
+    }
+
     /// Loads a TrueType glyf outline font at `pixel_height`. The size is fixed into the face when it is loaded.
     /// Unsupported outline formats and invalid files return `FontLoadFailed`. Text uses the session atlas and the
     /// common Canvas/Ui submission path.

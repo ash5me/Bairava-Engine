@@ -51,6 +51,7 @@ typedef struct {
     int font_first;
     int font_count;
     int font_mono; /* 1 when the font row names `mono`, 0 for `gray` or no mode */
+    int font_msdf;
 } entry;
 
 enum { TEX_RGBA8 = 0, TEX_BC1 = 1, TEX_BC3 = 2, TEX_ASTC_4X4 = 3 };
@@ -464,6 +465,14 @@ static int valid_kind(const entry *item) {
             fprintf(stderr, "asset_build: '%s' is not a supported TrueType/OpenType font\n", item->source);
             return 0;
         }
+        if (item->font_msdf && (!has_suffix(item->source, ".ttf") || !has_suffix(item->output, ".mfnt"))) {
+            fprintf(stderr, "asset_build: MSDF font '%s' needs a TrueType .ttf source and an .mfnt output\n", item->name);
+            return 0;
+        }
+        if (!item->font_msdf && !has_suffix(item->output, ".bfnt")) {
+            fprintf(stderr, "asset_build: prebaked coverage font '%s' needs a .bfnt output\n", item->name);
+            return 0;
+        }
     } else if (strcmp(item->type, "coverage") == 0) {
         unsigned int width = 0, height = 0;
         if (!has_suffix(item->source, ".png") || !has_suffix(item->output, ".r8") || strcmp(item->dependencies, "-") != 0 ||
@@ -498,6 +507,19 @@ static int build_prebaked_font(const entry *item, const char *output_path) {
     int read_ok = fread(ttf, 1, (size_t)ttf_size, source) == (size_t)ttf_size;
     fclose(source);
     if (!read_ok) { free(ttf); return 0; }
+
+    if (item->font_msdf) {
+        const int result = ui_msdf_bake(ttf, (size_t)ttf_size, item->font_pixel_height,
+                                        (unsigned)item->font_first, output_path);
+        free(ttf);
+        if (result == UI_MSDF_BAKE_ATLAS_TOO_LARGE) {
+            fprintf(stderr, "asset_build: MSDF font '%s' exceeds the %d-by-%d atlas limit at %.2f px\n",
+                    item->name, UI_MSDF_MAX_ATLAS_SIZE, UI_MSDF_MAX_ATLAS_SIZE, item->font_pixel_height);
+        } else if (result != UI_MSDF_BAKE_OK) {
+            fprintf(stderr, "asset_build: could not bake MSDF font '%s' at %.2f px\n", item->name, item->font_pixel_height);
+        }
+        return result == 0;
+    }
 
     ui_font font;
     const ui_font_raster raster = item->font_mono ? UI_FONT_RASTER_MONO : UI_FONT_RASTER_GRAY;
@@ -941,14 +963,14 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
         entry item = {0};
         char font_height_text[32] = {0}, font_first_text[32] = {0}, font_count_text[32] = {0}, font_raster_text[16] = {0}, extra[2];
-        /* A font has eight fields, or nine when the ninth names its rasterization. A tenth field is read, so it is
-         * reported rather than ignored. */
+        /* A font has eight fields, or nine when the last field selects gray/mono. The MSDF form uses the
+         * eighth field for its mode and the seventh for the fallback codepoint. */
         int fields = sscanf(line, "%1023s %31s %1023s %1023s %1023s %31s %31s %31s %15s %1s",
                             item.name, item.type, item.source, item.output, item.dependencies,
                             font_height_text, font_first_text, font_count_text, font_raster_text, extra);
         const int is_font = strcmp(item.type, "font") == 0;
         if (fields < 5 || (is_font ? (fields != 8 && fields != 9) : fields != 5)) {
-            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight or nine for fonts (pixel height, first codepoint, glyph count, optional gray or mono)\n", manifest_path, line_number); failed = 1; break;
+            fprintf(stderr, "asset_build: %s:%zu: expected five fields, or eight or nine for fonts\n", manifest_path, line_number); failed = 1; break;
         }
         if (is_font) {
             char *end = NULL;
@@ -961,11 +983,19 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
                 fprintf(stderr, "asset_build: %s:%zu: invalid first font codepoint\n", manifest_path, line_number); failed = 1; break;
             }
             item.font_first = (int)first;
-            long glyph_count = strtol(font_count_text, &end, 10);
-            if (end == font_count_text || *end != '\0' || glyph_count <= 0 || glyph_count > 65536 || first + glyph_count > 0x110000) {
-                fprintf(stderr, "asset_build: %s:%zu: invalid font glyph count\n", manifest_path, line_number); failed = 1; break;
+            if (fields == 8 && strcmp(font_count_text, "msdf") == 0) {
+                item.font_msdf = 1;
+                item.font_first = (int)first;
+                if (first > 0x10ffff) {
+                    fprintf(stderr, "asset_build: %s:%zu: invalid MSDF fallback codepoint\n", manifest_path, line_number); failed = 1; break;
+                }
+            } else {
+                long glyph_count = strtol(font_count_text, &end, 10);
+                if (end == font_count_text || *end != '\0' || glyph_count <= 0 || glyph_count > 65536 || first + glyph_count > 0x110000) {
+                    fprintf(stderr, "asset_build: %s:%zu: invalid font glyph count\n", manifest_path, line_number); failed = 1; break;
+                }
+                item.font_count = (int)glyph_count;
             }
-            item.font_count = (int)glyph_count;
             if (fields == 9) {
                 if (strcmp(font_raster_text, "mono") == 0) item.font_mono = 1;
                 else if (strcmp(font_raster_text, "gray") == 0) item.font_mono = 0;
@@ -1076,7 +1106,8 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         if (strcmp(entries[i].type, "image") == 0) fprintf(index, " %s.rgba %s.bc1 %s.bc3 %s", entries[i].output, entries[i].output, entries[i].output, astc_available ? entries[i].output : "-");
         if (strcmp(entries[i].type, "image") == 0 && astc_available) fprintf(index, ".astc");
         if (strcmp(entries[i].type, "audio") == 0) fprintf(index, " %s.ima", entries[i].output);
-        if (is_font) fprintf(index, " px=%.2f first=%d count=%d", entries[i].font_pixel_height, entries[i].font_first, entries[i].font_count);
+        if (is_font && entries[i].font_msdf) fprintf(index, " px=%.2f fallback=%d mode=msdf", entries[i].font_pixel_height, entries[i].font_first);
+        else if (is_font) fprintf(index, " px=%.2f first=%d count=%d", entries[i].font_pixel_height, entries[i].font_first, entries[i].font_count);
         fputc('\n', index);
     }
     if (fclose(index) != 0) failed = 1;

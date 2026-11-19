@@ -80,6 +80,43 @@ const freetype_sources = [_][]const u8{
     "vendor/freetype-2.15.0/src/truetype/truetype.c",
 };
 
+/// msdfgen 1.13.0 core and the font-import extension, linked only into the host asset builder.
+const msdfgen_sources = [_][]const u8{
+    "vendor/msdfgen-1.13/core/Contour.cpp",
+    "vendor/msdfgen-1.13/core/DistanceMapping.cpp",
+    "vendor/msdfgen-1.13/core/EdgeHolder.cpp",
+    "vendor/msdfgen-1.13/core/MSDFErrorCorrection.cpp",
+    "vendor/msdfgen-1.13/core/Projection.cpp",
+    "vendor/msdfgen-1.13/core/Scanline.cpp",
+    "vendor/msdfgen-1.13/core/Shape.cpp",
+    "vendor/msdfgen-1.13/core/convergent-curve-ordering.cpp",
+    "vendor/msdfgen-1.13/core/contour-combiners.cpp",
+    "vendor/msdfgen-1.13/core/edge-coloring.cpp",
+    "vendor/msdfgen-1.13/core/edge-selectors.cpp",
+    "vendor/msdfgen-1.13/core/edge-segments.cpp",
+    "vendor/msdfgen-1.13/core/equation-solver.cpp",
+    "vendor/msdfgen-1.13/core/export-svg.cpp",
+    "vendor/msdfgen-1.13/core/msdf-error-correction.cpp",
+    "vendor/msdfgen-1.13/core/msdfgen.cpp",
+    "vendor/msdfgen-1.13/core/rasterization.cpp",
+    "vendor/msdfgen-1.13/core/render-sdf.cpp",
+    "vendor/msdfgen-1.13/core/save-bmp.cpp",
+    "vendor/msdfgen-1.13/core/save-fl32.cpp",
+    "vendor/msdfgen-1.13/core/save-rgba.cpp",
+    "vendor/msdfgen-1.13/core/save-tiff.cpp",
+    "vendor/msdfgen-1.13/core/shape-description.cpp",
+    "vendor/msdfgen-1.13/core/sdf-error-estimation.cpp",
+    "vendor/msdfgen-1.13/ext/import-font.cpp",
+};
+const msdfgen_flags = [_][]const u8{
+    "-std=c++11",
+    "-DMSDFGEN_USE_CPP11",
+    "-DMSDFGEN_DISABLE_SVG",
+    "-DMSDFGEN_DISABLE_PNG",
+    "-DMSDFGEN_DISABLE_VARIABLE_FONTS",
+    "-DMSDFGEN_PUBLIC=",
+};
+
 /// Gives `module` cglm's headers and compiles cglm's C sources into it. Two macros must match the
 /// @cImport in src/engine/core/math.zig, so the C library and the translated headers agree.
 /// CGLM_ALL_UNALIGNED stops cglm from assuming 16-byte alignment, which Zig arrays don't guarantee.
@@ -237,6 +274,7 @@ const shader_entries = [_]ShaderEntry{
     .{ .entry = "vertexMain", .stage = "vertex", .file = "default.vert", .decl = "default_vert" },
     .{ .entry = "fragmentMain", .stage = "fragment", .file = "default.frag", .decl = "default_frag" },
     .{ .entry = "fontFragmentMain", .stage = "fragment", .file = "default_font.frag", .decl = "default_font_frag" },
+    .{ .entry = "msdfFragmentMain", .stage = "fragment", .file = "default_msdf.frag", .decl = "default_msdf_frag", .define = "MSDF_SHADER" },
     .{ .entry = "postGrayscaleMain", .stage = "fragment", .file = "post_grayscale.frag", .decl = "post_grayscale_frag", .define = "POST_SHADER" },
     .{ .entry = "postVignetteMain", .stage = "fragment", .file = "post_vignette.frag", .decl = "post_vignette_frag", .define = "POST_SHADER" },
     .{ .entry = "postScanlinesMain", .stage = "fragment", .file = "post_scanlines.frag", .decl = "post_scanlines_frag", .define = "POST_SHADER" },
@@ -458,6 +496,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     asset_builder.root_module.addIncludePath(b.path("vendor"));
+    asset_builder.root_module.addIncludePath(b.path("vendor/msdfgen-1.13"));
     asset_builder.root_module.addIncludePath(b.path("src/engine/ui"));
     addFreeType(b, asset_builder.root_module);
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/build.c") });
@@ -465,6 +504,11 @@ pub fn build(b: *std.Build) void {
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("vendor/stb_truetype_impl.c") });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("src/engine/text/text.c"), .flags = &text_c_flags });
     asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/font_bake.c") });
+    for (msdfgen_sources) |source| {
+        asset_builder.root_module.addCSourceFile(.{ .file = b.path(source), .flags = &msdfgen_flags });
+    }
+    asset_builder.root_module.addCSourceFile(.{ .file = b.path("tools/assets/font_bake_msdf.cpp"), .flags = &msdfgen_flags });
+    asset_builder.root_module.link_libcpp = true;
     const run_asset_builder = b.addRunArtifact(asset_builder);
     run_asset_builder.addFileArg(b.path("assets/asset_manifest.txt"));
     const runtime_assets = run_asset_builder.addOutputDirectoryArg("runtime-assets");
@@ -486,13 +530,13 @@ pub fn build(b: *std.Build) void {
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs pixel height");
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs first codepoint");
             _ = fields.next() orelse @panic("assets/asset_manifest.txt: font entry needs glyph count");
-            // An optional ninth field names the rasterization: gray (the default) or mono.
+            // An optional mode selects gray, mono, or an offline MFNT/MSDF bake.
             if (fields.peek()) |raster| {
-                if (!std.mem.eql(u8, raster, "gray") and !std.mem.eql(u8, raster, "mono")) @panic("assets/asset_manifest.txt: font rasterization must be gray or mono");
+                if (!std.mem.eql(u8, raster, "gray") and !std.mem.eql(u8, raster, "mono") and !std.mem.eql(u8, raster, "msdf")) @panic("assets/asset_manifest.txt: font mode must be gray, mono, or msdf");
                 _ = fields.next();
             }
         }
-        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or eight or nine for a font: pixel height, first codepoint, glyph count, optional gray or mono");
+        if (fields.next() != null) @panic("assets/asset_manifest.txt: expected five fields, or eight or nine for a font");
         run_asset_builder.addFileInput(b.path(source));
     }
     const install_runtime_assets = b.addInstallDirectory(.{

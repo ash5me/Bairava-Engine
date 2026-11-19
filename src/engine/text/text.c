@@ -6,11 +6,13 @@
  */
 #include "text.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define ATLAS_MAX 4096
+#define MSDF_ATLAS_MAX 1024
 
 static int round_px(float v);
 static int compare_kerning(const void *a, const void *b);
@@ -113,6 +115,101 @@ static float read_f32le(const unsigned char *p) {
     return value;
 }
 
+static int ui_font_load_msdf(const unsigned char *data, size_t len, float expected_pixel_height, ui_font *font) {
+    uint32_t glyph_count, fallback_codepoint, fallback_glyph_id, atlas_w, atlas_h;
+    uint32_t source_len, coverage_len, msdf_len, records_len;
+    size_t texels, records_offset, coverage_offset, msdf_offset, source_offset, expected_len;
+    unsigned char *alpha = NULL, *msdf = NULL, *source = NULL;
+    ui_glyph *glyphs = NULL;
+    float pixel_height, px_range, ascent, line_height;
+    if (len < 64 || memcmp(data, "MFNT", 4) != 0 || read_u16le(data + 4) != 1 ||
+        read_u16le(data + 6) != 64) return -1;
+    pixel_height = read_f32le(data + 8);
+    px_range = read_f32le(data + 12);
+    glyph_count = read_u32le(data + 16);
+    fallback_codepoint = read_u32le(data + 20);
+    fallback_glyph_id = read_u32le(data + 24);
+    ascent = read_f32le(data + 28);
+    line_height = read_f32le(data + 32);
+    atlas_w = read_u32le(data + 36);
+    atlas_h = read_u32le(data + 40);
+    source_len = read_u32le(data + 44);
+    coverage_len = read_u32le(data + 48);
+    msdf_len = read_u32le(data + 52);
+    records_len = read_u32le(data + 56);
+    if (!(pixel_height > 0 && pixel_height == expected_pixel_height) || !isfinite(px_range) || px_range <= 0 ||
+        !isfinite(ascent) || !isfinite(line_height) || ascent <= 0 || line_height <= 0 ||
+        glyph_count == 0 || glyph_count > 65536 || fallback_glyph_id >= glyph_count ||
+        fallback_codepoint > 0x10ffff || (fallback_codepoint >= 0xd800 && fallback_codepoint <= 0xdfff) ||
+        atlas_w == 0 || atlas_h == 0 || atlas_w > MSDF_ATLAS_MAX || atlas_h > MSDF_ATLAS_MAX) return -1;
+    if ((size_t)atlas_w > SIZE_MAX / atlas_h) return -1;
+    texels = (size_t)atlas_w * atlas_h;
+    if (texels > SIZE_MAX / 4 || coverage_len != texels || msdf_len != texels * 4 ||
+        records_len != (size_t)glyph_count * 28) return -1;
+    records_offset = 64;
+    if (records_len > SIZE_MAX - records_offset) return -1;
+    coverage_offset = records_offset + records_len;
+    if (coverage_len > SIZE_MAX - coverage_offset) return -1;
+    msdf_offset = coverage_offset + coverage_len;
+    if (msdf_len > SIZE_MAX - msdf_offset) return -1;
+    source_offset = msdf_offset + msdf_len;
+    if (source_len > SIZE_MAX - source_offset) return -1;
+    expected_len = source_offset + source_len;
+    if (len != expected_len || source_len == 0) return -1;
+
+    glyphs = (ui_glyph *)calloc(glyph_count, sizeof *glyphs);
+    alpha = (unsigned char *)malloc(coverage_len);
+    msdf = (unsigned char *)malloc(msdf_len);
+    source = (unsigned char *)malloc(source_len);
+    if (!glyphs || !alpha || !msdf || !source) goto fail;
+    for (uint32_t i = 0; i < glyph_count; i++) {
+        const unsigned char *src = data + records_offset + (size_t)i * 28;
+        ui_glyph *g = &glyphs[i];
+        const float left = read_f32le(src + 8);
+        const float bottom = read_f32le(src + 12);
+        const float right = read_f32le(src + 16);
+        const float top = read_f32le(src + 20);
+        g->x0 = read_u16le(src + 0); g->y0 = read_u16le(src + 2);
+        g->x1 = read_u16le(src + 4); g->y1 = read_u16le(src + 6);
+        g->xoff = left;
+        g->yoff = -top;
+        g->xadvance = read_f32le(src + 24);
+        if (g->x0 > g->x1 || g->y0 > g->y1 || g->x1 > atlas_w || g->y1 > atlas_h ||
+            !isfinite(left) || !isfinite(bottom) || !isfinite(right) || !isfinite(top) ||
+            !isfinite(g->xadvance) || g->xadvance < 0 ||
+            ((g->x1 != g->x0 || g->y1 != g->y0) &&
+             (fabsf((right - left) - (float)(g->x1 - g->x0)) > 0.01f ||
+              fabsf((top - bottom) - (float)(g->y1 - g->y0)) > 0.01f))) goto fail;
+    }
+    memcpy(alpha, data + coverage_offset, coverage_len);
+    memcpy(msdf, data + msdf_offset, msdf_len);
+    memcpy(source, data + source_offset, source_len);
+    font->first = 0;
+    font->count = (int)glyph_count;
+    font->fallback = (int)fallback_glyph_id;
+    font->pixel_height = pixel_height;
+    font->ascent = round_px(ascent);
+    font->line_height = round_px(line_height);
+    font->atlas_w = (int)atlas_w;
+    font->atlas_h = (int)atlas_h;
+    font->alpha = alpha;
+    font->glyphs = glyphs;
+    font->is_msdf = 1;
+    font->px_range = px_range;
+    font->fallback_codepoint = fallback_codepoint;
+    font->fallback_glyph_id = fallback_glyph_id;
+    font->msdf_rgba = msdf;
+    font->source_bytes = source;
+    font->source_len = source_len;
+    return 0;
+fail:
+    free(alpha);
+    free(msdf);
+    free(source);
+    free(glyphs);
+    return -1;
+}
+
 int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_pixel_height, ui_font *font) {
     int first, count, atlas_w, atlas_h, version, fallback, kerning_count = 0;
     float pixel_height;
@@ -123,6 +220,8 @@ int ui_font_load_prebaked(const unsigned char *data, size_t len, float expected_
     if (font == NULL) return -1;
     memset(font, 0, sizeof *font);
     if (data == NULL) return -1;
+    if (len >= 4 && memcmp(data, "MFNT", 4) == 0)
+        return ui_font_load_msdf(data, len, expected_pixel_height, font);
     if (len < 48 || memcmp(data, "BFNT", 4) != 0) return -1;
     /* Version 3 carried a signed-distance flag. Those atlases are not rasterized or sampled any more,
      * so they are rejected, and the builder must bake a bitmap atlas instead. Version 4 adds the fallback
@@ -213,6 +312,8 @@ fail:
 
 void ui_font_destroy(ui_font *font) {
     free(font->alpha);
+    free(font->msdf_rgba);
+    free(font->source_bytes);
     free(font->glyphs);
     free(font->kernings);
     memset(font, 0, sizeof *font);
@@ -222,6 +323,8 @@ void ui_font_release_atlas(ui_font *font) {
     if (font == NULL) return;
     free(font->alpha);
     font->alpha = NULL;
+    free(font->msdf_rgba);
+    font->msdf_rgba = NULL;
 }
 
 float ui_font_text_width(ui_font *font, const char *text, size_t len) {

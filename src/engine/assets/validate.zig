@@ -169,8 +169,8 @@ fn formatAccepted(kind: []const u8, source: []const u8) bool {
 }
 
 /// Checks the asset manifest: `name type source output dependencies`, one asset per line. A font line
-/// adds `pixel_height first_codepoint glyph_count` after the dependencies, then an optional `gray` or `mono`
-/// rasterization. Names must be
+/// adds its pixel height and either a codepoint range plus optional rasterization, or an MSDF fallback
+/// codepoint. Names must be
 /// valid and unique. Types must be known. A source must exist, be inside the project, and have a format
 /// its type accepts. Each dependency must name an asset declared in the same manifest.
 pub fn checkManifest(path: []const u8, text: []const u8, files: Files, report: *Report) void {
@@ -256,24 +256,30 @@ fn checkManifestLine(path: []const u8, number: u32, line: []const u8, declared: 
     }
 
     if (std.mem.eql(u8, kind, "font")) {
-        checkFontFields(path, number, fields, report);
+        checkFontFields(path, number, fields, output, report);
     } else if (fields.len != 5) {
         report.add(path, number, "this asset type takes five fields: name type source output dependencies");
     }
 }
 
-fn checkFontFields(path: []const u8, number: u32, fields: Fields, report: *Report) void {
-    // Fonts are baked as bitmaps, one file per size. A font line has eight fields, or nine when the ninth names
-    // its rasterization: `gray` (the default) or `mono`. Any other ninth field, such as an old `sdf` mode, is
-    // reported rather than ignored.
-    const mode_ok = fields.len == 9 and (std.mem.eql(u8, fields.items[8], "gray") or std.mem.eql(u8, fields.items[8], "mono"));
-    if (fields.len != 8 and !mode_ok) {
-        report.add(path, number, "a font line is: name font source output deps pixel_height first_codepoint glyph_count [gray or mono]");
+fn checkFontFields(path: []const u8, number: u32, fields: Fields, output: []const u8, report: *Report) void {
+    const msdf = fields.len == 8 and std.mem.eql(u8, fields.items[7], "msdf");
+    const raster_mode_ok = fields.len == 9 and (std.mem.eql(u8, fields.items[8], "gray") or std.mem.eql(u8, fields.items[8], "mono"));
+    if (fields.len != 8 and !raster_mode_ok) {
+        report.add(path, number, "a font line is: name font source output deps pixel_height first_codepoint glyph_count [gray or mono], or name font source output deps pixel_height fallback_codepoint msdf");
         return;
     }
     const px = std.fmt.parseFloat(f32, fields.items[5]) catch -1.0;
     if (!(px > 0)) report.add(path, number, "font pixel height must be a number above 0");
-    if (parseU32(fields.items[6]) == null) report.add(path, number, "font first codepoint must be a whole number");
+    const first_or_fallback = parseU32(fields.items[6]) orelse {
+        report.add(path, number, if (msdf) "MSDF fallback codepoint must be a whole number" else "font first codepoint must be a whole number");
+        return;
+    };
+    if (msdf) {
+        if (first_or_fallback > 0x10ffff) report.add(path, number, "MSDF fallback codepoint must be a Unicode scalar value");
+        if (!hasExtension(output, &.{"mfnt"})) report.add(path, number, "MSDF font output must be an mfnt file");
+        return;
+    }
     const glyphs = parseU32(fields.items[7]) orelse 0;
     if (glyphs == 0) report.add(path, number, "font glyph count must be a whole number above 0");
 }
@@ -528,7 +534,7 @@ test "a font line with a ninth field that is not gray or mono is reported, since
     const text = "font font assets/font.ttf font.bfnt - 10 32 224 sdf\n";
     var report = Report{};
     checkManifest("assets/asset_manifest.txt", text, FakeFiles.files(), &report);
-    try std.testing.expectEqualStrings("a font line is: name font source output deps pixel_height first_codepoint glyph_count [gray or mono]", report.items[0].message);
+    try std.testing.expectEqualStrings("a font line is: name font source output deps pixel_height first_codepoint glyph_count [gray or mono], or name font source output deps pixel_height fallback_codepoint msdf", report.items[0].message);
 }
 
 test "a font line may name its rasterization as gray or mono, and a tenth field is reported" {
