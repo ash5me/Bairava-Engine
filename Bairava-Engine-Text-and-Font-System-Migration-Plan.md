@@ -277,7 +277,7 @@ Phase 1 decisions come first. They fix the font representation, the `Canvas` API
 | D-06 | First release is horizontal LTR only; no RTL or paragraph bidi. Script and language remain explicit caller-controlled options, with compatibility defaults `Latn` and `en`; do not guess them. Tamil callers specify `Taml` and `ta`. | Phase 1 | **Accepted with clarification (owner, 2026-11-18)** |
 | D-07 | Debug overlay and console font: one definition, 9 px mono, `assets/ui_font_9px.bfnt`. Defined once in `application.zig` (`default_debug_font_path`, `default_debug_font_px`); `src/game/config.zig` reads it. | Phase 1 | Accepted by direction (owner, 2026-11-18): preserve 9 px. Code verified at 9 px in this upload (`application.zig:40`, read by `config.zig:108`), owner-confirmed 2026-11-18. |
 | D-08 | **Use the established AngelCode BMFont text descriptor format** for hand-authored bitmap font metadata. Parse/import it into Bairava-owned normalized structures; do not expose BMFont types as public engine API. | Phase 2 | **Accepted with change (owner, 2026-11-18)** |
-| D-09 | Use `dhepper/font8x8` `font8x8_basic` as the initial 8×8 monochrome ASCII pixel-font source, pinned to commit `4876b70490600222f30bb9acd2c02868e390bb56`. Include printable ASCII U+0020–U+007E; 16 columns × 6 rows (128×48 atlas); fixed 8-pixel advance; space has no ink; `?` is the initial fallback. The repository identifies the font data as public domain. The asset still must be generated/imported, checked in, and covered by descriptor/importer tests. | Phase 2 | **Accepted; asset integration blocked on external source (owner, 2026-11-19).** Generate the asset only from the pinned commit `4876b70490600222f30bb9acd2c02868e390bb56`, verified by its SHA, with its license notice. Do not substitute another revision. Phase 2 remains blocked until this is done. |
+| D-09 | Use `dhepper/font8x8` `font8x8_basic` as the initial 8×8 monochrome ASCII pixel-font source, pinned to commit `4876b70490600222f30bb9acd2c02868e390bb56`. Include printable ASCII U+0020–U+007E; 16 columns × 6 rows (128×48 atlas); fixed 8-pixel advance; space has no ink; `?` is the initial fallback. The repository identifies the font data as public domain. The asset still must be generated/imported, checked in, and covered by descriptor/importer tests. | Phase 2 | **Accepted; asset generated 2026-11-19 from the pinned commit (see the Phase 2 sandbox progress block). Page route decided 2026-11-19 (`coverage` rows, `.r8`); the D-09 asset contract is in the Phase 2 sandbox progress block.** Generate the asset only from the pinned commit `4876b70490600222f30bb9acd2c02868e390bb56`, verified by its SHA, with its license notice. Do not substitute another revision. Phase 2 remains blocked until this is done. |
 | D-10 | **Runtime outline formats: TrueType outlines only.** Runtime rasterization stays on the existing `stb_truetype` path. CFF/CFF2 outline rasterization is deferred. Unsupported outline formats are rejected with an explicit error (`UnsupportedFontFormat`), and the engine never substitutes a glyph silently. Variable fonts use their default instance. | Phase 0 exit; Phase 3 | **Accepted (2026-11-19)** |
 | D-11 | **FreeType is not a runtime dependency.** It is a build-time dependency only where the font asset pipeline requires it. The selected MSDF generator's font-import extension uses FreeType, so FreeType may be a toolchain dependency; it is not shipped or linked into the game runtime. | Phase 0 exit | **Accepted (2026-11-19)** |
 | D-12 | Scripts and test corpus: Latin and Tamil. **Chemmozhi Paranar may remain in the distributed repository only as a test fixture**, with its exact upstream license text/version, copyright and modification attribution, provenance, and hash retained. It must not be silently included in game assets, binaries, or release packages. Any downstream redistribution must comply with the actual GPL version attached to the font. | Phase 0 exit | **Accepted with test-only restriction (owner, 2026-11-18)** |
@@ -415,7 +415,8 @@ A common text/font interface with an adapter to the existing BFNT implementation
 - [~] Add a versioned bitmap-font asset descriptor containing glyph mapping, atlas page, source rectangle, advance, bearing/offset, baseline/line metrics, and optional kerning pairs. *(Partly, sandbox, 2026-11-19: `bmfont.zig` parses the BMFont text descriptor (D-08) into a normalized `Font` with those fields. The versioned contract is the normalized `Font`, schema version 1 (D-27). No on-disk Bairava format is added in Phase 2.)*
 - [~] Support mapping Unicode codepoints to glyph entries. Keep glyph IDs distinct from codepoints internally even if the first format maps one codepoint to one glyph. *(Partly, sandbox, 2026-11-19: `Font.glyphFor` maps a codepoint by binary search. `Glyph` has no separate glyph ID yet.)*
 - [ ] Import atlas image data without vectorizing it or sending it through MSDF generation.
-- [~] Validate atlas bounds, duplicate codepoints, invalid metrics, missing pages, malformed descriptors, and missing fallback glyphs during asset build. *(Partly, sandbox, 2026-11-19: all of these are checked in `bmfont.zig`. Page image sizes are checked against `scaleW` and `scaleH` in `src/engine/assets/bmfont_check.zig`, and a missing image is reported. Not yet wired into `check-assets`: that needs a BMFont row kind in the asset manifest, which is open for the owner.)*
+- [~] Validate atlas bounds, duplicate codepoints, invalid metrics, missing pages, malformed descriptors, and missing fallback glyphs during asset build. *(Partly, sandbox, 2026-11-19: all of these are checked in `bmfont.zig`. Page image sizes are checked against `scaleW` and `scaleH` in `src/engine/assets/bmfont_check.zig`, and a missing image is reported. Not yet wired into `check-assets`: that needs the `bitmap_font` row kind in the asset manifest. The D-09 asset contract defines that row kind (2026-11-19). The builder implements it (see the D-09 builder dispatch block), but Zig `check-assets` does not accept it yet.)*
+- [~] Implement the D-09 `check-assets` rules (contract, 2026-11-19): exact `.r8` byte length equals `scaleW` × `scaleH` with overflow-safe multiplication; source PNG width and height equal `scaleW` and `scaleH`; `file=` values are bare quoted filenames that match a declared coverage output, and path separators, drive prefixes, and `.`/`..` are rejected. Builder side done (see the D-09 builder dispatch block). Blocked: the Zig `validate.zig` kinds and the `check-assets` wiring, which need a Zig toolchain.
 - [ ] Support monochrome/alpha glyph atlases using the coverage path. If color bitmap glyphs are included, use the normal RGBA sprite path and preserve their authored color.
 - [ ] Use nearest-neighbor sampling for pixel bitmap fonts and preserve integer-pixel destination placement by default.
 - [ ] Define atlas padding/edge handling so neighboring glyphs cannot bleed when sampled or scaled.
@@ -464,9 +465,93 @@ A developer can add a hand-drawn bitmap font through the asset pipeline and use 
 
 **Glyph id.** The diagnostic reports BMFont's `id`, which is the codepoint, because Bairava has no separate glyph index yet. A glyph whose rectangle extends past the atlas is still an error.
 
-**Open for the owner.** (1) The asset manifest needs a row kind for BMFont descriptors before `check-assets` can run the page check. (2) Whether Phase 2 needs a glyph index separate from the codepoint (item 2). The diagnostic reports BMFont's `id` until you decide. (3) The D-09 asset, under Blocked.
+**Open for the owner.** (1) Decided 2026-11-19: the `bitmap_font` and `coverage` row kinds in the D-09 asset contract. Not yet implemented. (2) Whether Phase 2 needs a glyph index separate from the codepoint (item 2). The diagnostic reports BMFont's `id` until you decide. (3) The D-09 asset, under Blocked.
 
 **Phase 1 evidence.** The owner reports that `zig build test` works on Windows after the text.c flag (2026-11-19). No commit or log has been recorded for that run, so no Phase 1 gate closes on it.
+
+### Sandbox progress (2026-11-19, D-09 asset and manifest decisions): Phase 2, provisional
+
+**Entry.** The Phase 2 entry condition (Phase 1 closed) is still not met. This pass changes no renderer, `Canvas`, `Ui`, or public API.
+
+**D-09 asset generated.** `assets/fonts/font8x8_basic.png`, `assets/fonts/font8x8_basic.fnt`, and `assets/fonts/font8x8_basic.NOTICE.txt` come from `scripts/gen_font8x8_asset.py`, run on `font8x8_basic.h` at commit `4876b70490600222f30bb9acd2c02868e390bb56`. The source's SHA-256 is `49d8df366296b203ca3211bc0672cf2a762135bf12710735b6292756b19dffd5`, and the generator refuses any other source. The PNG is 8-bit grayscale, 128 by 48, with binary coverage (0 or 255). The descriptor puts glyph data in the red channel (`chnl=4`, `redChnl=0`). Checks, recorded in `checks/font8x8_basic_RESULTS.txt`: an independent PNG decode; 6,016 glyph pixels compared against the source table, with 0 mismatches; the descriptor accepted by `checks/bmfont_model.py` at a 128 by 48 page and rejected at 128 by 64; the model self-test at 20 of 20; and the generator reproduces the three files byte for byte. The Zig parser was not compiled. The Python model mirrors it and is supporting evidence only.
+
+**Owner decisions recorded here.** The owner accepted two items in this session (2026-11-19). The first is the `bitmap_font` manifest row kind: its dependencies name declared `coverage` rows (see the page-route decision below), every page must resolve, each page's size must equal `scaleW` and `scaleH`, and a multi-page descriptor resolves every page. **Correction, same date:** the descriptor is not copied unchanged. The builder rewrites it as the D-09 asset contract describes. The second is glyph identity: the BMFont `id` is the codepoint, with no separate `glyph_index`. These two answer the "open for the owner" items above.
+
+**Page route: decided 2026-11-19 (option B).** The original accepted wording said the page images are declared image assets. An `image` row, however, builds RGBA8 plus BC1, BC3, and ASTC variants (`tools/assets/build.c`, `build_texture_variants`), and the R8 coverage spec cannot come from those. The options are:
+- (A) Keep each page as an `image` row. This matches the accepted wording, but it yields colour and BC variants instead of R8, and the descriptor's `file="font8x8_basic.png"` no longer names an output file.
+- (B) Add a coverage page kind, for example `coverage`, that copies the grayscale PNG through or converts it to a raw R8 file, and let `bitmap_font` dependencies name those rows. This matches the R8 spec. It widens the accepted wording slightly.
+
+Owner decision: (B). Option (A) is rejected. The row kinds, the builder dispatch, and the `check-assets` wiring are specified in the contract below and are not yet written.
+
+**D-09 asset contract (accepted 2026-11-19).** The owner confirmed these rules. The descriptor rewrite is the one exception to the earlier accepted wording, and it replaces the "copied unchanged" text above.
+
+Rules:
+- Coverage output extension is `.r8` (raw R8 bytes, no header).
+- Bitmap-font descriptor output extension is `.fnt`.
+- Every coverage page a descriptor references must reside in the descriptor's folder.
+- Coverage rows are leaf assets. They cannot declare dependencies.
+- A `bitmap_font` row declares its coverage rows as dependencies, so dependency tracking and build ordering work.
+
+Pipeline:
+1. Grayscale PNG → raw R8 `.r8` (`coverage` row).
+2. BMFont descriptor → validated and rewritten `.fnt` (`bitmap_font` row). The builder parses and validates the descriptor, verifies that all referenced coverage pages exist in the same folder, and rewrites their filenames to the corresponding packaged `.r8` output filenames. The remaining descriptor content, including glyph metrics, advances, dimensions, and channel metadata, is preserved.
+3. The `bitmap_font` row references its coverage rows through `dependencies`.
+4. Coverage rows cannot declare dependencies.
+5. `check-assets` validates extensions, folder locality, page references, dimensions, the fallback glyph, and output consistency.
+
+Implementation notes (confirmed 2026-11-19):
+- The checked-in `assets/fonts/font8x8_basic.fnt` keeps `file="font8x8_basic.png"`. That is the source form. The rewrite applies only to the packaged output.
+- Rewritten `file=` values are bare filenames. They resolve against the packaged descriptor folder, because the pages share that folder.
+- Raw R8 has no header, so `check-assets` checks each `.r8` file's byte length against `scaleW` × `scaleH` from its descriptor.
+- `tools/assets/build.c` now dispatches both row kinds (see the D-09 builder dispatch block). `src/engine/assets/validate.zig` still rejects them, and `zig build check-assets` runs in CI, so the rows stay out of `asset_manifest.txt` until that changes. Illustrative rows, not yet in the manifest:
+
+```
+font8x8_basic_page coverage assets/fonts/font8x8_basic.png fonts/font8x8_basic.r8 -
+font8x8_basic bitmap_font assets/fonts/font8x8_basic.fnt fonts/font8x8_basic.fnt font8x8_basic_page
+```
+
+**check-assets requirements for the D-09 contract (confirmed 2026-11-19).**
+
+R8 coverage pages:
+- Each `.r8` file referenced by a descriptor must be exactly `scaleW` × `scaleH` bytes. For D-09 that is 128 × 48 = 6,144 bytes.
+- The check computes that product with overflow-safe multiplication and fails on overflow before comparing sizes.
+- The format is one byte per pixel, with no row padding or alignment bytes, no mipmaps, and no additional image data.
+- The source grayscale PNG's width must equal `scaleW`, and its height must equal `scaleH`. A PNG has no single size value, so the comparison is per axis.
+
+Descriptor page resolution:
+- Each `page` entry's `file=` value is a bare filename in the quoted form BMFont requires, for example `page id=0 file="font8x8_basic.r8"`.
+- check-assets rejects a `file=` value that is empty, is `.` or `..`, or contains `/`, `\`, or `:`.
+- The filename must equal the packaged output name of a coverage row that the `bitmap_font` row declares as a dependency.
+- The runtime resolves the filename relative to the `.fnt` descriptor's folder. The same-folder rule makes that resolution deterministic.
+
+**FMA check, C side.** `checks/bfnt_fp_contract_repro.c`, built with gcc 13.3 and `-mfma`. With `text.c` compiled under `-ffp-contract=fast`, the replay gives 3 mismatches in 456 comparisons. The first is at font 0, corpus 5, scale 1.5, where `text.c` gives `0x427DCCCD` and the port gives `0x427DCCCA`. With `-ffp-contract=off`, it gives 0 mismatches. This confirms the diagnosis above and shows that the `text_c_flags` change addresses the C side. The Zig test has still not run in the sandbox.
+
+**Uploaded run, commit f417b4d.** The uploaded `build.zig` already contains `-ffp-contract=off`, and the uploaded `zig-build-test.log` still records exit -1 with no failure text. If the flag fixes the float-bit failure, that failure does not explain the -1, and the log has no other failure text. The wrapper should save stderr and the real exit code. The owner should then rerun the root test module on a commit that contains the flag.
+
+**Not done (as of this block; the builder dispatch was done in the next block).** The `bitmap_font` row kind, the builder dispatch, the page checks in `check-assets`, the bitmap provider and its `FontResource` variant, nearest sampling, the padding policy, the draw path, and the mapper adapter. Any Zig or C written for these would be uncompiled in the sandbox.
+
+---
+
+### Sandbox progress (2026-11-19, D-09 builder dispatch): Phase 2, provisional
+
+**Scope.** The builder side of the D-09 contract: the `coverage` and `bitmap_font` row kinds in `tools/assets/build.c`. Zig `check-assets` is not changed here. The Phase 1 entry condition is still not met. This is provisional work, and it changes no renderer, `Canvas`, `Ui`, or public API.
+
+**Builder.** `valid_kind` accepts a `coverage` row only with a `.png` source that is 8-bit grayscale by its IHDR, a `.r8` output, and `-` dependencies. It accepts a `bitmap_font` row only with a `.fnt` source and output and at least one dependency. `process_bitmap_font` runs before any output is written. It requires one `common` line with `scaleW`, `scaleH`, and `pages`, and one `page` line per page id, each with a bare quoted `file=`. It matches each page to exactly one declared coverage row, by the basename of that row's source. It requires every coverage row to share the descriptor's source folder and output folder, requires every coverage row to be used, and requires each page PNG to be `scaleW` × `scaleH`. Coverage rows are decoded and written before any `bitmap_font` row. The descriptor is then written with each `file=` set to the packaged `.r8` basename, and nothing else on any line changes. Each `.r8` must be exactly `scaleW` × `scaleH` bytes, checked with overflow-safe multiplication.
+
+**Choices to confirm.** (1) A coverage row that no page uses is rejected. The contract did not say either way. (2) A page matches its coverage row by the PNG's basename, which is what the descriptor's `file=` names. The rewritten value is the `.r8` basename.
+
+**Evidence (sandbox, gcc 13.3, `-std=c11 -Wall -Wextra`, zero warnings).**
+- `tools/assets/test_tools.py` passes with three new tests. `test_bitmap_font_d09` builds the real D-09 asset. The `.r8` is 6,144 bytes and equals the PNG's values, decoded by an independent decoder. The `.fnt` differs from the source only on the page line. `test_bitmap_font_two_pages` checks a two-page font. `test_bitmap_font_rejections` runs 13 bad inputs. Each fails with a builder message, and each leaves no output directory behind.
+- The project's real manifest still builds all 12 existing assets.
+- `checked_mul_size` is checked directly, with a harness that includes `build.c`. It covers the overflow boundary.
+
+**Sandbox differences.** The builder was compiled against the system FreeType headers, not the pinned `vendor/freetype-2.15.0`. Zig is not installed in this sandbox, so no Zig was compiled.
+
+**Not done.**
+- `src/engine/assets/validate.zig` has a closed list of kinds: `image`, `audio`, `wav`, `font`, `map`, `file`. `zig build check-assets` would reject `coverage` and `bitmap_font` rows, and CI runs that command (section 8.4). The D-09 rows therefore stay out of `assets/asset_manifest.txt` until `validate.zig` and the `check-assets` wiring accept them.
+- The Zig page checks in `check-assets` (the `bmfont_check.zig` wiring).
+- The builder checks descriptor structure, page wiring, and dimensions. Glyph metrics and kerning are still validated only by `bmfont.zig`.
+- The bitmap provider and its `FontResource` variant, nearest sampling, the padding policy, the draw path, and the mapper adapter.
 
 ---
 

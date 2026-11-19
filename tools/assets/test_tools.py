@@ -283,6 +283,205 @@ def test_rejects_mode_fields(builder, work):
     assert not (output / "font_sdf.bfnt").exists()
 
 
+def png_gray_bytes(width, height, values):
+    rows = b"".join(b"\0" + bytes(values[y * width : (y + 1) * width]) for y in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(rows))
+        + png_chunk(b"IEND", b"")
+    )
+
+
+def read_gray_png(path):
+    """Decodes an 8-bit grayscale, non-interlaced PNG independently of the builder."""
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise AssertionError(f"{path} is not a PNG")
+    offset = 8
+    compressed = bytearray()
+    width = height = 0
+    while offset < len(data):
+        size = struct.unpack_from(">I", data, offset)[0]
+        kind = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + size]
+        offset += size + 12
+        if kind == b"IHDR":
+            width, height, bit_depth, color_type, _, _, interlace = struct.unpack(">IIBBBBB", payload)
+            if (bit_depth, color_type, interlace) != (8, 0, 0):
+                raise AssertionError(f"{path} is not 8-bit grayscale, non-interlaced")
+        elif kind == b"IDAT":
+            compressed.extend(payload)
+        elif kind == b"IEND":
+            break
+    raw = zlib.decompress(bytes(compressed))
+    previous = bytearray(width)
+    values = bytearray()
+    cursor = 0
+    for _ in range(height):
+        filter_kind = raw[cursor]
+        scanline = bytearray(raw[cursor + 1 : cursor + 1 + width])
+        cursor += width + 1
+        for index in range(width):
+            left = scanline[index - 1] if index >= 1 else 0
+            above = previous[index]
+            upper_left = previous[index - 1] if index >= 1 else 0
+            if filter_kind == 1:
+                scanline[index] = (scanline[index] + left) & 0xFF
+            elif filter_kind == 2:
+                scanline[index] = (scanline[index] + above) & 0xFF
+            elif filter_kind == 3:
+                scanline[index] = (scanline[index] + ((left + above) // 2)) & 0xFF
+            elif filter_kind == 4:
+                estimate = left + above - upper_left
+                distances = (abs(estimate - left), abs(estimate - above), abs(estimate - upper_left))
+                predictor = left if distances[0] <= distances[1] and distances[0] <= distances[2] else (
+                    above if distances[1] <= distances[2] else upper_left
+                )
+                scanline[index] = (scanline[index] + predictor) & 0xFF
+            elif filter_kind != 0:
+                raise AssertionError(f"unsupported PNG filter {filter_kind}")
+        values.extend(scanline)
+        previous = scanline
+    return width, height, bytes(values)
+
+
+def write_gray_png(path, width, height, values):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png_gray_bytes(width, height, values))
+
+
+def write_descriptor(path, page_lines, scale_w=4, scale_h=2, pages=1):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        'info face="test" size=8 bold=0 italic=0 charset="" unicode=1 stretchH=100 smooth=0 aa=1 padding=0,0,0,0 spacing=0,0 outline=0',
+        f"common lineHeight=8 base=7 scaleW={scale_w} scaleH={scale_h} pages={pages} packed=0 alphaChnl=4 redChnl=0 greenChnl=4 blueChnl=4",
+        *page_lines,
+        "chars count=1",
+        "char id=63 x=0 y=0 width=4 height=2 xoffset=0 yoffset=0 xadvance=4 page=0 chnl=4",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
+def run_tool_expect_failure(executable, *args, cwd):
+    result = subprocess.run(
+        [str(executable), *map(str, args)],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode <= 0:
+        raise AssertionError(f"expected a build failure, got exit {result.returncode}")
+    return result.stderr
+
+
+def test_bitmap_font_d09(builder, work):
+    """The D-09 asset built through the contract: .r8 is exact R8, and .fnt differs only in file=."""
+    project = work / "d09"
+    fonts = project / "assets" / "fonts"
+    fonts.mkdir(parents=True)
+    for name in ("font8x8_basic.png", "font8x8_basic.fnt"):
+        (fonts / name).write_bytes((ROOT / "assets" / "fonts" / name).read_bytes())
+    manifest = project / "manifest.txt"
+    manifest.write_text(
+        "font8x8_basic_page coverage assets/fonts/font8x8_basic.png fonts/font8x8_basic.r8 -\n"
+        "font8x8_basic bitmap_font assets/fonts/font8x8_basic.fnt fonts/font8x8_basic.fnt font8x8_basic_page\n",
+        encoding="utf-8",
+    )
+    output = project / "runtime"
+    run_tool(builder, manifest, output, cwd=project)
+
+    width, height, values = read_gray_png(fonts / "font8x8_basic.png")
+    assert (width, height) == (128, 48)
+    r8 = (output / "fonts" / "font8x8_basic.r8").read_bytes()
+    assert len(r8) == width * height == 6144, "R8 must be exactly scaleW x scaleH bytes"
+    assert r8 == values, "R8 must carry the PNG's gray values, one byte per texel"
+
+    source_lines = (fonts / "font8x8_basic.fnt").read_bytes().splitlines(keepends=True)
+    built_lines = (output / "fonts" / "font8x8_basic.fnt").read_bytes().splitlines(keepends=True)
+    expected = [line.replace(b'file="font8x8_basic.png"', b'file="font8x8_basic.r8"') for line in source_lines]
+    assert built_lines == expected, "only the page file= value may change"
+
+    index = (output / "asset-index.txt").read_text(encoding="utf-8")
+    assert "font8x8_basic_page coverage fonts/font8x8_basic.r8 assets/fonts/font8x8_basic.png -" in index
+    assert "font8x8_basic bitmap_font fonts/font8x8_basic.fnt assets/fonts/font8x8_basic.fnt font8x8_basic_page" in index
+
+
+def test_bitmap_font_two_pages(builder, work):
+    project = work / "two_pages"
+    fonts = project / "assets" / "fonts"
+    write_gray_png(fonts / "a.png", 4, 2, [0, 255, 255, 0, 255, 0, 0, 255])
+    write_gray_png(fonts / "b.png", 4, 2, [255] * 8)
+    write_descriptor(
+        fonts / "test.fnt",
+        ['page id=0 file="a.png"', 'page id=1 file="b.png"'],
+        pages=2,
+    )
+    manifest = project / "manifest.txt"
+    manifest.write_text(
+        "a_page coverage assets/fonts/a.png fonts/a.r8 -\n"
+        "b_page coverage assets/fonts/b.png fonts/b.r8 -\n"
+        "test_font bitmap_font assets/fonts/test.fnt fonts/test.fnt a_page,b_page\n",
+        encoding="utf-8",
+    )
+    output = project / "runtime"
+    run_tool(builder, manifest, output, cwd=project)
+    assert (output / "fonts" / "a.r8").read_bytes() == bytes([0, 255, 255, 0, 255, 0, 0, 255])
+    assert (output / "fonts" / "b.r8").read_bytes() == bytes([255] * 8)
+    built = (output / "fonts" / "test.fnt").read_text(encoding="ascii")
+    assert 'page id=0 file="a.r8"' in built and 'page id=1 file="b.r8"' in built
+
+
+def test_bitmap_font_rejections(builder, work):
+    """Each bad contract input fails the build, with a message, before any output directory is created."""
+
+    def base_project(name):
+        project = work / "reject" / name
+        fonts = project / "assets" / "fonts"
+        write_gray_png(fonts / "a.png", 4, 2, [0, 255, 255, 0, 255, 0, 0, 255])
+        write_gray_png(fonts / "b.png", 4, 2, [255] * 8)
+        write_gray_png(project / "assets" / "a.png", 4, 2, [0] * 8)
+        write_rgba_png(fonts / "rgba.png", 2, 2, [(0, 0, 0, 255)] * 4)
+        write_rgba_png(project / "assets" / "tile.png", 2, 2, [(255, 0, 0, 255)] * 4)
+        write_descriptor(fonts / "test.fnt", ['page id=0 file="a.png"'])
+        return project
+
+    font_row = "font bitmap_font assets/fonts/test.fnt fonts/test.fnt a_page"
+    a_row = "a_page coverage assets/fonts/a.png fonts/a.r8 -"
+    tile_row = "tile image assets/tile.png tile.png -"
+    cases = [
+        ("coverage row declares dependencies", [tile_row, "a_page coverage assets/fonts/a.png fonts/a.r8 tile", font_row], {}),
+        ("bitmap_font without coverage rows", [a_row, "font bitmap_font assets/fonts/test.fnt fonts/test.fnt -"], {}),
+        ("bitmap_font depends on a non-coverage row", [tile_row, a_row, "font bitmap_font assets/fonts/test.fnt fonts/test.fnt tile,a_page"], {}),
+        ("coverage source is not 8-bit grayscale", ["rgba coverage assets/fonts/rgba.png fonts/rgba.r8 -"], {}),
+        ("coverage output is not .r8", ["a_page coverage assets/fonts/a.png fonts/a.raw -", font_row], {}),
+        ("page names a PNG no coverage row supplies", [a_row, font_row], {"page_lines": ['page id=0 file="missing.png"']}),
+        ("page filename carries a folder part", [a_row, font_row], {"page_lines": ['page id=0 file="fonts/a.png"']}),
+        ("coverage source outside the descriptor folder", ["a_page coverage assets/a.png fonts/a.r8 -", font_row], {}),
+        ("coverage output outside the font's folder", ["a_page coverage assets/fonts/a.png a.r8 -", font_row], {}),
+        ("PNG width does not match scaleW", [a_row, font_row], {"scale_w": 8}),
+        ("coverage row not used by any page", [a_row, "b_page coverage assets/fonts/b.png fonts/b.r8 -", font_row + ",b_page"], {}),
+        ("pages= disagrees with the page lines", [a_row, font_row], {"pages": 2}),
+        ("two pages name the same coverage row", [a_row, font_row], {"page_lines": ['page id=0 file="a.png"', 'page id=1 file="a.png"'], "pages": 2}),
+    ]
+    for index, (label, rows, options) in enumerate(cases):
+        project = base_project(f"case_{index}")
+        if options:
+            write_descriptor(
+                project / "assets" / "fonts" / "test.fnt",
+                options.get("page_lines", ['page id=0 file="a.png"']),
+                scale_w=options.get("scale_w", 4),
+                pages=options.get("pages", 1),
+            )
+        manifest = project / "manifest.txt"
+        manifest.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        output = project / "runtime"
+        stderr = run_tool_expect_failure(builder, manifest, output, cwd=project)
+        assert "asset_build:" in stderr, f"{label}: no builder message: {stderr!r}"
+        assert not output.exists(), f"{label}: output was written before the rejection"
+
+
 def main():
     if len(sys.argv) != 4:
         raise SystemExit("usage: test_tools.py <asset-build> <asset-keyer> <asset-import>")
@@ -293,6 +492,9 @@ def main():
         test_keyer(keyer.resolve(), work)
         test_builder(builder.resolve(), work)
         test_rejects_mode_fields(builder.resolve(), work)
+        test_bitmap_font_d09(builder.resolve(), work)
+        test_bitmap_font_two_pages(builder.resolve(), work)
+        test_bitmap_font_rejections(builder.resolve(), work)
     print("asset importer and converter integration tests passed")
 
 

@@ -9,6 +9,10 @@
  * A font row adds pixel height, first codepoint, and glyph count, then an optional rasterization: `gray`
  * (the default) or `mono`. Its output is the prebaked atlas, a .bfnt file, so each size the game uses is its
  * own row and file.
+ *
+ * A coverage row turns an 8-bit grayscale PNG into raw R8 (.r8) and has no dependencies. A bitmap_font row takes
+ * a BMFont text descriptor (.fnt) whose pages name coverage rows in the same folder. It depends on those rows, and
+ * it writes the descriptor with each page's file= set to the packaged .r8 filename.
  */
 
 #include "../../vendor/stb_image.h"
@@ -16,6 +20,7 @@
 #include "font_bake.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -304,6 +309,138 @@ static int file_exists(const char *path) {
     return 1;
 }
 
+/* ---- Coverage pages and bitmap fonts (D-09 contract) ---- */
+
+#define MAX_DESCRIPTOR_BYTES (1024L * 1024L)
+#define MAX_DESCRIPTOR_PAGES 1024
+
+static int has_suffix(const char *text, const char *suffix) {
+    size_t text_length = strlen(text);
+    size_t suffix_length = strlen(suffix);
+    return text_length >= suffix_length && strcmp(text + (text_length - suffix_length), suffix) == 0;
+}
+
+/* Multiplies two byte counts. Fails, and leaves *out unchanged, when the product would not fit in size_t. */
+static int checked_mul_size(size_t a, size_t b, size_t *out) {
+    if (a != 0 && b > SIZE_MAX / a) return 0;
+    *out = a * b;
+    return 1;
+}
+
+static unsigned int read_u32be(const unsigned char *p) {
+    return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) | ((unsigned int)p[2] << 8) | (unsigned int)p[3];
+}
+
+/* Accepts only a PNG whose IHDR declares 8-bit grayscale (colour type 0), and reports its width and height. */
+static int read_gray8_png_size(const char *path, unsigned int *width, unsigned int *height) {
+    static const unsigned char signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    unsigned char header[33];
+    size_t read_count;
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return 0;
+    read_count = fread(header, 1, sizeof header, file);
+    fclose(file);
+    if (read_count != sizeof header || memcmp(header, signature, sizeof signature) != 0) return 0;
+    if (read_u32be(header + 8) != 13 || memcmp(header + 12, "IHDR", 4) != 0) return 0;
+    if (header[24] != 8 || header[25] != 0) return 0;
+    *width = read_u32be(header + 16);
+    *height = read_u32be(header + 20);
+    return *width != 0 && *height != 0 && *width <= 0x7fffffffu && *height <= 0x7fffffffu;
+}
+
+/* A descriptor page's file= value: one filename, with no folder part and no drive or scheme prefix. */
+static int bare_filename(const char *name) {
+    if (name[0] == '\0' || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
+    return strpbrk(name, "/\\:") == NULL;
+}
+
+static const char *base_name_of(const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash != NULL ? slash + 1 : path;
+}
+
+/* Length of a manifest path's folder part, without its '/'. Zero when the path has no folder. */
+static size_t folder_length(const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash != NULL ? (size_t)(slash - path) : 0;
+}
+
+static int same_folder(const char *a, const char *b) {
+    size_t length = folder_length(a);
+    return length == folder_length(b) && memcmp(a, b, length) == 0;
+}
+
+/* The on-disk path of a row's output, with the manifest's '/' separators made native. */
+static int output_path_of(const entry *item, const char *output_dir, char *path, size_t size) {
+    char relative[FIELD_SIZE];
+    char *p;
+    size_t length = strlen(item->output);
+    if (length >= sizeof relative) return 0;
+    memcpy(relative, item->output, length + 1);
+    for (p = relative; *p; p++) if (*p == '/' || *p == '\\') *p = PATH_SEPARATOR;
+    return snprintf(path, size, "%s%c%s", output_dir, PATH_SEPARATOR, relative) < (int)size;
+}
+
+/* Like output_path_of, and also creates the folder that the output is written into. */
+static int prepare_destination(const entry *item, const char *output_dir, char *destination, size_t size) {
+    char parent[FIELD_SIZE * 2];
+    char *slash;
+    if (!output_path_of(item, output_dir, destination, size)) return 0;
+    memcpy(parent, destination, strlen(destination) + 1);
+    slash = strrchr(parent, PATH_SEPARATOR);
+    if (slash != NULL) {
+        *slash = '\0';
+        return mkdirs(parent);
+    }
+    return 1;
+}
+
+static int write_file_bytes(const char *path, const void *data, size_t size) {
+    int written;
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) return 0;
+    written = fwrite(data, 1, size, file) == size;
+    return fclose(file) == 0 && written;
+}
+
+static long file_size_of(const char *path) {
+    long size = -1;
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return -1;
+    if (fseek(file, 0, SEEK_END) == 0) size = ftell(file);
+    fclose(file);
+    return size;
+}
+
+/* Reads the decimal value of a whole `key=` field on a descriptor line. */
+static int descriptor_int(const char *line, const char *key, long *value) {
+    char needle[64];
+    const char *start;
+    char *end = NULL;
+    snprintf(needle, sizeof needle, " %s=", key);
+    start = strstr(line, needle);
+    if (start == NULL) return 0;
+    start += strlen(needle);
+    *value = strtol(start, &end, 10);
+    return end != start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\0');
+}
+
+/* Finds the quoted value of a page line's file= field, and where that value sits in the line. */
+static int descriptor_file(const char *line, char *name, size_t size, size_t *offset, size_t *length) {
+    const char *key = " file=\"";
+    const char *start = strstr(line, key);
+    const char *end;
+    if (start == NULL) return 0;
+    start += strlen(key);
+    end = strchr(start, '"');
+    if (end == NULL || (size_t)(end - start) >= size) return 0;
+    *offset = (size_t)(start - line);
+    *length = (size_t)(end - start);
+    memcpy(name, start, *length);
+    name[*length] = '\0';
+    return 1;
+}
+
 static int valid_kind(const entry *item) {
     if (strcmp(item->type, "image") == 0) {
         int width = 0, height = 0, channels = 0;
@@ -325,6 +462,18 @@ static int valid_kind(const entry *item) {
         if (file == NULL || fread(header, 1, sizeof header, file) != sizeof header || fclose(file) != 0 ||
             !(memcmp(header, "\000\001\000\000", 4) == 0 || memcmp(header, "OTTO", 4) == 0 || memcmp(header, "true", 4) == 0 || memcmp(header, "typ1", 4) == 0)) {
             fprintf(stderr, "asset_build: '%s' is not a supported TrueType/OpenType font\n", item->source);
+            return 0;
+        }
+    } else if (strcmp(item->type, "coverage") == 0) {
+        unsigned int width = 0, height = 0;
+        if (!has_suffix(item->source, ".png") || !has_suffix(item->output, ".r8") || strcmp(item->dependencies, "-") != 0 ||
+            !read_gray8_png_size(item->source, &width, &height)) {
+            fprintf(stderr, "asset_build: coverage '%s' needs an 8-bit grayscale .png source, a .r8 output, and no dependencies\n", item->name);
+            return 0;
+        }
+    } else if (strcmp(item->type, "bitmap_font") == 0) {
+        if (!has_suffix(item->source, ".fnt") || !has_suffix(item->output, ".fnt") || strcmp(item->dependencies, "-") == 0) {
+            fprintf(stderr, "asset_build: bitmap_font '%s' needs a .fnt source, a .fnt output, and coverage dependencies\n", item->name);
             return 0;
         }
     } else if (strcmp(item->type, "map") != 0 && strcmp(item->type, "file") != 0) {
@@ -577,6 +726,203 @@ static int encode_ima_wav(const char *source, const char *destination) {
     return ok;
 }
 
+/* Decodes a coverage page and writes its pixels as raw R8, one byte per texel, row by row. */
+static int build_coverage(const entry *item, const char *destination) {
+    unsigned int width = 0, height = 0;
+    int x = 0, y = 0, channels = 0, ok = 0;
+    size_t byte_count = 0;
+    unsigned char *pixels;
+    if (!read_gray8_png_size(item->source, &width, &height)) {
+        fprintf(stderr, "asset_build: coverage '%s' needs an 8-bit grayscale PNG\n", item->name);
+        return 0;
+    }
+    pixels = stbi_load(item->source, &x, &y, &channels, 1);
+    if (pixels == NULL) {
+        fprintf(stderr, "asset_build: cannot decode '%s': %s\n", item->source, stbi_failure_reason());
+        return 0;
+    }
+    ok = (unsigned int)x == width && (unsigned int)y == height &&
+         checked_mul_size((size_t)width, (size_t)height, &byte_count) &&
+         write_file_bytes(destination, pixels, byte_count);
+    stbi_image_free(pixels);
+    if (!ok) fprintf(stderr, "asset_build: failed to write coverage '%s'\n", item->name);
+    return ok;
+}
+
+/* Validates a bitmap_font row against its BMFont descriptor and its coverage rows. With `emit` set, it also
+ * writes the descriptor to `destination`, with each page's file= changed to the packaged coverage filename.
+ * The build runs it once without emit, before any output exists, and once with emit after the coverage files
+ * are written, so the byte-length check can read them. */
+static int process_bitmap_font(const entry *item, const entry *entries, size_t count, const char *output_dir,
+                               const char *destination, int emit) {
+    const entry **deps = NULL;
+    unsigned char *used = NULL;
+    int *page_ids = NULL;
+    char *text = NULL, *line = NULL, *dependency_names = NULL;
+    FILE *file = NULL, *out = NULL;
+    const char *cursor = NULL, *end = NULL, *newline = NULL;
+    long size = -1, scale_w = 0, scale_h = 0, pages_declared = 0;
+    size_t dep_count = 0, pages_seen = 0, expected = 0, line_length = 0, raw_length = 0;
+    size_t dependency_length = strlen(item->dependencies);
+    int have_common = 0, ok = 0;
+
+    file = fopen(item->source, "rb");
+    if (file == NULL || fseek(file, 0, SEEK_END) != 0) goto done;
+    size = ftell(file);
+    if (size < 0 || size > MAX_DESCRIPTOR_BYTES || fseek(file, 0, SEEK_SET) != 0) goto done;
+    text = malloc((size_t)size + 1);
+    if (text == NULL || fread(text, 1, (size_t)size, file) != (size_t)size) goto done;
+    text[size] = '\0';
+    fclose(file);
+    file = NULL;
+
+    dependency_names = malloc(dependency_length + 1);
+    deps = calloc(dependency_length + 1, sizeof *deps);
+    used = calloc(dependency_length + 1, 1);
+    page_ids = calloc(MAX_DESCRIPTOR_PAGES, sizeof *page_ids);
+    if (dependency_names == NULL || deps == NULL || used == NULL || page_ids == NULL) goto done;
+    memcpy(dependency_names, item->dependencies, dependency_length + 1);
+    for (char *name = strtok(dependency_names, ","); name != NULL; name = strtok(NULL, ",")) {
+        const entry *dep = NULL;
+        for (size_t i = 0; i < count; i++) if (strcmp(entries[i].name, name) == 0) dep = &entries[i];
+        if (dep == NULL || strcmp(dep->type, "coverage") != 0) {
+            fprintf(stderr, "asset_build: bitmap_font '%s' may depend only on coverage rows, and '%s' is not one\n", item->name, name);
+            goto done;
+        }
+        if (!same_folder(dep->source, item->source) || !same_folder(dep->output, item->output)) {
+            fprintf(stderr, "asset_build: coverage '%s' must share its source and output folder with bitmap_font '%s'\n", dep->name, item->name);
+            goto done;
+        }
+        deps[dep_count++] = dep;
+    }
+    if (dep_count == 0) {
+        fprintf(stderr, "asset_build: bitmap_font '%s' needs at least one coverage row\n", item->name);
+        goto done;
+    }
+
+    if (emit) {
+        out = fopen(destination, "wb");
+        if (out == NULL) goto done;
+    }
+    cursor = text;
+    end = text + size;
+    while (cursor < end) {
+        const char *tag;
+        size_t tag_length;
+        int is_page = 0;
+        newline = memchr(cursor, '\n', (size_t)(end - cursor));
+        line_length = newline != NULL ? (size_t)(newline - cursor) : (size_t)(end - cursor);
+        raw_length = newline != NULL ? line_length + 1 : line_length;
+        line = malloc(line_length + 1);
+        if (line == NULL) goto done;
+        memcpy(line, cursor, line_length);
+        line[line_length] = '\0';
+        tag = line + strspn(line, " \t");
+        tag_length = strcspn(tag, " \t\r");
+        if (tag_length == 6 && memcmp(tag, "common", 6) == 0) {
+            if (have_common || !descriptor_int(line, "scaleW", &scale_w) || !descriptor_int(line, "scaleH", &scale_h) ||
+                !descriptor_int(line, "pages", &pages_declared)) {
+                fprintf(stderr, "asset_build: bitmap_font '%s' needs one common line with scaleW, scaleH, and pages\n", item->name);
+                goto done;
+            }
+            if (scale_w < 1 || scale_h < 1 || scale_w > 0x7fffffffL || scale_h > 0x7fffffffL ||
+                pages_declared < 1 || pages_declared > MAX_DESCRIPTOR_PAGES) {
+                fprintf(stderr, "asset_build: bitmap_font '%s' has an unsupported scale or page count\n", item->name);
+                goto done;
+            }
+            have_common = 1;
+        } else if (tag_length == 4 && memcmp(tag, "page", 4) == 0) {
+            long id = -1;
+            char page_file[FIELD_SIZE];
+            size_t value_offset = 0, value_length = 0, match = 0;
+            is_page = 1;
+            if (!have_common || !descriptor_int(line, "id", &id) ||
+                !descriptor_file(line, page_file, sizeof page_file, &value_offset, &value_length) ||
+                !bare_filename(page_file) || id < 0 || id >= pages_declared || pages_seen == (size_t)pages_declared) {
+                fprintf(stderr, "asset_build: bitmap_font '%s' has a malformed page line\n", item->name);
+                goto done;
+            }
+            for (size_t i = 0; i < pages_seen; i++) {
+                if ((long)page_ids[i] == id) {
+                    fprintf(stderr, "asset_build: bitmap_font '%s' repeats page id %ld\n", item->name, id);
+                    goto done;
+                }
+            }
+            page_ids[pages_seen++] = (int)id;
+            for (match = 0; match < dep_count; match++) {
+                if (strcmp(base_name_of(deps[match]->source), page_file) == 0) break;
+            }
+            if (match == dep_count || used[match]) {
+                fprintf(stderr, "asset_build: page '%s' of bitmap_font '%s' must name exactly one coverage row, once\n", page_file, item->name);
+                goto done;
+            }
+            {
+                unsigned int width = 0, height = 0;
+                if (!read_gray8_png_size(deps[match]->source, &width, &height) ||
+                    (long)width != scale_w || (long)height != scale_h) {
+                    fprintf(stderr, "asset_build: page '%s' must be an 8-bit grayscale PNG of %ld by %ld\n", page_file, scale_w, scale_h);
+                    goto done;
+                }
+            }
+            used[match] = 1;
+            if (emit) {
+                size_t suffix_length = line_length - value_offset - value_length;
+                if (fwrite(line, 1, value_offset, out) != value_offset ||
+                    fputs(base_name_of(deps[match]->output), out) == EOF ||
+                    fwrite(line + value_offset + value_length, 1, suffix_length, out) != suffix_length ||
+                    (newline != NULL && fputc('\n', out) == EOF)) {
+                    goto done;
+                }
+            }
+        }
+        if (emit && !is_page && fwrite(cursor, 1, raw_length, out) != raw_length) goto done;
+        free(line);
+        line = NULL;
+        cursor += raw_length;
+    }
+
+    if (!have_common || pages_seen != (size_t)pages_declared) {
+        fprintf(stderr, "asset_build: bitmap_font '%s' has %zu page lines, but pages= declares %ld\n", item->name, pages_seen, pages_declared);
+        goto done;
+    }
+    for (size_t i = 0; i < dep_count; i++) {
+        if (!used[i]) {
+            fprintf(stderr, "asset_build: coverage '%s' is not used by any page of bitmap_font '%s'\n", deps[i]->name, item->name);
+            goto done;
+        }
+    }
+    if (!checked_mul_size((size_t)scale_w, (size_t)scale_h, &expected)) goto done;
+    if (emit) {
+        for (size_t i = 0; i < dep_count; i++) {
+            char path[FIELD_SIZE * 2];
+            long actual;
+            if (!output_path_of(deps[i], output_dir, path, sizeof path)) goto done;
+            actual = file_size_of(path);
+            if (actual < 0 || (size_t)actual != expected) {
+                fprintf(stderr, "asset_build: coverage output '%s' must be exactly %zu bytes\n", deps[i]->output, expected);
+                goto done;
+            }
+        }
+        if (fclose(out) != 0) {
+            out = NULL;
+            goto done;
+        }
+        out = NULL;
+    }
+    ok = 1;
+
+done:
+    free(line);
+    free(text);
+    free(dependency_names);
+    free(deps);
+    free(used);
+    free(page_ids);
+    if (file != NULL) fclose(file);
+    if (out != NULL) fclose(out);
+    return ok;
+}
+
 static int dependency_exists(const entry *entries, size_t count, const char *name) {
     for (size_t i = 0; i < count; i++) if (strcmp(entries[i].name, name) == 0) return 1;
     return 0;
@@ -677,7 +1023,25 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         }
     }
 
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(entries[i].type, "bitmap_font") == 0 && !process_bitmap_font(&entries[i], entries, count, output_dir, NULL, 0)) {
+            free(entries);
+            return 1;
+        }
+    }
+
     if (!mkdirs(output_dir)) { fprintf(stderr, "asset_build: cannot create output directory '%s'\n", output_dir); free(entries); return 1; }
+
+    /* Coverage rows are leaf assets, built first so that a bitmap_font row can check their output. */
+    for (size_t i = 0; i < count; i++) {
+        char destination[FIELD_SIZE * 2];
+        if (strcmp(entries[i].type, "coverage") != 0) continue;
+        if (!prepare_destination(&entries[i], output_dir, destination, sizeof destination) ||
+            !build_coverage(&entries[i], destination)) {
+            free(entries);
+            return 1;
+        }
+    }
     char index_path[FIELD_SIZE * 2];
     if (snprintf(index_path, sizeof index_path, "%s%casset-index.txt", output_dir, PATH_SEPARATOR) >= (int)sizeof index_path) { free(entries); return 1; }
     FILE *index = fopen(index_path, "w");
@@ -696,7 +1060,9 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
         char *slash = strrchr(parent, PATH_SEPARATOR);
         if (slash != NULL) { *slash = '\0'; if (!mkdirs(parent)) { failed = 1; break; } }
         const int is_font = strcmp(entries[i].type, "font") == 0;
-        if (!is_font && !copy_file(entries[i].source, destination)) { failed = 1; break; }
+        const int is_bitmap_font = strcmp(entries[i].type, "bitmap_font") == 0;
+        const int is_coverage = strcmp(entries[i].type, "coverage") == 0;
+        if (!is_font && !is_bitmap_font && !is_coverage && !copy_file(entries[i].source, destination)) { failed = 1; break; }
         int astc_available = 0;
         if (strcmp(entries[i].type, "image") == 0 && !build_texture_variants(&entries[i], destination, output_dir, &astc_available)) { failed = 1; break; }
         char ima_path[FIELD_SIZE * 2] = {0};
@@ -704,6 +1070,7 @@ static int process_manifest(int argc, char **argv, const char *manifest_path, co
             if (snprintf(ima_path, sizeof ima_path, "%s.ima", destination) >= (int)sizeof ima_path || !encode_ima_wav(entries[i].source, ima_path)) { failed = 1; break; }
         }
         if (is_font && !build_prebaked_font(&entries[i], destination)) { failed = 1; break; }
+        if (is_bitmap_font && !process_bitmap_font(&entries[i], entries, count, output_dir, destination, 1)) { failed = 1; break; }
         const char *source_for_index = safe_relative_path(entries[i].source) ? entries[i].source : "generated";
         fprintf(index, "%s %s %s %s %s", entries[i].name, entries[i].type, entries[i].output, source_for_index, entries[i].dependencies);
         if (strcmp(entries[i].type, "image") == 0) fprintf(index, " %s.rgba %s.bc1 %s.bc3 %s", entries[i].output, entries[i].output, entries[i].output, astc_available ? entries[i].output : "-");
