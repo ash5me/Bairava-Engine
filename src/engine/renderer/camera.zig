@@ -98,6 +98,14 @@ pub const Camera = struct {
         return @round(world_y - self.y);
     }
 
+    /// Returns a draw-only camera copy offset from the follow position. The gameplay camera remains unchanged.
+    pub fn offset(self: Camera, dx: f32, dy: f32) Camera {
+        var result = self;
+        if (std.math.isFinite(dx)) result.x += dx;
+        if (std.math.isFinite(dy)) result.y += dy;
+        return result;
+    }
+
     /// Returns a draw-only camera copy. Gameplay camera state and view/world dimensions are unchanged.
     pub fn scrolled(self: Camera, scroll: Scroll) Camera {
         var result = self;
@@ -137,6 +145,37 @@ test "camera zoom and center tracking stay finite with invalid input" {
     camera.follow(std.math.nan(f32), 5.0);
     try std.testing.expect(std.math.isFinite(camera.x));
     try std.testing.expect(std.math.isFinite(camera.y));
+}
+
+test "camera offset changes only the returned draw copy" {
+    const camera = Camera{
+        .x = 10.5,
+        .y = 23.25,
+        .view_w = 320,
+        .view_h = 180,
+        .world_w = 1000,
+        .world_h = 1000,
+        .placed = true,
+        .zoom = 1.5,
+    };
+    const shifted = camera.offset(4, -2);
+    try std.testing.expectEqual(@as(f32, 10.5), camera.x);
+    try std.testing.expectEqual(@as(f32, 23.25), camera.y);
+    try std.testing.expectEqual(@as(f32, 14.5), shifted.x);
+    try std.testing.expectEqual(@as(f32, 21.25), shifted.y);
+    try std.testing.expectEqual(camera.view_w, shifted.view_w);
+    try std.testing.expectEqual(camera.view_h, shifted.view_h);
+    try std.testing.expectEqual(camera.zoom, shifted.zoom);
+    try std.testing.expectEqual(camera.placed, shifted.placed);
+    try std.testing.expectEqual(@as(f32, 6), shifted.screenX(20));
+    try std.testing.expectEqual(@as(f32, 19), shifted.screenY(40));
+}
+
+test "a non-finite camera offset leaves only that axis unchanged" {
+    const camera = Camera{ .x = 10, .y = 20, .view_w = 320, .view_h = 180, .world_w = 1000, .world_h = 1000 };
+    const shifted = camera.offset(std.math.nan(f32), 3);
+    try std.testing.expectEqual(@as(f32, 10), shifted.x);
+    try std.testing.expectEqual(@as(f32, 23), shifted.y);
 }
 
 test "a factor-one scrolled camera matches the original screen coordinates" {

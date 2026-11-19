@@ -68,6 +68,8 @@ pub const GamepadButton = @import("../platform/types.zig").GamepadButton;
 pub const GamepadAxis = @import("../platform/types.zig").GamepadAxis;
 pub const camera = @import("../renderer/camera.zig");
 pub const Camera = @import("../renderer/camera.zig").Camera;
+/// Deterministic game-owned draw-time camera shake. It does not update automatically.
+pub const Shake = @import("../renderer/shake.zig").Shake;
 pub const Rect = @import("../renderer/sprite.zig").Rect;
 pub const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
 /// A point light for lit sprites, added with `SpriteBatch.addLight` in `draw`. See renderer/sprite.zig.

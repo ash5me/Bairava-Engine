@@ -38,6 +38,7 @@ pub const GamepadButton = engine.GamepadButton;
 pub const GamepadAxis = engine.GamepadAxis;
 pub const camera = engine.camera;
 pub const Camera = engine.Camera;
+pub const Shake = engine.Shake;
 pub const Rect = engine.Rect;
 pub const SpriteBatch = engine.SpriteBatch;
 pub const Light = engine.Light;
