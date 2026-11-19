@@ -1,2 +1,5 @@
 tile assets/tile.png
 warrior assets/warrior_16x32.png
+forest_tree assets/forest_tree.png
+forest_bush assets/forest_bush.png
+forest_rock assets/forest_rock.png

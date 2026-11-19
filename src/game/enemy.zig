@@ -6,6 +6,7 @@
 const std = @import("std");
 const engine = @import("bairava");
 const enemy_ai = @import("enemy_ai.zig");
+const draw_depth = @import("draw_depth.zig");
 const Facing = @import("player.zig").Facing;
 
 const nav = engine.navigation;
@@ -103,6 +104,11 @@ pub const Enemy = struct {
         return self.brain.state == .chase;
     }
 
+    /// Ground-contact Y at the blended feet-box position used to draw the sprite.
+    pub fn drawDepthY(self: *const Enemy, alpha: f32) f32 {
+        return draw_depth.interpolatedFeetBottom(self.prev_y, self.y, alpha, feet_px);
+    }
+
     /// Runs one update step: decides, plans when the decision or the target changes, then walks and animates.
     pub fn update(self: *Enemy, stage: Stage) void {
         const grid = nav.Grid.init(stage.map);
@@ -127,7 +133,7 @@ pub const Enemy = struct {
 
     /// Queues the enemy's current frame at its blended position, relative to the camera. The sprite is the warrior's,
     /// tinted, so it reads as an enemy.
-    pub fn draw(self: *const Enemy, batch: *engine.SpriteBatch, atlas: *const engine.Texture, sheet: engine.atlas.Region, cam: *const engine.Camera, alpha: f32) void {
+    pub fn draw(self: *const Enemy, batch: *engine.SpriteBatch, atlas: *const engine.Texture, sheet: engine.atlas.Region, cam: *const engine.Camera, alpha: f32, z: i32) void {
         const x = self.prev_x + (self.x - self.prev_x) * alpha;
         const y = self.prev_y + (self.y - self.prev_y) * alpha;
         const frame = self.timeline.frame();
@@ -143,7 +149,7 @@ pub const Enemy = struct {
             .w = @floatFromInt(frame.w),
             .h = @floatFromInt(frame.h),
         };
-        batch.drawSprite(atlas, src, dst, .{ .tint = tint });
+        batch.drawSprite(atlas, src, dst, .{ .tint = tint, .z = z, .depth_y = self.drawDepthY(alpha) });
     }
 
     /// Queues the debug view: the feet, and the cells left on the route, from the next waypoint to the goal.

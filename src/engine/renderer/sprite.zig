@@ -42,9 +42,14 @@ pub const Options = struct {
     /// Clockwise rotation in radians around `origin`. Screen y points down, so a positive angle turns
     /// clockwise as seen on screen.
     rotation: f32 = 0,
-    /// Draw order. Lower values draw first. Sprites with equal values keep the order they were added in.
-    /// Batches only merge neighbors with the same texture, so alternating textures in z order costs draw calls.
+    /// Primary draw order. Lower values draw first and always sort before depth_y. Sprites with equal z and depth_y
+    /// keep the order they were added in. Batches only merge neighbors with the same texture, so alternating textures
+    /// in draw order costs draw calls.
     z: i32 = 0,
+    /// Caller-supplied ground-contact Y, compared only between sprites with equal z. Larger values draw later because
+    /// screen Y grows downward. Zero leaves the default order unchanged. Within one z band, callers must either give
+    /// every position-sorted sprite a depth_y or put manually ordered sprites in a separate z band.
+    depth_y: f32 = 0,
     /// A normal map that lights the sprite with the batch's point lights. Its colors store unit normals as 0..1 per
     /// channel: x points right, y points down the image, and z points out of the screen. It must be the same size as
     /// the texture and read at the same source rectangle, so the sprite's texel coordinates index both. The normals
@@ -117,12 +122,13 @@ const initial_sprites = 1024;
 const initial_batches = 64;
 
 /// One queued sprite. Its corners are in the order drawSprite writes them: top-left, bottom-left,
-/// bottom-right, top-right. `seq` is the order the sprite was added in. It breaks ties in the z sort.
+/// bottom-right, top-right. `seq` is the order the sprite was added in. It breaks ties in the z/depth sort.
 const Quad = struct {
     texture: *const Texture,
     normal: ?*const Texture,
     corners: [vertices_per_quad]Vertex,
     z: i32,
+    depth_y: f32,
     seq: u32,
     src: Rect = undefined,
     dst: Rect = undefined,
@@ -154,7 +160,7 @@ pub const SpriteBatch = struct {
     gpu_state: *SpriteBatchHandle,
     allocator: std.mem.Allocator,
 
-    /// Sprites queued this frame, in the order they were added. `prepare` sorts them by z in place.
+    /// Sprites queued this frame, in the order they were added. `prepare` sorts them by z, depth_y, and sequence in place.
     /// Heap-allocated, and doubled when a frame needs more.
     quads: []Quad = &.{},
     /// Sprites queued this frame. Each one is a quad.
@@ -300,9 +306,11 @@ pub const SpriteBatch = struct {
     }
 
     /// Queues one sprite. `src` is the texel rectangle to sample, and `dst` is the on-screen rectangle
-    /// in pixels, before `opts` applies. `opts` sets the tint, alpha, flip, origin, rotation, and z.
-    /// Sprites draw in z order, and sprites with equal z draw in the order they were added.
+    /// in pixels, before `opts` applies. `opts` sets tint, alpha, flip, origin, rotation, z, and depth_y. Depth is
+    /// caller-supplied; the batch does not infer it from the destination rectangle or camera.
+    /// Sprites draw in z/depth_y order; equal keys draw in the order they were added.
     pub fn drawSprite(self: *SpriteBatch, texture_ref: *const Texture, src: Rect, dst: Rect, opts: Options) void {
+        if (!finiteDepthY(opts.depth_y)) std.debug.panic("sprite depth_y must be finite, got {d}", .{opts.depth_y});
         // A normal map indexes the same texels as the texture, so the two must have the same size.
         if (opts.normal) |map| {
             if (map.width != texture_ref.width or map.height != texture_ref.height) {
@@ -321,6 +329,7 @@ pub const SpriteBatch = struct {
             .normal = normal,
             .corners = cornersFor(&self.projection, texture_ref, src, dst, opts),
             .z = opts.z,
+            .depth_y = opts.depth_y,
             .seq = self.sprite_count,
             .src = src,
             .dst = dst,
@@ -340,7 +349,7 @@ pub const SpriteBatch = struct {
         const zone = profile.zoneNamed(@src(), "sprite prepare");
         defer zone.End();
         const queued = self.quads[0..self.sprite_count];
-        if (!inZOrder(queued)) heapSort(queued);
+        if (!inDrawOrder(queued)) heapSort(queued);
 
         self.vertex_count = 0;
         self.batch_count = 0;
@@ -559,19 +568,24 @@ fn turned(x: f32, y: f32, s: f32, co: f32) [2]f32 {
     return .{ x * co - y * s, x * s + y * co };
 }
 
-/// True when the quads are already in non-decreasing z order, so no sort is needed. Most frames are.
-fn inZOrder(quads: []const Quad) bool {
+/// True when the quads are already in draw order, so no sort is needed. Most frames are.
+fn inDrawOrder(quads: []const Quad) bool {
     var i: usize = 1;
     while (i < quads.len) : (i += 1) {
-        if (quads[i].z < quads[i - 1].z) return false;
+        if (quadBefore(quads[i], quads[i - 1])) return false;
     }
     return true;
 }
 
-/// Quads sort by z, and then by the order they were added. The second key makes every quad distinct,
-/// so the heap sort below gives the same result a stable sort would.
+/// Quads sort by z, then caller-supplied depth, then the order they were added. The final key makes every quad
+/// distinct, so the heap sort below gives the same result a stable sort would.
 fn quadBefore(a: Quad, b: Quad) bool {
-    return a.z < b.z or (a.z == b.z and a.seq < b.seq);
+    return a.z < b.z or
+        (a.z == b.z and (a.depth_y < b.depth_y or (a.depth_y == b.depth_y and a.seq < b.seq)));
+}
+
+fn finiteDepthY(depth_y: f32) bool {
+    return std.math.isFinite(depth_y);
 }
 
 /// Sifts the quad at `root` down until the heap property holds below it, within the first `end` quads.
@@ -587,7 +601,7 @@ fn siftDown(quads: []Quad, root_start: usize, end: usize) void {
     }
 }
 
-/// Sorts the quads in place by z, then by insertion order. Heap sort needs no extra memory.
+/// Sorts the quads in place by z, depth_y, then insertion order. Heap sort needs no extra memory.
 fn heapSort(quads: []Quad) void {
     if (quads.len < 2) return;
     var start = quads.len / 2;
@@ -637,4 +651,11 @@ fn allocBatches(allocator: std.mem.Allocator, count: usize) []Batch {
 /// memory, so it is skipped.
 fn freeSlice(allocator: std.mem.Allocator, comptime T: type, slice: []T) void {
     if (slice.len != 0) allocator.free(slice);
+}
+
+test "sprite depth_y accepts only finite values" {
+    try std.testing.expect(finiteDepthY(0));
+    try std.testing.expect(finiteDepthY(1.5));
+    try std.testing.expect(!finiteDepthY(std.math.nan(f32)));
+    try std.testing.expect(!finiteDepthY(std.math.inf(f32)));
 }

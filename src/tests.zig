@@ -57,6 +57,7 @@ test {
     _ = @import("game/level_data.zig");
     _ = @import("game/prefab.zig");
     _ = @import("game/save.zig");
+    _ = @import("game/draw_depth.zig");
     _ = @import("engine/renderer/debug_geometry.zig");
     _ = @import("engine/memory/hash_map.zig");
     _ = @import("engine/assets/registry.zig");
@@ -471,6 +472,55 @@ test "sprites draw in z order, and equal z keeps the order they were added" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.1), batch.vertices[8].color[0], 1e-6);
     // All three share a texture, so they still draw as one batch.
     try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
+}
+
+test "sprites sort by caller depth inside z while preserving equal-depth order" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 48);
+    const src = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    // The tall sprite starts higher but its contact point is lower, so it draws last.
+    batch.drawSprite(&tex, src, .{ .x = 0, .y = -8, .w = 16, .h = 48 }, .{ .tint = .{ 0.1, 0, 0 }, .depth_y = 40 });
+    batch.drawSprite(&tex, src, .{ .x = 0, .y = 0, .w = 16, .h = 32 }, .{ .tint = .{ 0.2, 0, 0 }, .depth_y = 32 });
+    batch.drawSprite(&tex, src, .{ .x = 8, .y = 0, .w = 16, .h = 32 }, .{ .tint = .{ 0.3, 0, 0 }, .depth_y = 32 });
+    batch.prepare();
+
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), batch.vertices[0].color[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.3), batch.vertices[4].color[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.1), batch.vertices[8].color[0], 1e-6);
+}
+
+test "z ordering takes precedence over depth and depth inversion triggers sorting" {
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = testBatch(&no_vertices, &no_batches);
+    defer freeTestBatch(&batch);
+    const tex = testTexture(16, 16);
+    const quad = sprite.Rect{ .x = 0, .y = 0, .w = 16, .h = 16 };
+
+    batch.begin(320, 180);
+    // z is already non-decreasing, but the first two quads are not depth-sorted.
+    batch.drawSprite(&tex, quad, quad, .{ .tint = .{ 0.1, 0, 0 }, .z = 0, .depth_y = 10 });
+    batch.drawSprite(&tex, quad, quad, .{ .tint = .{ 0.2, 0, 0 }, .z = 0, .depth_y = 0 });
+    // The higher z still draws last, regardless of its smaller depth.
+    batch.drawSprite(&tex, quad, quad, .{ .tint = .{ 0.3, 0, 0 }, .z = 1, .depth_y = -1000 });
+    batch.prepare();
+
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), batch.vertices[0].color[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.1), batch.vertices[4].color[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.3), batch.vertices[8].color[0], 1e-6);
+}
+
+test "player and enemy draw depths use blended feet positions" {
+    const draw_depth = @import("game/draw_depth.zig");
+    const player_contact_offset: f32 = 16 + 16;
+    const enemy_feet_height: f32 = 16;
+    try std.testing.expectEqual(@as(f32, 47), draw_depth.interpolatedFeetBottom(10, 30, 0.25, player_contact_offset));
+    try std.testing.expectEqual(@as(f32, 31), draw_depth.interpolatedFeetBottom(10, 30, 0.25, enemy_feet_height));
 }
 
 test "the z sort orders many sprites, with ties in the order they were added" {

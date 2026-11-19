@@ -19,8 +19,36 @@ const script_host = @import("script_host.zig");
 
 const log = engine.log.scoped("game");
 
+/// Explicit tile-layer bands sit behind and in front of the actor band, whose sprites sort by contact-point Y.
+const ground_z: i32 = -20;
+const decoration_z: i32 = -10;
+const actor_z: i32 = 0;
+const foreground_z: i32 = 10;
 /// Draw order of the panel. Sprites sort by z, so this places the panel above the world and the player.
 const ui_z: i32 = 1000;
+
+const ForestCell = struct { col: u32, row: u32 };
+const forest_trees = [_]ForestCell{
+    .{ .col = 11, .row = 9 },
+    .{ .col = 16, .row = 7 },
+    .{ .col = 24, .row = 7 },
+    .{ .col = 29, .row = 9 },
+    .{ .col = 12, .row = 15 },
+    .{ .col = 27, .row = 15 },
+    .{ .col = 17, .row = 18 },
+    .{ .col = 23, .row = 18 },
+};
+const forest_bushes = [_]ForestCell{
+    .{ .col = 14, .row = 11 },
+    .{ .col = 25, .row = 11 },
+    .{ .col = 16, .row = 16 },
+    .{ .col = 25, .row = 16 },
+};
+const forest_rocks = [_]ForestCell{
+    .{ .col = 13, .row = 10 },
+    .{ .col = 27, .row = 10 },
+    .{ .col = 19, .row = 17 },
+};
 
 /// Width of the panel in view pixels. Wide enough for a keybind row: the action's name at the left, its keys at the right.
 const panel_w: f32 = 140;
@@ -52,6 +80,9 @@ pub const Game = struct {
     /// The atlas regions of the sprites this game draws.
     tile: engine.atlas.Region,
     warrior: engine.atlas.Region,
+    forest_tree: engine.atlas.Region,
+    forest_bush: engine.atlas.Region,
+    forest_rock: engine.atlas.Region,
     /// The entity templates from the prefab file. A placement names one of them by its index.
     prefabs: prefab.Registry,
     /// One entity for each placement the level metadata makes. Each row names the prefab it was made from.
@@ -109,6 +140,9 @@ pub const Game = struct {
 
         const tile = atlas.region("tile");
         const warrior = atlas.region("warrior");
+        const forest_tree = atlas.region("forest_tree");
+        const forest_bush = atlas.region("forest_bush");
+        const forest_rock = atlas.region("forest_rock");
         var animations = loadAnimations(ctx, config.animation_path, warrior.w, warrior.h) catch |err| {
             log.err("required animation data '{s}' failed to load: {s}", .{ config.animation_path, @errorName(err) });
             return err;
@@ -185,6 +219,9 @@ pub const Game = struct {
             .animations = animations,
             .tile = tile,
             .warrior = warrior,
+            .forest_tree = forest_tree,
+            .forest_bush = forest_bush,
+            .forest_rock = forest_rock,
             .prefabs = registry,
             .entities = entities,
             .ui = ui,
@@ -564,15 +601,16 @@ pub const Game = struct {
         dc.cam.world_h = self.level.heightPx();
         dc.cam.followSmooth(center.x, center.y, dc.dt, config.camera_rate);
 
-        // Draw order: ground, decoration, placed entities, the player, and then foreground, which can cover the player.
+        // Explicit z bands keep terrain ordering independent of actor feet depth.
         const tiles = &self.atlas.texture;
         const map = &self.level.map;
-        if (dc.layers.ground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .ground, .{});
-        if (dc.layers.decoration) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .decoration, .{});
+        if (dc.layers.ground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .ground, .{ .z = ground_z });
+        if (dc.layers.decoration) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .decoration, .{ .z = decoration_z });
+        self.drawForest(dc.batch, tiles, dc.cam);
         self.drawPlaced(dc.batch, tiles, dc.cam);
         self.drawEnemies(dc.batch, tiles, dc.cam, dc.alpha);
-        self.player.draw(dc.batch, tiles, self.warrior, dc.cam, dc.alpha);
-        if (dc.layers.foreground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .foreground, .{});
+        self.player.draw(dc.batch, tiles, self.warrior, dc.cam, dc.alpha, actor_z);
+        if (dc.layers.foreground) engine.tilemap_draw.drawLayer(map, dc.batch, tiles, self.tile, dc.cam, .foreground, .{ .z = foreground_z });
 
         // Debug geometry is queued as shapes, and only while its switch is on, so an idle build does no work.
         if (dc.show.tiles) engine.debug_geometry.drawGrid(map, dc.debug, dc.cam);
@@ -607,7 +645,15 @@ pub const Game = struct {
 
     /// Queues every enemy's frame. They are drawn before the player, so the player stands in front of them.
     fn drawEnemies(self: *const Game, batch: *engine.SpriteBatch, texture: *const engine.Texture, cam: *const engine.Camera, alpha: f32) void {
-        for (self.enemies) |*each| each.draw(batch, texture, self.warrior, cam, alpha);
+        for (self.enemies) |*each| each.draw(batch, texture, self.warrior, cam, alpha, actor_z);
+    }
+
+    /// Trees, bushes, and rocks sit at their ground-contact Y in the actor band, so walking behind or in front
+    /// changes their painter's order without using sprite height or camera position.
+    fn drawForest(self: *const Game, batch: *engine.SpriteBatch, texture: *const engine.Texture, cam: *const engine.Camera) void {
+        for (forest_trees) |cell| drawForestProp(batch, texture, self.forest_tree, cam, cell);
+        for (forest_bushes) |cell| drawForestProp(batch, texture, self.forest_bush, cam, cell);
+        for (forest_rocks) |cell| drawForestProp(batch, texture, self.forest_rock, cam, cell);
     }
 
     /// Queues one sprite for each placed entity. The sprite is the tile its prefab names, read from the tileset the same
@@ -626,13 +672,17 @@ pub const Game = struct {
                 .w = tile_px,
                 .h = tile_px,
             };
+
             const dst = engine.Rect{
                 .x = cam.screenX(@as(f32, @floatFromInt(placed.col)) * tile_px),
                 .y = cam.screenY(@as(f32, @floatFromInt(placed.row)) * tile_px),
                 .w = tile_px,
                 .h = tile_px,
             };
-            batch.drawSprite(texture, src, dst, .{});
+            batch.drawSprite(texture, src, dst, .{
+                .z = actor_z,
+                .depth_y = @as(f32, @floatFromInt(placed.row + 1)) * tile_px,
+            });
         }
     }
 
@@ -765,6 +815,36 @@ pub const Game = struct {
         log.info("cleared save slot {d}", .{self.save_slot + 1});
     }
 };
+
+fn drawForestProp(
+    batch: *engine.SpriteBatch,
+    texture: *const engine.Texture,
+    region: engine.atlas.Region,
+    cam: *const engine.Camera,
+    cell: ForestCell,
+) void {
+    const tile_px = engine.tilemap.tile_px;
+    const foot_x = (@as(f32, @floatFromInt(cell.col)) + 0.5) * tile_px;
+    const foot_y = @as(f32, @floatFromInt(cell.row + 1)) * tile_px;
+    const width: f32 = @floatFromInt(region.w);
+    const height: f32 = @floatFromInt(region.h);
+    batch.drawSprite(
+        texture,
+        .{
+            .x = @floatFromInt(region.x),
+            .y = @floatFromInt(region.y),
+            .w = width,
+            .h = height,
+        },
+        .{
+            .x = cam.screenX(foot_x - width / 2),
+            .y = cam.screenY(foot_y - height),
+            .w = width,
+            .h = height,
+        },
+        .{ .z = actor_z, .depth_y = foot_y },
+    );
+}
 
 /// One enemy for each home cell the level names. Each enemy gets its own brain seed, so the enemies wander differently.
 fn spawnEnemies(allocator: std.mem.Allocator, homes: []const level_data.Spawn, clips: *const enemy.Clips) std.mem.Allocator.Error![]enemy.Enemy {

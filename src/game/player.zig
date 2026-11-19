@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const engine = @import("bairava");
+const draw_depth = @import("draw_depth.zig");
 
 /// The sprite frames are 16x32 pixels. The validated animation file defines their rectangles.
 const width: f32 = 16.0;
@@ -93,6 +94,16 @@ pub const Player = struct {
         };
     }
 
+    /// Ground-contact Y at the same interpolated position used to draw the sprite.
+    pub fn drawDepthY(self: *const Player, alpha: f32) f32 {
+        return draw_depth.interpolatedFeetBottom(
+            self.prev_y,
+            self.transform.position[1],
+            alpha,
+            collide_top + collide_h,
+        );
+    }
+
     /// Center of the sprite to draw at, blended between the last two updates.
     pub fn drawCenter(self: *const Player, alpha: f32) Point {
         const top_left = self.drawPosition(alpha);
@@ -167,18 +178,20 @@ pub const Player = struct {
         sheet: engine.atlas.Region,
         cam: *const engine.Camera,
         alpha: f32,
+        z: i32,
     ) void {
         const pos = self.drawPosition(alpha);
         const x = cam.screenX(pos.x);
         const y = cam.screenY(pos.y);
+        const depth_y = self.drawDepthY(alpha);
         const pose = self.machine.pose();
-        if (pose.previous) |previous| drawFrame(batch, atlas, sheet, previous, x, y, 1);
-        drawFrame(batch, atlas, sheet, pose.frame, x, y, pose.weight);
+        if (pose.previous) |previous| drawFrame(batch, atlas, sheet, previous, x, y, depth_y, z, 1);
+        drawFrame(batch, atlas, sheet, pose.frame, x, y, depth_y, z, pose.weight);
     }
 };
 
 /// Queues one animation frame at (x, y), in view pixels, at `alpha`.
-fn drawFrame(batch: *engine.SpriteBatch, atlas: *const engine.Texture, sheet: engine.atlas.Region, frame: *const engine.animation.Frame, x: f32, y: f32, alpha: f32) void {
+fn drawFrame(batch: *engine.SpriteBatch, atlas: *const engine.Texture, sheet: engine.atlas.Region, frame: *const engine.animation.Frame, x: f32, y: f32, depth_y: f32, z: i32, alpha: f32) void {
     const src = engine.Rect{
         .x = @floatFromInt(sheet.x + frame.x),
         .y = @floatFromInt(sheet.y + frame.y),
@@ -192,5 +205,5 @@ fn drawFrame(batch: *engine.SpriteBatch, atlas: *const engine.Texture, sheet: en
         .w = @floatFromInt(frame.w),
         .h = @floatFromInt(frame.h),
     };
-    batch.drawSprite(atlas, src, dst, .{ .alpha = alpha });
+    batch.drawSprite(atlas, src, dst, .{ .alpha = alpha, .z = z, .depth_y = depth_y });
 }
