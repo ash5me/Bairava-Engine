@@ -18,6 +18,17 @@ static ui_quad_list list;
 static ui_context ui;
 static ui_font font;
 
+static float measure_text(void *context, uint64_t font_id, const char *text, size_t len) {
+    (void)font_id;
+    return ui_font_text_width((ui_font *)context, text, len);
+}
+
+static void draw_text(void *context, uint64_t font_id, ui_quad_list *out, float x, float y,
+                      const char *text, size_t len, ui_color color) {
+    (void)font_id;
+    ui_font_draw_text((ui_font *)context, out, x, y, text, len, color);
+}
+
 static void dump_list(const char *tag, const ui_quad_list *l) {
     int i;
     printf("%s count=%d dropped=%d\n", tag, l->count, l->dropped);
@@ -49,7 +60,7 @@ int main(void) {
 
     /* Widgets over five frames. Rows: label y 10..25, button y 28..43, slider y 46..61 (line height 9, pad 3,
      * spacing 3). Frames 0-2 hover, press, and release the button. Frames 3-4 press and release the slider. */
-    ui_init(&ui, &font);
+    ui_init(&ui, (float)font.line_height, &font, 1, measure_text, draw_text);
     for (i = 0; i < 5; i++) {
         int on_button = i < 3;
         memset(&in, 0, sizeof in);

@@ -8,8 +8,7 @@
 //! - a line's baseline is the rounded line top plus the rounded ascent, so each line rounds on its own;
 //! - a glyph with no ink produces no record but still moves the pen.
 //!
-//! Records do not own atlas memory. A record's page must have been flushed to the GPU before the draw that samples it.
-//! That flush is a Phase 5 renderer task, not something this file does.
+//! Records do not own atlas memory. The runtime flushes their page updates before either renderer submits draws.
 //!
 //! On error the records appended before the failing glyph stay in `out`. The caller decides whether to draw them.
 
@@ -66,7 +65,7 @@ pub fn build(
         const line_top = y + @as(f32, @floatFromInt(index)) * lay.line_height;
         const baseline = @round(line_top) + ascent_px;
         var pen = x + line.x_offset;
-        for (lay.glyphsOf(line)) |glyph| {
+        for (shaped_layout.glyphsOf(lay, index)) |glyph| {
             const resolved = try glyph_resolver.resolveWithFallback(
                 cache,
                 options.font_id,
@@ -161,8 +160,8 @@ test "the pen moves by the shaped advance, so V after A is placed by the kerned 
     try build(testing.allocator, &records, &cache, &font, &lay, 0, 0, .{ .font_id = font_id, .fallback_glyph_id = 0 });
     try testing.expectEqual(@as(usize, 2), records.items.len);
 
-    const kerned_pen = lay.glyphsOf(lay.lines[0])[0].x_advance;
-    const v_metrics = try font.glyphMetrics(lay.glyphsOf(lay.lines[0])[1].glyph_id);
+    const kerned_pen = shaped_layout.glyphsOf(&lay, 0)[0].x_advance;
+    const v_metrics = try font.glyphMetrics(shaped_layout.glyphsOf(&lay, 0)[1].glyph_id);
     try testing.expectEqual(@round(kerned_pen + v_metrics.xoff), records.items[1].dst_x);
     // The unkerned advance of A would round to a different pixel, so this check tells the two apart.
     const alone = try font.glyphMetrics(arial_glyph_a);
@@ -186,7 +185,7 @@ test "a space moves the pen and draws nothing" {
     try build(testing.allocator, &records, &cache, &font, &lay, 0, 0, .{ .font_id = font_id, .fallback_glyph_id = 0 });
     // A and B have ink, the space between them does not.
     try testing.expectEqual(@as(usize, 2), records.items.len);
-    const glyphs = lay.glyphsOf(lay.lines[0]);
+    const glyphs = shaped_layout.glyphsOf(&lay, 0);
     const b_metrics = try font.glyphMetrics(glyphs[2].glyph_id);
     const b_pen = glyphs[0].x_advance + glyphs[1].x_advance;
     try testing.expectEqual(@round(b_pen + glyphs[2].x_offset + b_metrics.xoff), records.items[1].dst_x);

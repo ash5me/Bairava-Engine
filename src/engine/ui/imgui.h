@@ -13,6 +13,7 @@
 #define UI_IMGUI_H
 
 #include "../text/text.h"
+#include <stdint.h>
 
 /* Pointer and key state for one frame, in the same pixels the UI is drawn in. */
 typedef struct ui_input {
@@ -32,8 +33,16 @@ typedef struct ui_theme {
     float spacing; /* space between widgets, in pixels */
 } ui_theme;
 
+typedef float (*ui_text_width_fn)(void *font_context, uint64_t font_id, const char *text, size_t len);
+typedef void (*ui_draw_text_fn)(void *font_context, uint64_t font_id, ui_quad_list *out, float x, float y,
+                                const char *text, size_t len, ui_color color);
+
 typedef struct ui_context {
-    ui_font *font;
+    float line_height;
+    void *font_context;
+    uint64_t font_id;
+    ui_text_width_fn text_width;
+    ui_draw_text_fn draw_text;
     ui_theme theme;
     ui_input in;
     unsigned hot;          /* the widget under the pointer, or 0 */
@@ -45,7 +54,8 @@ typedef struct ui_context {
     ui_quad_list list;     /* this frame's quads, in draw order */
 } ui_context;
 
-void ui_init(ui_context *ui, ui_font *font);
+void ui_init(ui_context *ui, float line_height, void *font_context, uint64_t font_id,
+             ui_text_width_fn text_width, ui_draw_text_fn draw_text);
 void ui_begin(ui_context *ui, const ui_input *in, float x, float y, float w);
 void ui_end(ui_context *ui);
 void ui_cancel_listening(ui_context *ui);

@@ -111,12 +111,12 @@ test "Tamil words wrap at their space, and the conjunct on the second line keeps
     try testing.expectEqual(@as(usize, 2), result.lines.len);
     try testing.expectEqualStrings(word, result.lines[0].text);
     try testing.expectEqualStrings("\u{0B95}\u{0BCD}\u{0BB7}", result.lines[1].text);
-    const second = result.glyphsOf(result.lines[1]);
+    const second = shaped_layout.glyphsOf(&result, 1);
     try testing.expectEqual(@as(usize, 1), second.len);
     try testing.expectEqual(@as(u32, 16), second[0].cluster);
-    for (result.lines) |line| {
+    for (result.lines, 0..) |line, index| {
         var sum: f32 = 0;
-        for (result.glyphsOf(line)) |g| sum += g.x_advance;
+        for (shaped_layout.glyphsOf(&result, index)) |g| sum += g.x_advance;
         try testing.expectApproxEqAbs(line.width, sum, 1e-4);
     }
 }

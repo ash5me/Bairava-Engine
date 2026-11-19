@@ -518,8 +518,8 @@ pub const Context = struct {
     }
 
     /// Loads a TrueType glyf outline font at `pixel_height`. The size is fixed into the face when it is loaded.
-    /// Unsupported outline formats and invalid files return `FontLoadFailed`; runtime text drawing is not available
-    /// until the page-aware renderer upload and binding hook is implemented.
+    /// Unsupported outline formats and invalid files return `FontLoadFailed`. Text uses the session atlas and the
+    /// common Canvas/Ui submission path.
     pub fn loadOutlineFont(self: *const Context, relative: []const u8, pixel_height: f32) AssetError!font_registry.FontHandle {
         var face: runtime_font.RuntimeFont = undefined;
         if (self.jobs) |pool| {

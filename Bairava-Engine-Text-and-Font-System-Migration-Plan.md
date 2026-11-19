@@ -698,13 +698,13 @@ Corrected: the frames-in-flight comments in `glyph_cache.zig` and `glyph_atlas.z
 ### Needs — must implement
 
 - [x] Shape a complete text run before measuring it for line placement. Use shaped advances/offsets rather than summing codepoint widths. *(Done, CPU: `shaped_layout.zig` shapes each candidate line before measuring it, and keeps each line's own shaped glyphs. `shaper_tamil_test.zig` covers Tamil.)*
-- [x] Carry clusters through layout and only split lines at approved cluster/grapheme boundaries. Do not reuse the current codepoint-only long-word splitter for complex shaped runs. *(Done for shaped runs, CPU: a word splits only at cluster starts, and a ligature that spans graphemes is never split. `layout.zig` keeps the codepoint splitter for the BFNT path, which stays as it is.)*
+- [x] Carry clusters through layout and only split lines at approved cluster/grapheme boundaries. Do not reuse the current codepoint-only long-word splitter for complex shaped runs. *(Done for shaped runs, CPU: a word splits only at cluster starts, and a ligature that spans graphemes is never split. `layout.zig` keeps the codepoint splitter for static BFNT and bitmap providers.)*
 - [x] Define line-break policy for the first release. Start with explicit newlines and supported whitespace breaks; add full Unicode line-break conformance only as a separately scoped capability. *(Done: the policy is written in the `shaped_layout.zig` header. Known limit: a combining mark directly after a space.)*
 - [~] Preserve baseline, ascent/descent, line height, blank-line, alignment, and pixel-snapping behavior for existing UI fonts. *(Partly: `glyph_records.zig` uses the legacy formulas (rounded line top, rounded ascent, one rounding per glyph), and its tests check them for the runtime font. The existing UI fonts are not yet compared against screenshots, which needs a device.)*
 - [x] Produce glyph render records from the appropriate provider after shaping/layout: bitmap mapping and runtime coverage use page-aware records; static BFNT stays in its private C adapter.
 - [x] Add a common glyph-quad submission path supporting texture page, UV, plane bounds, tint/alpha, and render mode. Runtime/bitmap records are submitted to the UI quad list and resolve to stable atlas page textures before sprite submission.
 - [x] Preserve or deliberately version `Canvas.text`, `textWidth`, `layoutText`, and `drawTextLayout` so game code does not have to manage glyph IDs or atlas pages. D-05 is accepted; the existing signatures remain.
-- [ ] Migrate the debug overlay, developer console, widgets, and game-owned text call sites. Blocked: D-05, E-03. D-19 requires the BFNT draw and measure path to go through the common text API before this item closes.
+- [x] Migrate the debug overlay, developer console, widgets, and game-owned text call sites. The overlay, console, and game use `Canvas`/`Ui`; C widget callbacks now dispatch measurement and drawing through `FontStore`. Device visual acceptance remains tracked below (E-03/E-04).
 - [-] Sample scene: N/A. `sample/main.zig` and `sample/benchmark.zig` draw textures only and call no text API (checked in this pass; section 6.5).
 - [ ] Preserve clipping, z-order, tint, alpha blending, pixel snapping, and integer viewport scaling. Verification: E-03.
 - [x] Keep rectangle drawing independent from font resources. The batch-owned white texture serves solid quads; they do not sample a font atlas.
@@ -723,7 +723,7 @@ UI widgets, the developer console, and the debug overlay use the shared text sys
 
 ### Exit gate — Phase 5 is complete only when
 
-- [ ] Existing text consumers work without importing private text/renderer internals.
+- [x] Existing text consumers work without importing private text/renderer internals. The build, tests, and D-21 boundary scan pass.
 - [~] Latin and Tamil reference strings render with correct glyph order, positioning, and cluster behavior. *(Shaping and layout are CPU-verified for Latin and Tamil in the repo. The Tamil font was approved and checked in on 2026-11-18, and its tests are registered. Glyph order on screen is not verified.)*
 - [~] Measurements and wrapping match rendered results. *(CPU: width equals the sum of glyph advances, measure equals shape, and record pens use shaped advances. Rendered results need a device.)*
 - [x] Long strings, blank lines, missing glyphs, malformed UTF-8, and empty glyphs have deterministic behavior. *(Done, CPU-tested: long words, blank lines, glyph 0 for unmapped characters, malformed UTF-8, and zero-ink spaces.)*
@@ -758,7 +758,7 @@ UI widgets, the developer console, and the debug overlay use the shared text sys
 
 **Still open (Phase 5 is not complete):**
 - Validate the SDL3 2D path, text appearance, clipping, z-order, and reference screenshots on a device (E-03/E-04).
-- Preserve existing `Canvas` signatures and BFNT widget compatibility; runtime/bitmap fonts are not added to the C widget path.
+- Preserve existing `Canvas` signatures and BFNT widget compatibility; C widget labels now use provider callbacks for BFNT, bitmap, and runtime coverage fonts.
 - The sample draws no text and is N/A (section 6.5).
 - `docs/text.md` is not rewritten. That belongs to Phase 8.
 - Shaping features are not configurable, and the Wants items are not started.
@@ -778,7 +778,7 @@ The following implementation status is authoritative and overrides any implicati
 - **Phase 2 implementation: not started.** D-08 and D-09 are decisions only. The BMFont importer/descriptor validation and the selected 8×8 example asset still need to be created, registered, and tested.
 - **Phase 3:** tests and shaping code exist; the pinned cross-platform CI evidence is now recorded under E-01. This does not waive the formal phase-entry dependency on Phases 1 and 2.
 - **Phase 4:** cache/atlas/resolver work and the production flush are integrated. E-02 passed with the overflow-safe region-spill burst; the SDL3 2D and remaining lifetime/visual checks are still open.
-- **Phase 5:** runtime glyph submission and its one frame flush are integrated. The SDL3 2D flush/device behavior and visual compatibility checks remain open; the C widgets intentionally stay on the BFNT compatibility path.
+- **Phase 5:** runtime glyph submission, provider-based widget measurement/drawing, and the shared GPU/SDL3 2D flush are integrated. SDL3 2D device behavior and visual compatibility checks remain open.
 - **Sample scene migration:** N/A. `sample/main.zig` and `sample/benchmark.zig` draw textures only and call no text API.
 - **Findings:** (1) `build.zig` line 204 links HarfBuzz into the shipped engine module. The comment at line 595 already says the engine module links HarfBuzz as well (`configureEngineModule`), so no change is needed in this upload. Owner-confirmed 2026-11-18. (2) Debug font defaults: `config.zig` and `application.zig` are both 9 px in this upload, which is the accepted value. Owner-confirmed 2026-11-18. (3) The sample scene has no text call sites, so there is nothing to migrate there.
 

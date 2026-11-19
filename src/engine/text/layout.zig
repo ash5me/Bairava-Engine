@@ -1,7 +1,8 @@
-//! Word wrapping and horizontal alignment over existing font metrics. This lays out codepoints
-//! without shaping them; glyph substitutions and complex-script positioning are not performed.
+//! Word wrapping and horizontal alignment for static providers. This lays out codepoints without shaping them; glyph
+//! substitutions and complex-script positioning are not performed.
 
 const std = @import("std");
+const shaper = @import("shaper.zig");
 
 pub const Alignment = enum { left, center, right };
 
@@ -17,14 +18,18 @@ pub const Layout = struct {
     width: f32,
     height: f32,
     line_height: f32,
+    /// Opaque provider-specific state retained for drawTextLayout; consumers must not inspect it.
+    shaped_data: ?*anyopaque = null,
+    shaped_data_deinit: ?*const fn (*anyopaque) void = null,
 
     pub fn deinit(self: *Layout) void {
         self.allocator.free(self.lines);
+        if (self.shaped_data) |data| self.shaped_data_deinit.?(data);
         self.* = undefined;
     }
 };
 
-pub const LayoutError = std.mem.Allocator.Error || error{ InvalidLineHeight, InvalidWidth };
+pub const LayoutError = std.mem.Allocator.Error || shaper.Error || error{ InvalidLineHeight, InvalidWidth };
 
 /// Wraps at spaces and tabs, preserves explicit newlines and blank lines, and splits words wider than
 /// the available width at UTF-8 codepoint boundaries. The returned line slices borrow `text`.

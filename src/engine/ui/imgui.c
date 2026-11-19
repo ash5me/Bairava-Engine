@@ -38,7 +38,7 @@ static int inside(ui_rect r, float x, float y) {
 }
 
 static float row_height(const ui_context *ui) {
-    return (float)ui->font->line_height + 2 * ui->theme.pad;
+    return ui->line_height + 2 * ui->theme.pad;
 }
 
 /* Takes the next row of the column. Rows stack downward with the theme's spacing between them. */
@@ -65,9 +65,14 @@ static int interact(ui_context *ui, unsigned id, ui_rect r) {
     return ui->active == id;
 }
 
-void ui_init(ui_context *ui, ui_font *font) {
+void ui_init(ui_context *ui, float line_height, void *font_context, uint64_t font_id,
+             ui_text_width_fn text_width, ui_draw_text_fn draw_text) {
     memset(ui, 0, sizeof *ui);
-    ui->font = font;
+    ui->line_height = line_height;
+    ui->font_context = font_context;
+    ui->font_id = font_id;
+    ui->text_width = text_width;
+    ui->draw_text = draw_text;
     ui->theme = (ui_theme){
         .text = { 0.95f, 0.95f, 0.95f, 1 },
         .button = { 0.22f, 0.24f, 0.30f, 1 },
@@ -115,7 +120,8 @@ void ui_clear(ui_context *ui) {
 void ui_label(ui_context *ui, const char *text) {
     size_t n = strlen(text);
     ui_rect r = next_row(ui, row_height(ui));
-    ui_font_draw_text(ui->font, &ui->list, r.x + ui->theme.pad, r.y + ui->theme.pad, text, shown_len(text, n), ui->theme.text);
+    ui->draw_text(ui->font_context, ui->font_id, &ui->list, r.x + ui->theme.pad, r.y + ui->theme.pad,
+                  text, shown_len(text, n), ui->theme.text);
 }
 
 int ui_button(ui_context *ui, const char *label) {
@@ -125,9 +131,10 @@ int ui_button(ui_context *ui, const char *label) {
     int held = interact(ui, id, r);
     int clicked = held && ui->in.mouse_released && inside(r, ui->in.mouse_x, ui->in.mouse_y);
     ui_color c = ui->active == id ? ui->theme.button_active : ui->hot == id ? ui->theme.button_hot : ui->theme.button;
-    float tw = ui_font_text_width(ui->font, label, shown);
+    float tw = ui->text_width(ui->font_context, ui->font_id, label, shown);
     fill(ui, r, c);
-    ui_font_draw_text(ui->font, &ui->list, r.x + (r.w - tw) * 0.5f, r.y + ui->theme.pad, label, shown, ui->theme.text);
+    ui->draw_text(ui->font_context, ui->font_id, &ui->list, r.x + (r.w - tw) * 0.5f, r.y + ui->theme.pad,
+                  label, shown, ui->theme.text);
     return clicked;
 }
 
@@ -153,7 +160,7 @@ int ui_slider(ui_context *ui, const char *label, float *value, float lo, float h
     fill(ui, track, ui->theme.track);
     fill(ui, (ui_rect){ track.x, track.y, track.w * t, track.h }, ui->theme.fill);
     fill(ui, (ui_rect){ knob_x - 2, r.y + pad, 4, r.h - 2 * pad }, ui->active == id ? ui->theme.fill : ui->theme.knob);
-    ui_font_draw_text(ui->font, &ui->list, r.x + pad, r.y + pad, label, shown, ui->theme.text);
+    ui->draw_text(ui->font_context, ui->font_id, &ui->list, r.x + pad, r.y + pad, label, shown, ui->theme.text);
     return changed;
 }
 
@@ -190,12 +197,12 @@ unsigned ui_keybind(ui_context *ui, const char *label, const char *value) {
         text = value;
         c = ui->active == id ? ui->theme.button_active : ui->hot == id ? ui->theme.button_hot : ui->theme.button;
     }
-    tw = ui_font_text_width(ui->font, text, strlen(text));
+    tw = ui->text_width(ui->font_context, ui->font_id, text, strlen(text));
     /* The text sits at the right of the box, and stays at its left edge when it is too wide to fit. */
     tx = box.x + box.w - pad - tw;
     if (tx < box.x + pad) tx = box.x + pad;
     fill(ui, box, c);
-    ui_font_draw_text(ui->font, &ui->list, tx, r.y + pad, text, strlen(text), ui->theme.text);
-    ui_font_draw_text(ui->font, &ui->list, r.x + pad, r.y + pad, label, shown, ui->theme.text);
+    ui->draw_text(ui->font_context, ui->font_id, &ui->list, tx, r.y + pad, text, strlen(text), ui->theme.text);
+    ui->draw_text(ui->font_context, ui->font_id, &ui->list, r.x + pad, r.y + pad, label, shown, ui->theme.text);
     return bound;
 }

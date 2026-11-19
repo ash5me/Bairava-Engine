@@ -18,6 +18,17 @@
 static ui_font font;
 static ui_context ui; /* static, because the quad list is large */
 
+static float measure_text(void *context, uint64_t font_id, const char *text, size_t len) {
+    (void)font_id;
+    return ui_font_text_width((ui_font *)context, text, len);
+}
+
+static void draw_text(void *context, uint64_t font_id, ui_quad_list *out, float x, float y,
+                      const char *text, size_t len, ui_color color) {
+    (void)font_id;
+    ui_font_draw_text((ui_font *)context, out, x, y, text, len, color);
+}
+
 static ui_input pointer(float x, float y, int down, int pressed, int released) {
     ui_input in = { .mouse_x = x, .mouse_y = y, .mouse_down = down, .mouse_pressed = pressed, .mouse_released = released };
     return in;
@@ -302,7 +313,7 @@ int main(int argc, char **argv) {
     if (!ui_test_load_font(argv[1], 12.0f, 32, 95, &font)) {
         return 1;
     }
-    ui_init(&ui, &font);
+    ui_init(&ui, (float)font.line_height, &font, 1, measure_text, draw_text);
 
     test_button_click();
     test_release_outside_cancels();

@@ -31,6 +31,17 @@ static ui_quad_list list;   /* static, because the quad list is large */
 static ui_context ui;       /* static, for the same reason */
 static ui_font font;
 
+static float measure_text(void *context, uint64_t font_id, const char *text, size_t len) {
+    (void)font_id;
+    return ui_font_text_width((ui_font *)context, text, len);
+}
+
+static void draw_text(void *context, uint64_t font_id, ui_quad_list *out, float x, float y,
+                      const char *text, size_t len, ui_color color) {
+    (void)font_id;
+    ui_font_draw_text((ui_font *)context, out, x, y, text, len, color);
+}
+
 static int same_rect(ui_rect a, ui_rect b) {
     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
 }
@@ -85,7 +96,7 @@ static void test_widget_frame(void) {
     ui_input in;
     int solids = 0, glyphs = 0, i;
     memset(&in, 0, sizeof in);
-    ui_init(&ui, &font);
+    ui_init(&ui, (float)font.line_height, &font, 1, measure_text, draw_text);
     ui_begin(&ui, &in, 10, 10, 200);
     ui_label(&ui, "Hi");
     (void)ui_button(&ui, "Go");

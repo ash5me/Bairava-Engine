@@ -1,7 +1,6 @@
 //! Text and widgets, bridged from the C code in src/engine/ui/. The C side builds quads in pixels.
 //! Glyph quads sample the font atlas, and solid fills sample the batch's white texture. This file queues each quad
-//! as a sprite. Fonts are loaded from prebaked
-//! `.bfnt` files in text/font.zig.
+//! as a sprite. BFNT, runtime outline, and authored bitmap fonts all reach the same quad list.
 //!
 //! The C headers are private to this file, text/font.zig, and text/font_store.zig. Everything else reaches the UI
 //! through `Canvas` (text and rectangles) and `Ui` (widgets), which take and return Zig types.
@@ -120,19 +119,23 @@ pub const Canvas = struct {
     /// Builds a wrapped, aligned text block. Line slices borrow `str`; release the result with
     /// `TextLayout.deinit` and the allocator used here.
     pub fn layoutText(self: *const Canvas, allocator: std.mem.Allocator, str: []const u8, max_width: f32, alignment: TextAlignment) text_layout.LayoutError!TextLayout {
-        return text_layout.layout(
+        return font_store.layoutTextOf(
+            self.fonts,
+            self.font,
             allocator,
             str,
             max_width,
-            self.lineHeight(),
             alignment,
-            self,
-            measureCanvasText,
         );
     }
 
     /// Adds each line of a previously measured text block at `(x, y)`.
     pub fn drawTextLayout(self: *Canvas, x: f32, y: f32, layout: *const TextLayout, color: Color) void {
+        if (self.fonts.describe(self.font).source == .runtime_outline) {
+            font_store.drawShapedLayoutOf(self.fonts, self.font, self.list, x, y, layout, toC(color)) catch |err|
+                std.debug.panic("could not draw text layout with font {d}: {s}", .{ self.font.id, @errorName(err) });
+            return;
+        }
         for (layout.lines, 0..) |line, index| {
             self.text(
                 x + line.x_offset,
@@ -174,11 +177,6 @@ pub const Canvas = struct {
     }
 };
 
-fn measureCanvasText(context: *const anyopaque, str: []const u8) f32 {
-    const canvas: *const Canvas = @ptrCast(@alignCast(context));
-    return canvas.textWidth(str);
-}
-
 /// Immediate-mode widgets. The C side keeps the layout and the widget state, and this wrapper hands
 /// it Zig values. Labels are copied into a buffer for the length of each call, because the C side
 /// hashes them and draws them during the call and keeps no pointer to them.
@@ -187,8 +185,8 @@ pub const Ui = struct {
     canvas: Canvas,
     ctx: *c.ui_context,
 
-    /// Keeps `font` as a handle into `fonts`; wrapper memory uses `allocator`. The C widget state keeps a pointer to the
-    /// font's metrics. That is safe because the store gives each font a fixed address until it is released.
+    /// Keeps `font` as a handle into `fonts`; wrapper memory uses `allocator`. C widget labels call back into the store
+    /// for provider-based measurement and drawing.
     pub fn init(allocator: std.mem.Allocator, fonts: *FontStore, font: FontHandle) Ui {
         const canvas = Canvas.create(allocator, fonts, font);
         const ctx = allocator.create(c.ui_context) catch @panic("out of memory");
@@ -367,6 +365,43 @@ test "ui anchorBounds places panels relative to the viewport" {
     const centered = anchorBounds(320, 180, 80, 40, .center, 0, 0);
     try std.testing.expectApproxEqAbs(@as(f32, 120.0), centered.x, 1e-4);
     try std.testing.expectApproxEqAbs(@as(f32, 70.0), centered.y, 1e-4);
+}
+
+test "Canvas keeps runtime glyph clusters across wrapping and widgets measure through the provider" {
+    const font_test_support = @import("../text/font_test_support.zig");
+    const shaped_layout = @import("../text/shaped_layout.zig");
+    const allocator = std.testing.allocator;
+    const store = try font_store.create(allocator);
+    defer font_store.destroy(store);
+    const handle = try font_store.insertRuntime(store, try font_test_support.runtimeOutlineFixture(allocator));
+
+    var canvas = Canvas.create(allocator, store, handle);
+    defer canvas.deinit();
+
+    const text = "A\u{0305}A\u{0305}";
+    const cluster_width = canvas.textWidth(text[0..3]);
+    const full_width = canvas.textWidth(text);
+    try std.testing.expect(full_width > cluster_width);
+    var layout = try canvas.layoutText(allocator, text, (cluster_width + full_width) / 2, .left);
+    defer layout.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), layout.lines.len);
+    try std.testing.expectEqualStrings(text[0..3], layout.lines[0].text);
+    try std.testing.expectEqualStrings(text[3..], layout.lines[1].text);
+    try std.testing.expectEqual(handle.id, shaped_layout.fontIdOf(&layout).?);
+    for (shaped_layout.glyphsOf(&layout, 0)) |glyph| try std.testing.expectEqual(@as(u32, 0), glyph.cluster);
+    for (shaped_layout.glyphsOf(&layout, 1)) |glyph| try std.testing.expectEqual(@as(u32, 3), glyph.cluster);
+
+    var widgets = Ui.init(allocator, store, handle);
+    defer widgets.deinit();
+    const widget_width = widgets.ctx.text_width.?(
+        widgets.ctx.font_context,
+        widgets.ctx.font_id,
+        "AV",
+        2,
+    );
+    try std.testing.expectEqual(canvas.textWidth("AV"), widget_width);
+    try std.testing.expect(widgets.ctx.draw_text != null);
 }
 
 /// A font with empty metrics, except for a 1x1 white block at the origin. Its texture comes from the test fixtures, with no GPU object.

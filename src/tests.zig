@@ -25,6 +25,7 @@ test {
     _ = @import("engine/text/font_registry.zig");
     _ = @import("engine/text/font_resource.zig");
     _ = @import("engine/text/font_store.zig");
+    _ = @import("engine/ui/ui.zig");
     _ = @import("engine/text/bfnt_measure.zig");
     _ = @import("engine/text/bmfont.zig");
     _ = @import("engine/text/bitmap_mapper.zig");

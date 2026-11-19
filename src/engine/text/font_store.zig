@@ -9,8 +9,8 @@
 //! The functions below the type belong to the engine. The session creates and destroys the store, and
 //! `Context.loadFont` inserts fonts into it. `bairava.zig` does not re-export any of them.
 //!
-//! Lifetime follows font_registry.zig. A font keeps its address until it is removed, so the C widget state can point at
-//! its metrics. A lookup panics on a handle that names no drawable font, because that is a bug in the caller.
+//! Lifetime follows font_registry.zig. A font keeps its address until it is removed, and C widget callbacks keep only
+//! the store and handle, so measurement and drawing always dispatch through the active provider.
 
 const std = @import("std");
 const c = @import("../ui/c.zig").c;
@@ -21,6 +21,7 @@ const runtime_font = @import("runtime_font.zig");
 const shaper = @import("shaper.zig");
 const bitmap_mapper = @import("bitmap_mapper.zig");
 const bfnt_measure = @import("bfnt_measure.zig");
+const text_layout = @import("layout.zig");
 const shaped_layout = @import("shaped_layout.zig");
 const glyph_records = @import("glyph_records.zig");
 const glyph_atlas = @import("../renderer/glyph_atlas.zig");
@@ -28,7 +29,8 @@ const Texture = @import("../renderer/texture.zig").Texture;
 
 pub const FontHandle = font_registry.FontHandle;
 pub const InsertError = font_registry.InsertError;
-pub const DrawError = error{RuntimeDrawingUnavailable} || glyph_records.Error || shaped_layout.LayoutError;
+pub const LayoutError = shaped_layout.LayoutError;
+pub const DrawError = error{ RuntimeDrawingUnavailable, LayoutFontMismatch } || glyph_records.Error || LayoutError;
 
 /// The fonts the store holds, counted by how they are drawn. Plain numbers, so game code reads them without any engine type.
 pub const Stats = struct {
@@ -117,10 +119,16 @@ pub const FontStore = opaque {
         return describeOf(stateOf(self), handle);
     }
 
-    /// Points the C widget state at the font's metrics. The font keeps its address until it is removed, so the pointer
-    /// stays valid for as long as the widgets use it.
+    /// Connects C widget layout to the same provider-based measurement and draw path as Canvas text.
     pub fn initWidgets(self: *FontStore, handle: FontHandle, ctx: *c.ui_context) void {
-        c.ui_init(ctx, &bfntFont(stateOf(self), handle).baked);
+        c.ui_init(
+            ctx,
+            self.lineHeight(handle),
+            @ptrCast(self),
+            handle.id,
+            &widgetTextWidth,
+            &widgetDrawText,
+        );
     }
 };
 
@@ -152,6 +160,63 @@ pub fn createWithAtlas(allocator: std.mem.Allocator, atlas: *glyph_atlas.Atlas) 
 /// The number of fonts stored.
 pub fn count(store: *const FontStore) usize {
     return stateOfConst(store).resources.count();
+}
+
+/// Lays out text through the selected provider. Runtime outline fonts use shaped, cluster-safe breaks; static providers
+/// keep the existing codepoint/metric layout.
+pub fn layoutTextOf(
+    store: *FontStore,
+    handle: FontHandle,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    max_width: f32,
+    alignment: text_layout.Alignment,
+) LayoutError!text_layout.Layout {
+    const state = stateOf(store);
+    const resource = resourceOf(state, handle);
+    switch (resource.*) {
+        .runtime_coverage => |*font_value| return shaped_layout.layout(
+            allocator,
+            runtimeShaper(font_value),
+            text,
+            max_width,
+            resource.metrics().line_height,
+            alignment,
+            .{},
+        ),
+        .bfnt_coverage, .bitmap => {
+            const measure_context = LayoutMeasureContext{ .store = store, .handle = handle };
+            return text_layout.layout(
+                allocator,
+                text,
+                max_width,
+                resource.metrics().line_height,
+                alignment,
+                measure_context,
+                measureForLayout,
+            );
+        },
+    }
+}
+
+/// Submits the already-shaped records in a runtime text layout. The layout must have come from this same font handle.
+pub fn drawShapedLayoutOf(
+    store: *FontStore,
+    handle: FontHandle,
+    list: *c.ui_quad_list,
+    x: f32,
+    y: f32,
+    layout: *const shaped_layout.Layout,
+    color: c.ui_color,
+) DrawError!void {
+    const state = stateOf(store);
+    const resource = resourceOf(state, handle);
+    const font_value = switch (resource.*) {
+        .runtime_coverage => |*value| value,
+        .bfnt_coverage, .bitmap => return error.LayoutFontMismatch,
+    };
+    if (shaped_layout.fontIdOf(layout) != handle.id) return error.LayoutFontMismatch;
+    try appendRuntimeRecords(state, handle, font_value, list, layout, x, y, color);
 }
 
 /// The single BFNT atlas texture. Solid fills never sample it. This remains BFNT-only; bitmap fonts have multiple pages.
@@ -252,6 +317,35 @@ fn runtimeShaper(font_value: *font_resource.RuntimeCoverage) *shaper.Shaper {
     return if (font_value.shaper) |*value| value else unreachable;
 }
 
+const LayoutMeasureContext = struct {
+    store: *FontStore,
+    handle: FontHandle,
+};
+
+fn measureForLayout(context: LayoutMeasureContext, text: []const u8) f32 {
+    return context.store.textWidth(context.handle, text);
+}
+
+fn widgetTextWidth(context: ?*anyopaque, font_id: u64, text: [*c]const u8, len: usize) callconv(.c) f32 {
+    const store: *FontStore = @ptrCast(@alignCast(context orelse unreachable));
+    return store.textWidth(.{ .id = font_id }, text[0..len]);
+}
+
+fn widgetDrawText(
+    context: ?*anyopaque,
+    font_id: u64,
+    list: [*c]c.ui_quad_list,
+    x: f32,
+    y: f32,
+    text: [*c]const u8,
+    len: usize,
+    color: c.ui_color,
+) callconv(.c) void {
+    const store: *FontStore = @ptrCast(@alignCast(context orelse unreachable));
+    store.drawText(.{ .id = font_id }, list, x, y, text[0..len], color) catch |err|
+        std.debug.panic("could not draw widget text with font {d}: {s}", .{ font_id, @errorName(err) });
+}
+
 fn drawBfntText(font_value: *font_mod.Font, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) void {
     c.ui_font_draw_text(&font_value.baked, list, x, y, str.ptr, str.len, color);
 }
@@ -266,7 +360,7 @@ fn drawRuntimeText(
     str: []const u8,
     color: c.ui_color,
 ) DrawError!void {
-    const atlas = state.atlas orelse return error.RuntimeDrawingUnavailable;
+    if (state.atlas == null) return error.RuntimeDrawingUnavailable;
     var layout = try shaped_layout.layout(
         state.allocator,
         runtimeShaper(font_value),
@@ -278,6 +372,20 @@ fn drawRuntimeText(
     );
     defer layout.deinit();
 
+    try appendRuntimeRecords(state, handle, font_value, list, &layout, x, y, color);
+}
+
+fn appendRuntimeRecords(
+    state: *State,
+    handle: FontHandle,
+    font_value: *font_resource.RuntimeCoverage,
+    list: *c.ui_quad_list,
+    layout: *const shaped_layout.Layout,
+    x: f32,
+    y: f32,
+    color: c.ui_color,
+) DrawError!void {
+    const atlas = state.atlas orelse return error.RuntimeDrawingUnavailable;
     var records: std.ArrayList(glyph_records.Record) = .empty;
     defer records.deinit(state.allocator);
     try glyph_records.build(
@@ -285,7 +393,7 @@ fn drawRuntimeText(
         &records,
         &atlas.cache,
         &font_value.face,
-        &layout,
+        layout,
         x,
         y,
         .{ .font_id = handle.id, .fallback_glyph_id = 0 },
@@ -350,8 +458,8 @@ fn bfntFont(state: *State, handle: FontHandle) *font_mod.Font {
     const resource = resourceOf(state, handle);
     return switch (resource.*) {
         .bfnt_coverage => |*font_value| font_value,
-        .bitmap => std.debug.panic("UI font handle {d} is a bitmap font, which the C widgets cannot draw", .{handle.id}),
-        .runtime_coverage => std.debug.panic("UI font handle {d} is an outline font, which the C widgets cannot draw", .{handle.id}),
+        .bitmap => std.debug.panic("font handle {d} is a bitmap font and has no BFNT atlas", .{handle.id}),
+        .runtime_coverage => std.debug.panic("font handle {d} is an outline font and has no BFNT atlas", .{handle.id}),
     };
 }
 
@@ -420,8 +528,7 @@ test "a stored font answers its line height and atlas without the C text path" {
 }
 
 test "every FontStore method the engine uses is compiled by the test build" {
-    // Taking each address makes this binary analyze and emit the method. initWidgets is left out on purpose: its C call
-    // is in imgui.c, which this test binary does not link. The engine build compiles it through Ui.init.
+    // Taking each address makes this binary analyze and emit the method. Ui tests exercise the C callback bridge.
     _ = &FontStore.lineHeight;
     _ = &FontStore.textWidth;
     _ = &FontStore.drawText;
@@ -507,6 +614,30 @@ test "bitmap text shares measurement and quad submission with authored offsets, 
     try testing.expectEqual(@as(u32, 0), list.items[0].page);
     try testing.expectEqual(@as(u32, 1), list.items[1].page);
     try testing.expectEqual(@as(*const Texture, &resourceOf(stateOf(store), handle).bitmap.pages[1]), glyphTextureForPageOf(store, handle, 1));
+
+    var widget_context = std.mem.zeroes(c.ui_context);
+    store.initWidgets(handle, &widget_context);
+    const widget_width = widget_context.text_width.?(
+        widget_context.font_context,
+        widget_context.font_id,
+        "AA",
+        2,
+    );
+    try testing.expectEqual(store.textWidth(handle, "AA"), widget_width);
+    var widget_list = std.mem.zeroes(c.ui_quad_list);
+    widget_context.draw_text.?(
+        widget_context.font_context,
+        widget_context.font_id,
+        &widget_list,
+        0,
+        0,
+        "AB",
+        2,
+        .{ .r = 1, .g = 1, .b = 1, .a = 1 },
+    );
+    try testing.expectEqual(@as(c_int, 2), widget_list.count);
+    try testing.expectEqual(@as(u32, 0), widget_list.items[0].page);
+    try testing.expectEqual(@as(u32, 1), widget_list.items[1].page);
 }
 
 test "runtime fonts share metrics and measurement, and pass check without enabling drawing" {

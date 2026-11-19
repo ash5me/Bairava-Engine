@@ -1,4 +1,4 @@
-//! Wraps and aligns shaped text: the Phase 5 layout over the shaper, beside layout.zig, which the BFNT path still uses.
+//! Wraps and aligns shaped text: the Phase 5 layout over the shaper, beside layout.zig, which static providers use.
 //! It keeps layout.zig's line rules: wrap at spaces and tabs, keep explicit newlines and blank lines, drop the break
 //! spaces at a wrap, and split a word wider than the line. Two things change:
 //! - Each candidate line is shaped before it is measured, and each kept line is shaped once more to get its glyphs.
@@ -14,45 +14,48 @@
 
 const std = @import("std");
 const shaper = @import("shaper.zig");
+const text_layout = @import("layout.zig");
 
-pub const Alignment = @import("layout.zig").Alignment;
+pub const Alignment = text_layout.Alignment;
 
-pub const LayoutError = std.mem.Allocator.Error || shaper.Error || error{ InvalidLineHeight, InvalidWidth };
+pub const LayoutError = text_layout.LayoutError;
+pub const Line = text_layout.Line;
+pub const Layout = text_layout.Layout;
 
-pub const Line = struct {
-    /// The source bytes of the line. Borrowed from the text given to `layout`.
-    text: []const u8,
-    /// This line's glyphs are `Layout.glyphs[glyph_start..glyph_end]`, in visual order.
-    glyph_start: u32,
-    glyph_end: u32,
-    /// Shaped width of the line, in pixels.
-    width: f32,
-    /// Horizontal start of the line within the layout width, from the alignment.
-    x_offset: f32,
+const GlyphRange = struct {
+    start: usize,
+    end: usize,
 };
 
-pub const Layout = struct {
+const ShapedData = struct {
     allocator: std.mem.Allocator,
-    lines: []Line,
-    /// Every line's glyphs, one line after another. Each glyph's cluster is a byte offset in the source text.
     glyphs: []shaper.Glyph,
-    /// The widest line, in pixels.
-    width: f32,
-    /// Lines times the line height, in pixels.
-    height: f32,
-    line_height: f32,
-
-    pub fn deinit(self: *Layout) void {
-        self.allocator.free(self.lines);
-        self.allocator.free(self.glyphs);
-        self.* = undefined;
-    }
-
-    /// The shaped glyphs of one line, in visual order.
-    pub fn glyphsOf(self: *const Layout, line: Line) []const shaper.Glyph {
-        return self.glyphs[line.glyph_start..line.glyph_end];
-    }
+    ranges: []GlyphRange,
+    font_id: u64,
 };
+
+fn destroyShapedData(raw: *anyopaque) void {
+    const data: *ShapedData = @ptrCast(@alignCast(raw));
+    data.allocator.free(data.glyphs);
+    data.allocator.free(data.ranges);
+    data.allocator.destroy(data);
+}
+
+fn dataOf(lay: *const Layout) ?*const ShapedData {
+    const raw = lay.shaped_data orelse return null;
+    return @ptrCast(@alignCast(raw));
+}
+
+pub fn fontIdOf(lay: *const Layout) ?u64 {
+    const data = dataOf(lay) orelse return null;
+    return data.font_id;
+}
+
+pub fn glyphsOf(lay: *const Layout, line_index: usize) []const shaper.Glyph {
+    const data = dataOf(lay) orelse return &.{};
+    const range = data.ranges[line_index];
+    return data.glyphs[range.start..range.end];
+}
 
 /// Builds a Layout. Lines and glyphs accumulate here, so the wrap helpers share one state.
 const Builder = struct {
@@ -64,12 +67,14 @@ const Builder = struct {
     alignment: Alignment,
     lines: std.ArrayList(Line) = .empty,
     glyphs: std.ArrayList(shaper.Glyph) = .empty,
+    ranges: std.ArrayList(GlyphRange) = .empty,
     /// Grapheme ends of the word being split. Reused, so a long word costs one allocation at most.
     ends: std.ArrayList(usize) = .empty,
 
     fn deinit(self: *Builder) void {
         self.lines.deinit(self.allocator);
         self.glyphs.deinit(self.allocator);
+        self.ranges.deinit(self.allocator);
         self.ends.deinit(self.allocator);
     }
 
@@ -82,7 +87,7 @@ const Builder = struct {
     fn appendLine(self: *Builder, start: usize, end: usize) LayoutError!void {
         var run = try self.shaper.shape(self.allocator, self.text[start..end], self.options);
         defer run.deinit();
-        const glyph_start: u32 = @intCast(self.glyphs.items.len);
+        const glyph_start = self.glyphs.items.len;
         for (run.glyphs) |glyph| {
             var rebased = glyph;
             // The shaper numbers clusters from the start of the line. Store them against the source text instead.
@@ -97,11 +102,10 @@ const Builder = struct {
         };
         try self.lines.append(self.allocator, .{
             .text = self.text[start..end],
-            .glyph_start = glyph_start,
-            .glyph_end = @intCast(self.glyphs.items.len),
             .width = run.width,
             .x_offset = offset,
         });
+        try self.ranges.append(self.allocator, .{ .start = glyph_start, .end = self.glyphs.items.len });
     }
 
     /// Fills `self.ends` with the offsets in (start, end] where a new grapheme begins. The last entry is `end`.
@@ -230,12 +234,23 @@ pub fn layout(
     const lines = try builder.lines.toOwnedSlice(allocator);
     errdefer allocator.free(lines);
     const glyphs = try builder.glyphs.toOwnedSlice(allocator);
+    errdefer allocator.free(glyphs);
+    const ranges = try builder.ranges.toOwnedSlice(allocator);
+    errdefer allocator.free(ranges);
+    const shaped_data = try allocator.create(ShapedData);
+    shaped_data.* = .{
+        .allocator = allocator,
+        .glyphs = glyphs,
+        .ranges = ranges,
+        .font_id = builder.shaper.font_id,
+    };
     var widest: f32 = 0;
     for (lines) |line| widest = @max(widest, line.width);
     return .{
         .allocator = allocator,
         .lines = lines,
-        .glyphs = glyphs,
+        .shaped_data = shaped_data,
+        .shaped_data_deinit = &destroyShapedData,
         .width = widest,
         .height = @as(f32, @floatFromInt(lines.len)) * line_height,
         .line_height = line_height,
@@ -373,7 +388,7 @@ test "a word is split only at grapheme starts, never inside one" {
     for (result.lines, 0..) |line, k| {
         try testing.expectEqualStrings("e\u{301}", line.text);
         // Every glyph of the line belongs to the one grapheme, so its cluster is that grapheme's start offset.
-        for (result.glyphsOf(line)) |glyph| {
+        for (glyphsOf(&result, k)) |glyph| {
             try testing.expectEqual(@as(u32, @intCast(3 * k)), glyph.cluster);
         }
     }
@@ -390,9 +405,9 @@ test "widths match the glyphs drawn: each line's width is the sum of its glyph a
     var result = try layout(testing.allocator, &sh, "the quick brown fox jumps over", 70, test_line_height, .left, .{});
     defer result.deinit();
     try testing.expect(result.lines.len > 1);
-    for (result.lines) |line| {
+    for (result.lines, 0..) |line, index| {
         var sum: f32 = 0;
-        for (result.glyphsOf(line)) |glyph| sum += glyph.x_advance;
+        for (glyphsOf(&result, index)) |glyph| sum += glyph.x_advance;
         try testing.expectApproxEqAbs(line.width, sum, 1e-4);
     }
 }
@@ -473,7 +488,7 @@ test "malformed UTF-8 and unmapped characters keep every glyph, with clusters on
     var result = try layout(testing.allocator, &sh, "A\xff\u{4e00}B", 1000, test_line_height, .left, .{});
     defer result.deinit();
     try testing.expectEqual(@as(usize, 1), result.lines.len);
-    const glyphs = result.glyphsOf(result.lines[0]);
+    const glyphs = glyphsOf(&result, 0);
     try testing.expectEqual(@as(usize, 4), glyphs.len);
     try testing.expectEqual(@as(u32, 0), glyphs[0].cluster);
     try testing.expectEqual(@as(u32, 1), glyphs[1].cluster);
@@ -493,7 +508,7 @@ test "empty text is one empty line, and a non-positive width or height is refuse
     defer result.deinit();
     try testing.expectEqual(@as(usize, 1), result.lines.len);
     try testing.expectEqual(@as(f32, 0), result.width);
-    try testing.expectEqual(@as(usize, 0), result.glyphsOf(result.lines[0]).len);
+    try testing.expectEqual(@as(usize, 0), glyphsOf(&result, 0).len);
 
     try testing.expectError(error.InvalidWidth, layout(testing.allocator, &sh, "text", 0, test_line_height, .left, .{}));
     try testing.expectError(error.InvalidWidth, layout(testing.allocator, &sh, "text", std.math.nan(f32), test_line_height, .left, .{}));
