@@ -1,7 +1,7 @@
 //! The session's font store, and the engine code that fills it.
 //!
 //! Game-facing code reaches fonts through a `*FontStore`: `Context.fonts`, `Canvas.fonts`, and `Ui` hold one. Game code
-//! gives the store a `FontHandle` and gets back widths, heights, quad lists, texture pointers, or C widget state. No
+//! gives the store a `FontHandle` and gets back widths, heights, quad lists, or C widget state. No
 //! method on `FontStore` takes or returns the registry, a font resource, or a provider type, so none of those is
 //! reachable from game-facing code (plan D-21). `FontStore` is opaque: its state is the private `State` struct in this
 //! file, and no other file can read it.
@@ -71,11 +71,6 @@ pub const FontStore = opaque {
         c.ui_font_draw_text(&bfntFont(stateOf(self), handle).baked, list, x, y, str.ptr, str.len, color);
     }
 
-    /// The atlas texture that the glyphs of `handle`'s font sample. Solid fills never sample it.
-    pub fn glyphTexture(self: *FontStore, handle: FontHandle) *const Texture {
-        return &bfntFont(stateOf(self), handle).texture;
-    }
-
     /// Panics unless `handle` names a font the UI can draw. Canvas creation calls this, so a bad handle fails there.
     pub fn check(self: *FontStore, handle: FontHandle) void {
         _ = bfntFont(stateOf(self), handle);
@@ -115,6 +110,12 @@ pub fn createWithRelease(allocator: std.mem.Allocator, release: Release) std.mem
 /// The number of fonts stored.
 pub fn count(store: *const FontStore) usize {
     return stateOfConst(store).resources.count();
+}
+
+/// The atlas texture that the glyphs of `handle`'s font sample. Solid fills never sample it. This function is engine-only:
+/// it names a renderer type, so it is not a method of `FontStore`, which game code reaches.
+pub fn glyphTextureOf(store: *FontStore, handle: FontHandle) *const Texture {
+    return &bfntFont(stateOf(store), handle).texture;
 }
 
 /// Stores a bitmap font under a new handle. The store takes ownership. If the insert fails, the store releases the font
@@ -216,7 +217,7 @@ test "a stored font answers its line height and atlas without the C text path" {
     const handle = try insertBfnt(store, font_value);
     store.check(handle);
     try testing.expectEqual(@as(f32, 12), store.lineHeight(handle));
-    const atlas = store.glyphTexture(handle);
+    const atlas = glyphTextureOf(store, handle);
     try testing.expectEqual(@as(*const Texture, &bfntFont(stateOf(store), handle).texture), atlas);
 }
 
@@ -226,7 +227,7 @@ test "every FontStore method the engine uses is compiled by the test build" {
     _ = &FontStore.lineHeight;
     _ = &FontStore.textWidth;
     _ = &FontStore.drawText;
-    _ = &FontStore.glyphTexture;
+    _ = &glyphTextureOf;
     _ = &FontStore.check;
     _ = &count;
     _ = &destroy;

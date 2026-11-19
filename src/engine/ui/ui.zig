@@ -341,7 +341,7 @@ fn queueQuads(batch: *sprite.SpriteBatch, fonts: *FontStore, handle: FontHandle,
             continue;
         }
         const glyph_atlas = atlas orelse blk: {
-            atlas = fonts.glyphTexture(handle);
+            atlas = font_store.glyphTextureOf(fonts, handle);
             break :blk atlas.?;
         };
         batch.drawSprite(
@@ -467,7 +467,7 @@ test "a glyph keeps the font atlas, and a fill after it starts a run on the whit
     const fonts = try font_store.create(allocator);
     defer font_store.discard(fonts);
     const handle = try insertFixtureFont(fonts);
-    const atlas = fonts.glyphTexture(handle);
+    const atlas = font_store.glyphTextureOf(fonts, handle);
     const list = try allocator.create(c.ui_quad_list);
     defer allocator.destroy(list);
     list.count = 0;
