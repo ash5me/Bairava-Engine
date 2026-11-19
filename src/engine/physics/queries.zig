@@ -44,10 +44,7 @@ pub fn anyOverlap(colliders: []const Collider, box: Box, mask: u32) bool {
 pub fn firstOverlap(colliders: []const Collider, box: Box, mask: u32) ?usize {
     for (colliders, 0..) |c, i| {
         if (!c.enabled or !hits(c, mask)) continue;
-        if (collision.orientedBoxesOverlap(
-            .{ .x = c.box.x, .y = c.box.y, .w = c.box.w, .h = c.box.h, .rotation = c.rotation },
-            .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 },
-        )) return i;
+        if (collision.overlapsProbe(c, box)) return i;
     }
     return null;
 }
@@ -56,15 +53,7 @@ pub fn firstOverlap(colliders: []const Collider, box: Box, mask: u32) ?usize {
 pub fn firstAtPoint(colliders: []const Collider, point: Point, mask: u32) ?usize {
     for (colliders, 0..) |collider, index| {
         if (!collider.enabled or !hits(collider, mask)) continue;
-        if (collider.rotation == 0) {
-            if (collision.pointInBox(point, collider.box)) return index;
-        } else if (collision.pointInOrientedBox(point, .{
-            .x = collider.box.x,
-            .y = collider.box.y,
-            .w = collider.box.w,
-            .h = collider.box.h,
-            .rotation = collider.rotation,
-        })) return index;
+        if (collision.containsPoint(collider, point)) return index;
     }
     return null;
 }
@@ -75,10 +64,7 @@ pub fn queryRegion(colliders: []const Collider, region: Box, mask: u32, out: []u
     var written: usize = 0;
     for (colliders, 0..) |collider, index| {
         if (!collider.enabled or !hits(collider, mask)) continue;
-        if (!collision.orientedBoxesOverlap(
-            .{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation },
-            .{ .x = region.x, .y = region.y, .w = region.w, .h = region.h, .rotation = 0 },
-        )) continue;
+        if (!collision.overlapsProbe(collider, region)) continue;
         if (written == out.len) break;
         out[written] = index;
         written += 1;
@@ -109,7 +95,18 @@ fn slideX(colliders: []const Collider, box: Box, dx: f32, mask: u32) f32 {
     if (collision.isEmptyBox(box)) return target;
     var result = target;
     for (colliders) |c| {
-        if (!c.enabled or !hits(c, mask) or collision.isEmptyBox(c.box)) continue;
+        if (!c.enabled or !hits(c, mask)) continue;
+        if (c.circle) |circle| {
+            if (collision.circleStopX(box, dx, circle)) |stop| {
+                if (dx > 0 and stop >= box.x and stop < target) {
+                    result = @min(result, stop);
+                } else if (dx < 0 and stop <= box.x and stop > target) {
+                    result = @max(result, stop);
+                }
+            }
+            continue;
+        }
+        if (collision.isEmptyBox(c.box)) continue;
         if (c.one_way and c.rotation == 0) continue;
         if (c.rotation != 0) {
             const c_box = OrientedBox{ .x = c.box.x, .y = c.box.y, .w = c.box.w, .h = c.box.h, .rotation = c.rotation };
@@ -174,7 +171,18 @@ fn slideY(colliders: []const Collider, box: Box, dy: f32, mask: u32, ignore_one_
     if (collision.isEmptyBox(box)) return target;
     var result = target;
     for (colliders) |c| {
-        if (!c.enabled or !hits(c, mask) or collision.isEmptyBox(c.box)) continue;
+        if (!c.enabled or !hits(c, mask)) continue;
+        if (c.circle) |circle| {
+            if (collision.circleStopY(box, dy, circle)) |stop| {
+                if (dy > 0 and stop >= box.y and stop < target) {
+                    result = @min(result, stop);
+                } else if (dy < 0 and stop <= box.y and stop > target) {
+                    result = @max(result, stop);
+                }
+            }
+            continue;
+        }
+        if (collision.isEmptyBox(c.box)) continue;
         if (c.one_way and c.rotation == 0 and (dy < 0 or ignore_one_way)) continue;
         if (c.rotation != 0) {
             const c_box = OrientedBox{ .x = c.box.x, .y = c.box.y, .w = c.box.w, .h = c.box.h, .rotation = c.rotation };
@@ -274,6 +282,38 @@ test "point and region list queries honor masks, half-open edges, and output cap
     try expectEqual(@as(usize, 0), queryRegion(&colliders, .{ .x = 100, .y = 100, .w = 1, .h = 1 }, all_layers, &indices));
 }
 
+test "circle colliders use exact narrow-phase queries and ignore their box fields" {
+    const colliders = [_]Collider{
+        .{
+            .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+            .layer = 1,
+            .circle = .{ .x = 50, .y = 10, .r = 5 },
+        },
+        .{ .box = .{ .x = 40, .y = 0, .w = 10, .h = 10 }, .layer = 1 },
+        .{
+            .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+            .layer = 1,
+            .circle = .{ .x = 100, .y = 100, .r = 0 },
+        },
+    };
+    try expectEqual(@as(?usize, 0), firstOverlap(&colliders, .{ .x = 45, .y = 8, .w = 2, .h = 2 }, all_layers));
+    try expectEqual(@as(?usize, 1), firstOverlap(&colliders, .{ .x = 41, .y = 1, .w = 2, .h = 2 }, all_layers));
+    try expectEqual(@as(?usize, null), firstOverlap(&colliders, .{ .x = 0, .y = 0, .w = 10, .h = 10 }, all_layers));
+    try expectEqual(@as(?usize, 0), firstAtPoint(&colliders, .{ .x = 50, .y = 10 }, all_layers));
+    try expectEqual(@as(?usize, null), firstAtPoint(&colliders, .{ .x = 55, .y = 10 }, all_layers));
+    var indices: [3]usize = undefined;
+    try expectEqual(@as(usize, 2), queryRegion(&colliders, .{ .x = 45, .y = 8, .w = 2, .h = 2 }, all_layers, &indices));
+    try expectEqual(@as(usize, 0), indices[0]);
+    try expectEqual(@as(usize, 1), indices[1]);
+
+    const corner_only = [_]Collider{.{
+        .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+        .layer = 1,
+        .circle = .{ .x = -3, .y = -4, .r = 5 },
+    }};
+    try expectEqual(@as(?usize, null), firstOverlap(&corner_only, .{ .x = 0, .y = 0, .w = 10, .h = 10 }, all_layers));
+}
+
 test "moveBox stops flush against the nearest wall on each side" {
     const walls = [_]Collider{
         .{ .box = .{ .x = 100, .y = 0, .w = 10, .h = 100 }, .layer = 1 },
@@ -291,6 +331,76 @@ test "moveBox stops flush against the nearest wall on each side" {
     try std.testing.expectApproxEqAbs(@as(f32, 80), down.y, 1e-4);
     const up = moveBox(&walls, b, 0, -200, all_layers);
     try std.testing.expectApproxEqAbs(@as(f32, 0), up.y, 1e-4);
+}
+
+test "circle movement stops at exact side and corner tangencies" {
+    const side = [_]Collider{.{
+        .box = .{ .x = 200, .y = 200, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 50, .y = 10, .r = 5 },
+    }};
+    const mover = Box{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    const side_hit = moveBox(&side, mover, 100, 0, all_layers);
+    try expectEqual(@as(f32, 35), side_hit.x);
+    try std.testing.expect(!collision.circleOverlapsBox(side[0].circle.?, .{ .x = side_hit.x, .y = mover.y, .w = mover.w, .h = mover.h }));
+
+    const corner = [_]Collider{.{
+        .box = .{ .x = 200, .y = 200, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 50, .y = 13, .r = 5 },
+    }};
+    const corner_hit = moveBox(&corner, mover, 100, 0, all_layers);
+    try expectEqual(@as(f32, 36), corner_hit.x);
+    try std.testing.expect(!collision.circleOverlapsBox(corner[0].circle.?, .{ .x = corner_hit.x, .y = mover.y, .w = mover.w, .h = mover.h }));
+
+    const vertical_corner = [_]Collider{.{
+        .box = .{ .x = 200, .y = 200, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 13, .y = 50, .r = 5 },
+    }};
+    const vertical_hit = moveBox(&vertical_corner, mover, 0, 100, all_layers);
+    try expectEqual(@as(f32, 36), vertical_hit.y);
+}
+
+test "circle movement skips distant axes and ignores one-way while preserving start-overlap escape" {
+    const distant = [_]Collider{.{
+        .box = .{ .x = 500, .y = 500, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 50, .y = 20, .r = 5 },
+    }};
+    const mover = Box{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    try expectEqual(@as(f32, 100), moveBox(&distant, mover, 100, 0, all_layers).x);
+    const vertical = [_]Collider{.{
+        .box = .{ .x = 500, .y = 500, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 5, .y = 50, .r = 5 },
+    }};
+    try expectEqual(@as(f32, 35), moveBox(&vertical, mover, 0, 100, all_layers).y);
+
+    const platform = [_]Collider{.{
+        .box = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 50, .y = 50, .r = 5 },
+        .one_way = true,
+    }};
+    try expectEqual(@as(f32, 35), moveBox(&platform, .{ .x = 45, .y = 20, .w = 10, .h = 10 }, 0, 40, all_layers).y);
+    try expectEqual(@as(f32, 35), moveBox(&platform, .{ .x = 0, .y = 45, .w = 10, .h = 10 }, 100, 0, all_layers).x);
+    try expectEqual(@as(f32, 35), moveBoxIgnoringOneWay(&platform, .{ .x = 45, .y = 20, .w = 10, .h = 10 }, 0, 40, all_layers).y);
+
+    const empty = [_]Collider{.{
+        .box = .{ .x = 50, .y = 0, .w = 10, .h = 10 },
+        .layer = 1,
+        .circle = .{ .x = 50, .y = 0, .r = std.math.nan(f32) },
+    }};
+    try expectEqual(@as(f32, 100), moveBox(&empty, mover, 100, 0, all_layers).x);
+
+    const overlap = [_]Collider{.{
+        .box = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 5, .y = 5, .r = 5 },
+    }};
+    try expectEqual(@as(f32, 26), moveBox(&overlap, .{ .x = 6, .y = 4, .w = 2, .h = 2 }, 20, 0, all_layers).x);
+    try expectEqual(@as(f32, 21), moveBox(&overlap, .{ .x = 1, .y = 4, .w = 2, .h = 2 }, 20, 0, all_layers).x);
 }
 
 test "one-way colliders block only downward top-edge motion" {

@@ -13,13 +13,14 @@ const Box = shapes.Box;
 const Circle = shapes.Circle;
 const OrientedBox = shapes.OrientedBox;
 
-/// A static collider: a box that queries and movement can hit. `layer` is a set of bits, and one
+/// A static box or circle that queries and movement can hit. `layer` is a set of bits, and one
 /// collider can belong to several layers. See queries.zig for how masks select layers.
 pub const Collider = struct {
     box: Box,
     layer: u32,
     mask: u32 = std.math.maxInt(u32),
     rotation: f32 = 0,
+    circle: ?Circle = null,
     one_way: bool = false,
     enabled: bool = true,
 };
@@ -32,6 +33,7 @@ pub const Component = struct {
     layer: u32 = 0,
     mask: u32 = std.math.maxInt(u32),
     rotation: f32 = 0,
+    circle: ?Circle = null,
     one_way: bool = false,
     enabled: bool = true,
 
@@ -41,6 +43,7 @@ pub const Component = struct {
             .layer = self.layer,
             .mask = self.mask,
             .rotation = self.rotation,
+            .circle = self.circle,
             .one_way = self.one_way,
             .enabled = self.enabled,
         };
@@ -85,6 +88,14 @@ pub fn isEmptyCircle(c: Circle) bool {
 pub fn pointInBox(p: Point, box: Box) bool {
     if (isEmptyBox(box) or !(std.math.isFinite(p.x) and std.math.isFinite(p.y))) return false;
     return p.x >= box.x and p.x < box.x + box.w and p.y >= box.y and p.y < box.y + box.h;
+}
+
+/// True when a point is strictly inside a circle; the rim is outside.
+pub fn pointInCircle(point: Point, circle: Circle) bool {
+    if (isEmptyCircle(circle) or !(std.math.isFinite(point.x) and std.math.isFinite(point.y))) return false;
+    const dx = point.x - circle.x;
+    const dy = point.y - circle.y;
+    return dx * dx + dy * dy < circle.r * circle.r;
 }
 
 /// True when a point lies inside an oriented rectangle. Edge rules match pointInBox: left and
@@ -151,9 +162,150 @@ pub fn colliderOverlaps(a: Collider, b: Collider) bool {
     const layers_match =
         (a.layer & b.mask != 0) and (b.layer & a.mask != 0);
     if (!layers_match) return false;
-    const a_box = OrientedBox{ .x = a.box.x, .y = a.box.y, .w = a.box.w, .h = a.box.h, .rotation = a.rotation };
-    const b_box = OrientedBox{ .x = b.box.x, .y = b.box.y, .w = b.box.w, .h = b.box.h, .rotation = b.rotation };
-    return orientedBoxesOverlap(a_box, b_box);
+    if (a.circle) |a_circle| {
+        if (b.circle) |b_circle| return circlesOverlap(a_circle, b_circle);
+        return circleOverlapsRotatedBox(a_circle, b);
+    }
+    if (b.circle) |b_circle| return circleOverlapsRotatedBox(b_circle, a);
+    return orientedBoxesOverlap(
+        .{ .x = a.box.x, .y = a.box.y, .w = a.box.w, .h = a.box.h, .rotation = a.rotation },
+        .{ .x = b.box.x, .y = b.box.y, .w = b.box.w, .h = b.box.h, .rotation = b.rotation },
+    );
+}
+
+/// True when a collider's active shape overlaps a box probe.
+pub fn overlapsProbe(collider: Collider, box: Box) bool {
+    if (collider.circle) |circle| return circleOverlapsBox(circle, box);
+    return orientedBoxesOverlap(
+        .{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation },
+        .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 },
+    );
+}
+
+/// True when a collider's active shape contains a point.
+pub fn containsPoint(collider: Collider, point: Point) bool {
+    if (collider.circle) |circle| return pointInCircle(point, circle);
+    if (collider.rotation == 0) return pointInBox(point, collider.box);
+    return pointInOrientedBox(point, .{
+        .x = collider.box.x,
+        .y = collider.box.y,
+        .w = collider.box.w,
+        .h = collider.box.h,
+        .rotation = collider.rotation,
+    });
+}
+
+/// Axis-aligned bounds of the collider's active shape. A null result means the shape is empty;
+/// a box with a non-finite rotation also returns null.
+pub fn colliderBounds(collider: Collider) ?Box {
+    if (collider.circle) |circle| {
+        if (isEmptyCircle(circle)) return null;
+        const bounds = Box{ .x = circle.x - circle.r, .y = circle.y - circle.r, .w = 2 * circle.r, .h = 2 * circle.r };
+        if (isEmptyBox(bounds)) return null;
+        return bounds;
+    }
+    return boundingBox(collider.box, collider.rotation);
+}
+
+/// Candidate top-left position at first contact while moving a box horizontally into a circle.
+pub fn circleStopX(box: Box, dx: f32, circle: Circle) ?f32 {
+    if (!std.math.isFinite(dx) or dx == 0 or isEmptyBox(box) or isEmptyCircle(circle)) return null;
+    const dy = distanceFromSpan(circle.y, box.y, box.y + box.h);
+    if (dy > circle.r) return null;
+    const reach = if (dy == 0) circle.r else std.math.sqrt(circle.r * circle.r - dy * dy);
+    const candidate = if (dx > 0) circle.x - reach - box.w else circle.x + reach;
+    if (dy == 0 or circleOverlapsBox(circle, box) or
+        !circleOverlapsBox(circle, .{ .x = candidate, .y = box.y, .w = box.w, .h = box.h })) return candidate;
+    if (dx > 0) {
+        var free = box.x;
+        var hit = candidate;
+        var i: usize = 0;
+        while (i < 32) : (i += 1) {
+            const middle = free + (hit - free) / 2.0;
+            if (middle == free or middle == hit) break;
+            if (circleOverlapsBox(circle, .{ .x = middle, .y = box.y, .w = box.w, .h = box.h })) {
+                hit = middle;
+            } else {
+                free = middle;
+            }
+        }
+        return free;
+    }
+    var hit = candidate;
+    var free = box.x;
+    var i: usize = 0;
+    while (i < 32) : (i += 1) {
+        const middle = hit + (free - hit) / 2.0;
+        if (middle == hit or middle == free) break;
+        if (circleOverlapsBox(circle, .{ .x = middle, .y = box.y, .w = box.w, .h = box.h })) {
+            hit = middle;
+        } else {
+            free = middle;
+        }
+    }
+    return free;
+}
+
+/// Candidate top-left position at first contact while moving a box vertically into a circle.
+pub fn circleStopY(box: Box, dy: f32, circle: Circle) ?f32 {
+    if (!std.math.isFinite(dy) or dy == 0 or isEmptyBox(box) or isEmptyCircle(circle)) return null;
+    const dx = distanceFromSpan(circle.x, box.x, box.x + box.w);
+    if (dx > circle.r) return null;
+    const reach = if (dx == 0) circle.r else std.math.sqrt(circle.r * circle.r - dx * dx);
+    const candidate = if (dy > 0) circle.y - reach - box.h else circle.y + reach;
+    if (dx == 0 or circleOverlapsBox(circle, box) or
+        !circleOverlapsBox(circle, .{ .x = box.x, .y = candidate, .w = box.w, .h = box.h })) return candidate;
+    if (dy > 0) {
+        var free = box.y;
+        var hit = candidate;
+        var i: usize = 0;
+        while (i < 32) : (i += 1) {
+            const middle = free + (hit - free) / 2.0;
+            if (middle == free or middle == hit) break;
+            if (circleOverlapsBox(circle, .{ .x = box.x, .y = middle, .w = box.w, .h = box.h })) {
+                hit = middle;
+            } else {
+                free = middle;
+            }
+        }
+        return free;
+    }
+    var hit = candidate;
+    var free = box.y;
+    var i: usize = 0;
+    while (i < 32) : (i += 1) {
+        const middle = hit + (free - hit) / 2.0;
+        if (middle == hit or middle == free) break;
+        if (circleOverlapsBox(circle, .{ .x = box.x, .y = middle, .w = box.w, .h = box.h })) {
+            hit = middle;
+        } else {
+            free = middle;
+        }
+    }
+    return free;
+}
+
+fn distanceFromSpan(value: f32, start: f32, end: f32) f32 {
+    if (value < start) return start - value;
+    if (value > end) return value - end;
+    return 0;
+}
+
+fn circleOverlapsRotatedBox(circle: Circle, collider: Collider) bool {
+    if (collider.rotation == 0) return circleOverlapsBox(circle, collider.box);
+    if (!std.math.isFinite(collider.rotation) or isEmptyCircle(circle) or isEmptyBox(collider.box)) return false;
+    const center_x = collider.box.x + collider.box.w / 2.0;
+    const center_y = collider.box.y + collider.box.h / 2.0;
+    const dx = circle.x - center_x;
+    const dy = circle.y - center_y;
+    const cosine = @cos(collider.rotation);
+    const sine = @sin(collider.rotation);
+    const local_circle = Circle{
+        .x = dx * cosine + dy * sine + collider.box.w / 2.0,
+        .y = -dx * sine + dy * cosine + collider.box.h / 2.0,
+        .r = circle.r,
+    };
+    return circleOverlapsBox(local_circle, .{ .x = 0, .y = 0, .w = collider.box.w, .h = collider.box.h });
 }
 
 /// The axis-aligned bounds that contain a box at its current rotation. Suitable for spatial-grid
@@ -286,6 +438,41 @@ test "a circle overlaps a box when the box point nearest its center is inside th
     // Near the top-left corner the nearest point is (0, 0), and its distance from (-3, -4) is exactly 5.
     try expect(!circleOverlapsBox(.{ .x = -3, .y = -4, .r = 5 }, box));
     try expect(circleOverlapsBox(.{ .x = -3, .y = -4, .r = 5.01 }, box));
+}
+
+test "points on a circle rim are outside and the adjacent interior float is inside" {
+    const circle = Circle{ .x = 0, .y = 0, .r = 5 };
+    const inside_x: f32 = @bitCast(@as(u32, @bitCast(@as(f32, 5))) - 1);
+    try expect(!pointInCircle(.{ .x = 5, .y = 0 }, circle));
+    try expect(pointInCircle(.{ .x = inside_x, .y = 0 }, circle));
+    try expect(!pointInCircle(.{ .x = 0, .y = 0 }, .{ .x = 0, .y = 0, .r = std.math.inf(f32) }));
+}
+
+test "circle collider pairs use circle tests, rotated-box local space, and mutual masks" {
+    const circle = Collider{
+        .box = .{ .x = 100, .y = 100, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 5, .y = 5, .r = 5 },
+    };
+    const touching_circle = Collider{
+        .box = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
+        .layer = 1,
+        .circle = .{ .x = 15, .y = 5, .r = 5 },
+    };
+    try expect(!colliderOverlaps(circle, touching_circle));
+    try expect(colliderOverlaps(
+        circle,
+        .{
+            .box = .{ .x = 5, .y = 5, .w = 10, .h = 10 },
+            .layer = 1,
+            .rotation = std.math.pi / 4.0,
+        },
+    ));
+    try expect(!colliderOverlaps(circle, .{
+        .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+        .layer = 1,
+        .mask = 2,
+    }));
 }
 
 test "oriented boxes use separating axes and exclude edge-only contact" {

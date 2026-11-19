@@ -4,9 +4,10 @@ The engine provides SDL-free shape and collision helpers in `engine.physics`.
 
 ## Shapes and colliders
 
-`Collider` and `collision.Component` support an axis-aligned or rotated rectangle, an enabled flag,
-one or more collision layers, a query mask, and an opt-in `one_way` flag. Components can be attached
-to dense ECS rows and copied into collider slices with `collision.collidersFromWorld`.
+`Collider` and `collision.Component` support a box or optional circle shape, one or more collision
+layers, a query mask, and an enabled flag. Box colliders may be rotated or marked `one_way`.
+Components can be attached to dense ECS rows and copied into collider slices with
+`collision.collidersFromWorld`.
 
 ```zig
 const wall = engine.physics.collision.Component{
@@ -22,11 +23,15 @@ An axis-aligned collider with `one_way = true` blocks only downward movement at 
 Horizontal and upward movement pass through it. A rotated collider remains a full block even when
 flagged one-way.
 
+Set `circle` to use a circle as the collider's only shape; the `box` and `rotation` fields are then
+ignored. A null circle preserves the box behavior. Circles are open disks: rim contact is not an
+overlap. A circle ignores `one_way` and blocks movement as a solid shape in every direction.
+
 ## Detection
 
 `orientedBoxesOverlap` uses the separating-axis theorem for exact rectangle-vs-rectangle overlap.
-`pointInOrientedBox` performs exact point containment for a rotated box. These operations do not
-allocate and do not report movement.
+`circleOverlapsBox`, `circlesOverlap`, and `pointInCircle` provide the corresponding strict circle
+tests. These operations do not allocate and do not report movement.
 
 `queries.firstOverlap`, `anyOverlap`, `queryRegion`, and `firstAtPoint` operate on collider slices.
 Every operation filters disabled colliders and checks the collision layer/mask relationship.
@@ -57,7 +62,8 @@ operation. They skip axis-aligned one-way tops while retaining solid and rotated
 
 Linear and grid movement resolve X before Y, preserve movement that starts inside an overlapping
 collider as escape movement, and stop at blockers when exact overlap first appears. Rotated
-candidates use exact narrow-phase overlap checks.
+candidates use exact narrow-phase overlap checks, and circle colliders use analytic box-to-circle
+contact stops. The moving probe remains a box.
 
 One-way response is optional and does not change existing colliders: the default `one_way = false`
 keeps them fully solid.

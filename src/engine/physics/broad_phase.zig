@@ -49,8 +49,10 @@ pub const Index = struct {
         if (!std.math.isFinite(cell_size) or cell_size <= 0) return error.InvalidCellSize;
         var entry_count: usize = 0;
         for (colliders) |collider| {
-            if (collision.isEmptyBox(collider.box)) continue;
-            const bounds = collision.boundingBox(collider.box, collider.rotation) orelse return error.InvalidColliderBounds;
+            if (collider.circle) |circle| {
+                if (collision.isEmptyCircle(circle)) continue;
+            } else if (collision.isEmptyBox(collider.box)) continue;
+            const bounds = collision.colliderBounds(collider) orelse return error.InvalidColliderBounds;
             const range = cellRange(bounds, cell_size) orelse return error.InvalidColliderBounds;
             entry_count = try addCellCount(entry_count, range);
         }
@@ -65,8 +67,10 @@ pub const Index = struct {
 
         var cursor: usize = 0;
         for (colliders, 0..) |collider, collider_index| {
-            if (collision.isEmptyBox(collider.box)) continue;
-            const bounds = collision.boundingBox(collider.box, collider.rotation).?;
+            if (collider.circle) |circle| {
+                if (collision.isEmptyCircle(circle)) continue;
+            } else if (collision.isEmptyBox(collider.box)) continue;
+            const bounds = collision.colliderBounds(collider).?;
             const range = cellRange(bounds, cell_size).?;
             var y = range.min_y;
             while (y <= range.max_y) : (y += 1) {
@@ -102,10 +106,7 @@ pub const Index = struct {
         for (self.candidates[0..count]) |index| {
             const collider = self.colliders[index];
             if (!collider.enabled or !hits(collider, mask)) continue;
-            if (collision.orientedBoxesOverlap(
-                .{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation },
-                .{ .x = box.x, .y = box.y, .w = box.w, .h = box.h, .rotation = 0 },
-            ))
+            if (collision.overlapsProbe(collider, box))
                 first = if (first) |found| @min(found, index) else index;
         }
         return first;
@@ -126,17 +127,7 @@ pub const Index = struct {
         for (self.candidates[0..self.candidate_count]) |index| {
             const collider = self.colliders[index];
             if (!collider.enabled or !hits(collider, mask)) continue;
-            const contains = if (collider.rotation == 0)
-                collision.pointInBox(point, collider.box)
-            else
-                collision.pointInOrientedBox(point, .{
-                    .x = collider.box.x,
-                    .y = collider.box.y,
-                    .w = collider.box.w,
-                    .h = collider.box.h,
-                    .rotation = collider.rotation,
-                });
-            if (contains)
+            if (collision.containsPoint(collider, point))
                 first = if (first) |found| @min(found, index) else index;
         }
         return first;
@@ -151,10 +142,7 @@ pub const Index = struct {
         for (self.candidates[0..count]) |index| {
             const collider = self.colliders[index];
             if (!collider.enabled or !hits(collider, mask)) continue;
-            if (!collision.orientedBoxesOverlap(
-                .{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation },
-                .{ .x = region.x, .y = region.y, .w = region.w, .h = region.h, .rotation = 0 },
-            )) continue;
+            if (!collision.overlapsProbe(collider, region)) continue;
             if (written == out.len) break;
             out[written] = index;
             written += 1;
@@ -241,15 +229,7 @@ fn hits(collider: Collider, mask: u32) bool {
 fn linearPoint(colliders: []const Collider, point: Point, mask: u32) ?usize {
     for (colliders, 0..) |collider, index| {
         if (!collider.enabled or !hits(collider, mask)) continue;
-        if (collider.rotation == 0) {
-            if (collision.pointInBox(point, collider.box)) return index;
-        } else if (collision.pointInOrientedBox(point, .{
-            .x = collider.box.x,
-            .y = collider.box.y,
-            .w = collider.box.w,
-            .h = collider.box.h,
-            .rotation = collider.rotation,
-        })) return index;
+        if (collision.containsPoint(collider, point)) return index;
     }
     return null;
 }
@@ -265,7 +245,18 @@ fn slideX(colliders: []const Collider, candidates: []const usize, box: Box, dx: 
     var result = target;
     for (candidates) |index| {
         const collider = colliders[index];
-        if (!collider.enabled or !hits(collider, mask) or collision.isEmptyBox(collider.box)) continue;
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        if (collider.circle) |circle| {
+            if (collision.circleStopX(box, dx, circle)) |stop| {
+                if (dx > 0 and stop >= box.x and stop < target) {
+                    result = @min(result, stop);
+                } else if (dx < 0 and stop <= box.x and stop > target) {
+                    result = @max(result, stop);
+                }
+            }
+            continue;
+        }
+        if (collision.isEmptyBox(collider.box)) continue;
         if (collider.one_way and collider.rotation == 0) continue;
         if (collider.rotation != 0) {
             const c_box = OrientedBox{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation };
@@ -326,7 +317,18 @@ fn slideY(colliders: []const Collider, candidates: []const usize, box: Box, dy: 
     var result = target;
     for (candidates) |index| {
         const collider = colliders[index];
-        if (!collider.enabled or !hits(collider, mask) or collision.isEmptyBox(collider.box)) continue;
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        if (collider.circle) |circle| {
+            if (collision.circleStopY(box, dy, circle)) |stop| {
+                if (dy > 0 and stop >= box.y and stop < target) {
+                    result = @min(result, stop);
+                } else if (dy < 0 and stop <= box.y and stop > target) {
+                    result = @max(result, stop);
+                }
+            }
+            continue;
+        }
+        if (collision.isEmptyBox(collider.box)) continue;
         if (collider.one_way and collider.rotation == 0 and (dy < 0 or ignore_one_way)) continue;
         if (collider.rotation != 0) {
             const c_box = OrientedBox{ .x = collider.box.x, .y = collider.box.y, .w = collider.box.w, .h = collider.box.h, .rotation = collider.rotation };
@@ -511,4 +513,59 @@ test "indexed movement matches linear one-way collider behavior" {
     const drop_actual = index.moveBoxIgnoringOneWay(box, 0, 80, 1);
     try std.testing.expectEqual(drop_expected.x, drop_actual.x);
     try std.testing.expectEqual(drop_expected.y, drop_actual.y);
+}
+
+test "indexed circle queries and movement match the linear collider pipeline" {
+    const linear = @import("queries.zig");
+    const colliders = [_]Collider{
+        .{
+            .box = .{ .x = -100, .y = -100, .w = 1, .h = 1 },
+            .layer = 1,
+            .circle = .{ .x = 50, .y = 13, .r = 5 },
+            .one_way = true,
+        },
+        .{ .box = .{ .x = 70, .y = 0, .w = 10, .h = 40 }, .layer = 1, .one_way = true },
+        .{
+            .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+            .layer = 1,
+            .circle = .{ .x = 100, .y = 100, .r = 0 },
+        },
+    };
+    var index = try Index.init(std.testing.allocator, &colliders, 8);
+    defer index.deinit();
+    const probe = Box{ .x = 45, .y = 8, .w = 2, .h = 2 };
+    try std.testing.expectEqual(linear.firstOverlap(&colliders, probe, 1), index.firstOverlap(probe, 1));
+    try std.testing.expectEqual(linear.firstAtPoint(&colliders, .{ .x = 50, .y = 13 }, 1), index.firstAtPoint(.{ .x = 50, .y = 13 }, 1));
+    try std.testing.expectEqual(@as(?usize, null), index.firstAtPoint(.{ .x = 55, .y = 13 }, 1));
+    var linear_indices: [3]usize = undefined;
+    var indexed_indices: [3]usize = undefined;
+    const linear_count = linear.queryRegion(&colliders, probe, 1, &linear_indices);
+    const indexed_count = index.queryRegion(probe, 1, &indexed_indices);
+    try std.testing.expectEqual(linear_count, indexed_count);
+    try std.testing.expectEqualSlices(usize, linear_indices[0..linear_count], indexed_indices[0..indexed_count]);
+
+    const mover = Box{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    const expected = linear.moveBox(&colliders, mover, 100, 0, 1);
+    const actual = index.moveBox(mover, 100, 0, 1);
+    try std.testing.expectEqual(expected.x, actual.x);
+    try std.testing.expectEqual(expected.y, actual.y);
+    try std.testing.expectEqual(@as(f32, 36), actual.x);
+}
+
+test "indexed circles skip empty shapes and enforce the cell-entry cap" {
+    const empty = [_]Collider{.{
+        .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+        .layer = 1,
+        .circle = .{ .x = 0, .y = 0, .r = 0 },
+    }};
+    var empty_index = try Index.init(std.testing.allocator, &empty, 8);
+    defer empty_index.deinit();
+    try std.testing.expectEqual(@as(?usize, null), empty_index.firstOverlap(.{ .x = 0, .y = 0, .w = 1, .h = 1 }, all_layers));
+
+    const huge = [_]Collider{.{
+        .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+        .layer = 1,
+        .circle = .{ .x = 0, .y = 0, .r = 10_000 },
+    }};
+    try std.testing.expectError(error.TooManyCells, Index.init(std.testing.allocator, &huge, 1));
 }
