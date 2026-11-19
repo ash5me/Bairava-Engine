@@ -52,3 +52,20 @@ Notes:
 - A deliberately leaked block is reported by the same LeakSanitizer, so the leak detector works in this sandbox.
 
 Owner check still required: zig build test (with the Zig pinned in CI), then record the result against a commit.
+
+== Owner run (Zig) ==
+zig build test: PASSED, reported by the owner after the test changes in this record.
+Commit: NOT REPORTED. The plan requires the commit this run was made against before it counts as gate evidence.
+Not yet reported by the owner: scripts/boundary_scan.py --fail on that commit, and whether the ui.zig test blocks ran.
+
+== Owner run: scripts/boundary_scan.py --fail (D-21 gate) ==
+Run on the owner's checkout (D:\repo\Bairava-Engine). Output as reported by the owner:
+  Scanned 165 files under src/ (152 .zig, 13 .c/.h). Matches this zip's src/ (152 .zig, 13 .c/.h).
+  REACHABLE VIOLATIONS: 0 line(s) in 0 file(s)
+  KNOWN EXPOSURES (debt listed in D21_DEBT): 0 line(s)
+  NEW EXPOSURES: 0
+  STALE DEBT ENTRIES: 0
+  HARFBUZZ NAMES OUTSIDE src/engine/text/: 0
+Exit code: NOT REPORTED.
+Commit: NOT REPORTED.
+Info-only lines, all pre-existing: lifecycle.zig and application.zig have SDL names inside string literals.
