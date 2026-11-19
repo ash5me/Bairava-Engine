@@ -13,9 +13,15 @@ const action = @import("../input/action.zig");
 const sprite = @import("../renderer/sprite.zig");
 const view = @import("../renderer/view.zig");
 const text_layout = @import("../text/layout.zig");
+const font_registry = @import("../text/font_registry.zig");
+const font_resource = @import("../text/font_resource.zig");
 
 /// A font on the GPU. See text/font.zig.
 pub const Font = @import("../text/font.zig").Font;
+/// What game code holds in place of a font. The font itself lives in the session's registry.
+pub const FontHandle = font_registry.FontHandle;
+/// The registry that owns every loaded font. The session creates it, and `Context.loadFont` fills it.
+pub const Fonts = font_resource.Resources;
 pub const TextAlignment = text_layout.Alignment;
 pub const TextLayout = text_layout.Layout;
 
@@ -70,27 +76,28 @@ pub fn anchorBounds(view_w: f32, view_h: f32, width: f32, height: f32, anchor: A
     return .{ .x = x, .y = y, .w = safe_w, .h = safe_h };
 }
 
-/// A font and a quad list on the heap, with text and rectangle helpers. The debug overlay draws
-/// with one directly, and `Ui` builds one for its widgets. The font lives on the heap because the
-/// C side keeps pointers into it.
+/// A handle to a font in the session's registry, and a quad list on the heap, with text and rectangle helpers. The
+/// debug overlay draws with one directly, and `Ui` builds one for its widgets. The font is not owned here: the registry
+/// owns it and releases it at shutdown, after every Canvas has been deinitialized.
 pub const Canvas = struct {
     allocator: std.mem.Allocator,
-    font: *Font,
+    /// The registry the font lives in. It is a mutable pointer because the C text functions take a non-const font.
+    fonts: *font_resource.Resources,
+    font: FontHandle,
     list: *c.ui_quad_list,
 
-    /// Takes ownership of `font`; all wrapper memory uses `allocator`.
-    pub fn create(allocator: std.mem.Allocator, font: Font) Canvas {
-        const heap_font = allocator.create(Font) catch @panic("out of memory");
-        heap_font.* = font;
+    /// Keeps `font` as a handle; all wrapper memory uses `allocator`. Panics if the handle does not name a font this
+    /// path can draw, because that is a bug in the code that made it.
+    pub fn create(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Canvas {
+        _ = bfntFont(fonts, font);
         const list = allocator.create(c.ui_quad_list) catch @panic("out of memory");
         list.count = 0;
         list.dropped = 0;
-        return .{ .allocator = allocator, .font = heap_font, .list = list };
+        return .{ .allocator = allocator, .fonts = fonts, .font = font, .list = list };
     }
 
+    /// Frees the quad list. The font stays in the registry.
     pub fn deinit(self: *Canvas) void {
-        self.font.deinit();
-        self.allocator.destroy(self.font);
         self.allocator.destroy(self.list);
     }
 
@@ -100,9 +107,14 @@ pub const Canvas = struct {
         self.list.dropped = 0;
     }
 
+    /// The natural line height of this font, in pixels.
+    pub fn lineHeight(self: *const Canvas) f32 {
+        return @floatFromInt(bfntFont(self.fonts, self.font).baked.line_height);
+    }
+
     /// The width of `str` in pixels, in this font.
     pub fn textWidth(self: *const Canvas, str: []const u8) f32 {
-        return c.ui_font_text_width(&self.font.baked, str.ptr, str.len);
+        return c.ui_font_text_width(&bfntFont(self.fonts, self.font).baked, str.ptr, str.len);
     }
 
     /// Builds a wrapped, aligned text block. Line slices borrow `str`; release the result with
@@ -112,7 +124,7 @@ pub const Canvas = struct {
             allocator,
             str,
             max_width,
-            @floatFromInt(self.font.baked.line_height),
+            self.lineHeight(),
             alignment,
             self,
             measureCanvasText,
@@ -133,7 +145,8 @@ pub const Canvas = struct {
 
     /// Adds `str` with its top-left corner at (x, y), in pixels.
     pub fn text(self: *Canvas, x: f32, y: f32, str: []const u8, color: Color) void {
-        c.ui_font_draw_text(&self.font.baked, self.list, x, y, str.ptr, str.len, toC(color));
+        const font = bfntFont(self.fonts, self.font);
+        c.ui_font_draw_text(&font.baked, self.list, x, y, str.ptr, str.len, toC(color));
     }
 
     /// Adds a solid rectangle. It draws from the batch's white texture when it is queued (see `queueQuads`), so it
@@ -147,7 +160,7 @@ pub const Canvas = struct {
         }
         list.items[@intCast(list.count)] = .{
             .dst = .{ .x = x, .y = y, .w = w, .h = h },
-            .src = self.font.baked.white,
+            .src = bfntFont(self.fonts, self.font).baked.white,
             .color = toC(color),
             .solid = 1,
         };
@@ -156,13 +169,23 @@ pub const Canvas = struct {
 
     /// Queues the quads as sprites at depth `z`.
     pub fn queue(self: *Canvas, batch: *sprite.SpriteBatch, z: i32) void {
-        queueQuads(batch, self.font, self.list, z);
+        queueQuads(batch, bfntFont(self.fonts, self.font), self.list, z);
     }
 };
 
 fn measureCanvasText(context: *const anyopaque, str: []const u8) f32 {
     const canvas: *const Canvas = @ptrCast(@alignCast(context));
     return canvas.textWidth(str);
+}
+
+/// The bfnt font that `handle` names in `fonts`. A stale or invalid handle, or a font of a provider these widgets cannot
+/// draw yet, is a bug in the caller, so it panics with the reason.
+fn bfntFont(fonts: *font_resource.Resources, handle: FontHandle) *Font {
+    const resource = fonts.get(handle) catch |err| std.debug.panic("UI font handle {d} does not name a loaded font: {s}", .{ handle.id, @errorName(err) });
+    return switch (resource.*) {
+        .bfnt_coverage => |*font_value| font_value,
+        .runtime_coverage => std.debug.panic("UI font handle {d} is an outline font, which the UI cannot draw yet", .{handle.id}),
+    };
 }
 
 /// Immediate-mode widgets. The C side keeps the layout and the widget state, and this wrapper hands
@@ -173,11 +196,12 @@ pub const Ui = struct {
     canvas: Canvas,
     ctx: *c.ui_context,
 
-    /// Takes ownership of `font`; wrapper memory uses `allocator`.
-    pub fn init(allocator: std.mem.Allocator, font: Font) Ui {
-        const canvas = Canvas.create(allocator, font);
+    /// Keeps `font` as a handle into `fonts`; wrapper memory uses `allocator`. The C widget state keeps a pointer to the
+    /// font's metrics. That is safe because the registry gives each font a fixed address until it is released.
+    pub fn init(allocator: std.mem.Allocator, fonts: *font_resource.Resources, font: FontHandle) Ui {
+        const canvas = Canvas.create(allocator, fonts, font);
         const ctx = allocator.create(c.ui_context) catch @panic("out of memory");
-        c.ui_init(ctx, &canvas.font.baked);
+        c.ui_init(ctx, &bfntFont(fonts, font).baked);
         return .{ .allocator = allocator, .canvas = canvas, .ctx = ctx };
     }
 
@@ -281,7 +305,7 @@ pub const Ui = struct {
 
     /// Queues this frame's widgets as sprites at depth `z`.
     pub fn queue(self: *Ui, batch: *sprite.SpriteBatch, z: i32) void {
-        queueQuads(batch, self.canvas.font, &self.ctx.list, z);
+        queueQuads(batch, bfntFont(self.canvas.fonts, self.canvas.font), &self.ctx.list, z);
     }
 };
 
@@ -347,13 +371,25 @@ test "ui anchorBounds places panels relative to the viewport" {
     try std.testing.expectApproxEqAbs(@as(f32, 70.0), centered.y, 1e-4);
 }
 
+/// A font with empty metrics, except for a 1x1 white block at the origin. Its texture is the default, with no GPU object.
+fn emptyFont() Font {
+    return .{ .texture = .{}, .baked = .{ .white = .{ .x = 0, .y = 0, .w = 1, .h = 1 } } };
+}
+
+/// A registry font with a 2x2 white block at the origin and a 64x64 fixture texture, for the Canvas tests. The tests
+/// call `deinit` on their registry, not `deinitWith`, because the fixture texture has no GPU object to release.
+fn insertFixtureFont(fonts: *Fonts) !FontHandle {
+    const fixtures = @import("../test_fixtures.zig");
+    var font = Font{ .baked = std.mem.zeroes(c.ui_font), .texture = fixtures.texture(64, 64) };
+    font.baked.white = .{ .x = 0, .y = 0, .w = 2, .h = 2 };
+    return fonts.insert(.{ .bfnt_coverage = font });
+}
+
 test "ui begin substitutes a safe layout and origin when input is invalid" {
-    var ui = Ui.init(std.testing.allocator, .{
-        .texture = .{},
-        .baked = .{
-            .white = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
-        },
-    });
+    var fonts = Fonts.init(std.testing.allocator);
+    defer fonts.deinit();
+    const font = try fonts.insert(.{ .bfnt_coverage = emptyFont() });
+    var ui = Ui.init(std.testing.allocator, &fonts, font);
     defer ui.deinit();
 
     var input_state = input.Input{};
@@ -369,12 +405,10 @@ test "ui begin substitutes a safe layout and origin when input is invalid" {
 }
 
 test "ui begin passes Escape as the cancel, and the key pressed as its control" {
-    var ui = Ui.init(std.testing.allocator, .{
-        .texture = .{},
-        .baked = .{
-            .white = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
-        },
-    });
+    var fonts = Fonts.init(std.testing.allocator);
+    defer fonts.deinit();
+    const font = try fonts.insert(.{ .bfnt_coverage = emptyFont() });
+    var ui = Ui.init(std.testing.allocator, &fonts, font);
     defer ui.deinit();
 
     var input_state = input.Input{};
@@ -396,18 +430,29 @@ test "ui begin passes Escape as the cancel, and the key pressed as its control" 
     try std.testing.expect(!ui.listening());
 }
 
+test "a UI font keeps its address while more fonts are loaded" {
+    var fonts = Fonts.init(std.testing.allocator);
+    defer fonts.deinit();
+    const handle = try fonts.insert(.{ .bfnt_coverage = emptyFont() });
+    const before = bfntFont(&fonts, handle);
+    var i: u32 = 0;
+    while (i < 64) : (i += 1) _ = try fonts.insert(.{ .bfnt_coverage = emptyFont() });
+    try std.testing.expect(before == bfntFont(&fonts, handle));
+}
+
 test "a solid rectangle draws from the batch's white texture, not the font atlas" {
     const allocator = std.testing.allocator;
     const fixtures = @import("../test_fixtures.zig");
     const Texture = @import("../renderer/texture.zig").Texture;
 
-    var font = Font{ .baked = std.mem.zeroes(c.ui_font), .texture = fixtures.texture(64, 64) };
-    font.baked.white = .{ .x = 0, .y = 0, .w = 2, .h = 2 };
+    var fonts = Fonts.init(allocator);
+    defer fonts.deinit();
+    const handle = try insertFixtureFont(&fonts);
     const list = try allocator.create(c.ui_quad_list);
     defer allocator.destroy(list);
     list.count = 0;
     list.dropped = 0;
-    var canvas = Canvas{ .allocator = allocator, .font = &font, .list = list };
+    var canvas = Canvas{ .allocator = allocator, .fonts = &fonts, .font = handle, .list = list };
     canvas.rect(10, 10, 20, 5, .{ .r = 1, .g = 0, .b = 0, .a = 1 });
 
     var no_vertices: [0]sprite.Vertex = .{};
@@ -433,8 +478,10 @@ test "a glyph keeps the font atlas, and a fill after it starts a run on the whit
     const fixtures = @import("../test_fixtures.zig");
     const Texture = @import("../renderer/texture.zig").Texture;
 
-    var font = Font{ .baked = std.mem.zeroes(c.ui_font), .texture = fixtures.texture(64, 64) };
-    font.baked.white = .{ .x = 0, .y = 0, .w = 2, .h = 2 };
+    var fonts = Fonts.init(allocator);
+    defer fonts.deinit();
+    const handle = try insertFixtureFont(&fonts);
+    const stored = bfntFont(&fonts, handle);
     const list = try allocator.create(c.ui_quad_list);
     defer allocator.destroy(list);
     list.count = 0;
@@ -446,7 +493,7 @@ test "a glyph keeps the font atlas, and a fill after it starts a run on the whit
     list.items[0].color = .{ .r = 1, .g = 1, .b = 1, .a = 1 };
     list.items[0].solid = 0;
     list.count = 1;
-    var canvas = Canvas{ .allocator = allocator, .font = &font, .list = list };
+    var canvas = Canvas{ .allocator = allocator, .fonts = &fonts, .font = handle, .list = list };
     canvas.rect(10, 10, 20, 5, .{ .r = 1, .g = 0, .b = 0, .a = 1 });
 
     var no_vertices: [0]sprite.Vertex = .{};
@@ -460,7 +507,7 @@ test "a glyph keeps the font atlas, and a fill after it starts a run on the whit
     batch.prepare();
 
     try std.testing.expectEqual(@as(u32, 2), batch.batch_count);
-    try std.testing.expectEqual(@as(*const Texture, &font.texture), batch.batches[0].texture);
+    try std.testing.expectEqual(@as(*const Texture, &stored.texture), batch.batches[0].texture);
     try std.testing.expectEqual(@as(*const Texture, &white), batch.batches[1].texture);
 }
 
@@ -469,13 +516,15 @@ test "without a white texture on the batch, a fill falls back to the font's own 
     const fixtures = @import("../test_fixtures.zig");
     const Texture = @import("../renderer/texture.zig").Texture;
 
-    var font = Font{ .baked = std.mem.zeroes(c.ui_font), .texture = fixtures.texture(64, 64) };
-    font.baked.white = .{ .x = 0, .y = 0, .w = 2, .h = 2 };
+    var fonts = Fonts.init(allocator);
+    defer fonts.deinit();
+    const handle = try insertFixtureFont(&fonts);
+    const stored = bfntFont(&fonts, handle);
     const list = try allocator.create(c.ui_quad_list);
     defer allocator.destroy(list);
     list.count = 0;
     list.dropped = 0;
-    var canvas = Canvas{ .allocator = allocator, .font = &font, .list = list };
+    var canvas = Canvas{ .allocator = allocator, .fonts = &fonts, .font = handle, .list = list };
     canvas.rect(10, 10, 20, 5, .{ .r = 1, .g = 0, .b = 0, .a = 1 });
 
     var no_vertices: [0]sprite.Vertex = .{};
@@ -487,5 +536,5 @@ test "without a white texture on the batch, a fill falls back to the font's own 
     batch.prepare();
 
     try std.testing.expectEqual(@as(u32, 1), batch.batch_count);
-    try std.testing.expectEqual(@as(*const Texture, &font.texture), batch.batches[0].texture);
+    try std.testing.expectEqual(@as(*const Texture, &stored.texture), batch.batches[0].texture);
 }

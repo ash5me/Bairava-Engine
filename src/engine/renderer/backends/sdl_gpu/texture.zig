@@ -87,9 +87,8 @@ pub const CoverageRegion = struct {
 /// Records copies of `regions` into `cmd` outside a render pass. The copies run before any draw recorded after them in
 /// the same command buffer, which is how a glyph written this frame is sampled this frame. The rows are staged in one
 /// transfer buffer. SDL frees that buffer once the GPU no longer needs it, so it is released before this returns.
-/// `cycle` must be true when replacing a whole page that may still be referenced by an earlier in-flight frame; because
-/// cycling invalidates the previous contents, the supplied region must then cover the complete page. Empty regions skip.
-pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, regions: []const CoverageRegion, cycle: bool) void {
+/// Regions must lie inside the texture. An empty region is skipped.
+pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, regions: []const CoverageRegion) void {
     var total: usize = 0;
     for (regions) |region| {
         if (region.w == 0 or region.h == 0) continue;
@@ -143,7 +142,7 @@ pub fn recordCoverageRegions(state: *const State, cmd: *c.SDL_GPUCommandBuffer, 
             .h = region.h,
             .d = 1,
         };
-        c.SDL_UploadToGPUTexture(copy_pass, &src, &dst, cycle);
+        c.SDL_UploadToGPUTexture(copy_pass, &src, &dst, false);
         offset += @as(usize, region.w) * @as(usize, region.h);
     }
     c.SDL_EndGPUCopyPass(copy_pass);

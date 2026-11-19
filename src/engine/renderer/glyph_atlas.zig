@@ -176,16 +176,12 @@ pub const Atlas = struct {
             const page: u32 = @intCast(index);
 
             // Step 1, GPU: unconditional.
-            // A full-page replacement may overlap sampling by an earlier in-flight frame. Cycle the SDL texture in
-            // that case; the full-page region below restores every texel in the new backing resource. Incremental
-            // regions are newly allocated and never reused, so they do not need cycling.
-            const full_page = self.cache.pageNeedsFullUpload(page);
             const count = gatherPage(&self.cache, page, &regions);
             if (count > 0) {
-                texture.recordCoverageGpu(page_texture, cmd, regions[0..count], full_page);
+                texture.recordCoverageGpu(page_texture, cmd, regions[0..count]);
                 recorded_any = true;
                 stats.gpu_regions += count;
-                if (full_page) stats.gpu_full_pages += 1;
+                if (self.cache.pageNeedsFullUpload(page)) stats.gpu_full_pages += 1;
             }
 
             // Step 2, 2D: the only place `sdl2d_active` matters.

@@ -89,7 +89,7 @@ fn dominantPhase(stats: *const frame_stats.Stats) frame_stats.Phase {
 }
 
 /// Loads the overlay's font. A missing font turns the overlay off rather than stopping the game.
-fn loadOverlayFont(ctx: *const context.Context, config: Config) ?ui.Font {
+fn loadOverlayFont(ctx: *const context.Context, config: Config) ?ui.FontHandle {
     return ctx.loadFont(config.debug_font_path, config.debug_font_px) catch |err| {
         logging.recovered("engine", "loading the debug overlay font", config.debug_font_path, err, "the overlay is off");
         return null;
@@ -150,10 +150,10 @@ pub fn run(comptime Game: type, config: Config) !void {
     };
     defer game.deinit();
 
-    // The overlay loads its own copy of the debug font from its prebaked file.
+    // The overlay's font goes into the session's font registry, which releases it at shutdown.
     // Release builds have no overlay, so they load no font for it.
-    const debug_font: ?ui.Font = if (gate.enabled) loadOverlayFont(ctx, config) else null;
-    var overlay = debug_overlay.Overlay.init(allocators.engineAllocator(), debug_font);
+    const debug_font: ?ui.FontHandle = if (gate.enabled) loadOverlayFont(ctx, config) else null;
+    var overlay = debug_overlay.Overlay.init(allocators.engineAllocator(), ctx.fonts, debug_font);
     defer overlay.deinit();
     const collector = &session.collector;
     var dev_console = console_mod.Console{};

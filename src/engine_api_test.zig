@@ -191,13 +191,16 @@ test "game rebinding rolls back when saving settings fails" {
 }
 
 test "Canvas text layout validates dimensions through the public UI API" {
-    var font = bairava.ui.Font{
+    var fonts = bairava.ui.Fonts.init(std.testing.allocator);
+    defer fonts.deinit();
+    const handle = try fonts.insert(.{ .bfnt_coverage = .{
         .baked = .{ .line_height = 10 },
         .texture = undefined,
-    };
+    } });
     const canvas = bairava.ui.Canvas{
         .allocator = std.testing.allocator,
-        .font = &font,
+        .fonts = &fonts,
+        .font = handle,
         .list = undefined,
     };
     try std.testing.expectError(error.InvalidWidth, canvas.layoutText(std.testing.allocator, "text", 0, .left));

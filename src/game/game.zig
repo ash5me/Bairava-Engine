@@ -166,7 +166,7 @@ pub const Game = struct {
             log.err("required UI font '{s}' failed to load: {s}", .{ config.ui_font_path, @errorName(err) });
             return err;
         };
-        const ui = engine.ui.Ui.init(ctx.allocators.game, ui_font);
+        const ui = engine.ui.Ui.init(ctx.allocators.game, ctx.fonts, ui_font);
         const bindings = controls.load(ctx.settings_text);
         const ambient_sound: ?engine.audio.Sound = ctx.loadSound(config.ambient_sound_path) catch |err| blk: {
             if (err != error.NoDevice) log.warn("ambient sound could not be loaded: {s}", .{@errorName(err)});

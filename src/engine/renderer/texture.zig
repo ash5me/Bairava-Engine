@@ -114,19 +114,10 @@ pub fn createCoverageGpuOnly(allocator: std.mem.Allocator, device: *backend.Devi
 }
 
 /// Records the GPU copies of `regions` into `cmd`, the frame's command buffer, so SDL runs them before any draw recorded
-/// after them. Set `cycle` for a whole-page replacement when an earlier in-flight frame may still sample this texture.
-/// Cycling invalidates the previous contents, so callers must provide the complete page in that case. Regions must lie
-/// inside the texture.
-pub fn recordCoverageGpu(texture_ref: *const Texture, cmd: *backend.CommandBuffer, regions: []const CoverageRegion, cycle: bool) void {
+/// after them. Regions must lie inside the texture.
+pub fn recordCoverageGpu(texture_ref: *const Texture, cmd: *backend.CommandBuffer, regions: []const CoverageRegion) void {
     std.debug.assert(texture_ref.coverage);
-    if (cycle) {
-        // SDL cycles the entire texture, so a cycling upload must restore the whole page in one region.
-        std.debug.assert(regions.len == 1);
-        const region = regions[0];
-        std.debug.assert(region.x == 0 and region.y == 0);
-        std.debug.assert(region.w == texture_ref.width and region.h == texture_ref.height);
-    }
-    backend.texture.recordCoverageRegions(backendState(texture_ref), cmd, regions, cycle);
+    backend.texture.recordCoverageRegions(backendState(texture_ref), cmd, regions);
 }
 
 /// Makes the 2D renderer's copy of a coverage texture match `alpha`, which holds width * height coverage bytes, row 0
