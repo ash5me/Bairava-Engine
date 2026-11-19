@@ -1,6 +1,7 @@
 PASS descriptor parses into fields, pages, glyphs, kerning
 PASS glyphs found by codepoint, kerning by pair
 PASS line order does not change the result
+PASS normalized font carries schema version 1
 PASS no page is rejected
 PASS no info or common is rejected
 PASS glyph outside atlas is rejected
@@ -8,11 +9,12 @@ PASS glyph on missing page is rejected
 PASS duplicate codepoint is rejected
 PASS count mismatch is rejected
 PASS missing fallback is rejected
-PASS unmapped kerning is rejected
-PASS duplicate kerning is rejected
+PASS unmapped kerning: diagnostic names pair, line 9, missing id 66
+PASS both kerning glyphs unmapped: the first is named
+PASS duplicate kerning: diagnostic names the later line, 10
 PASS unknown tag is rejected, diagnostic names line 10
 PASS value that does not parse is rejected
 PASS unclosed quote is malformed
 PASS base past line height is rejected
 PASS surrogate codepoint is rejected
-17 of 17 cases pass
+19 of 19 cases pass

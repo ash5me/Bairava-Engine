@@ -17,7 +17,8 @@
 //! - each glyph names an existing page and lies inside the atlas (`scaleW` by `scaleH`);
 //! - metrics are in range: line height and base are positive, base is at most the line height, and advances are not
 //!   negative (unsigned by parse);
-//! - each kerning pair is unique and names two mapped glyphs;
+//! - each kerning pair is unique and names two mapped glyphs. A pair that names an unmapped glyph is an error that
+//!   reports the pair, its line, and the missing BMFont id, and is never dropped silently (D-28);
 //! - the fallback codepoint (default `?`, D-09) has a glyph.
 //!
 //! A zero-width or zero-height glyph is valid. A space has no ink, but it keeps its advance.
@@ -56,8 +57,19 @@ pub const ParseError = std.mem.Allocator.Error || Error;
 /// Where a parse failed. `line` is 1-based when one line failed. It is 0 when the failure is found after the whole
 /// file is read.
 pub const Diagnostic = struct {
+    /// 1-based line of the failure. 0 when the failure is not tied to one line.
     line: usize = 0,
+    /// For DuplicateKerning and UnmappedKerning: the pair as the file names it.
+    kerning_first: u32 = 0,
+    kerning_second: u32 = 0,
+    /// For UnmappedKerning: the BMFont `id` the font lacks. BMFont's `id` is the codepoint. Bairava has no separate
+    /// glyph index yet (plan Phase 2, item 2).
+    unmapped_id: u32 = 0,
 };
+
+/// The version of the normalized `Font` layout this file produces (D-27). The importer writes it, and a reader of a
+/// `Font` checks it. Changing a field means a new version, not an edit in place.
+pub const schema_version: u32 = 1;
 
 pub const Options = struct {
     /// The codepoint that must have a glyph. It is drawn for any character the font does not map.
@@ -95,9 +107,17 @@ pub const Kerning = struct {
     amount: i32,
 };
 
+/// A kerning pair as the file gave it, with the line it came from. The copy the `Font` keeps has no line.
+const PendingKerning = struct {
+    pair: Kerning,
+    line: usize,
+};
+
 /// A validated descriptor, owned by its allocator. Call `deinit` to release it.
 pub const Font = struct {
     allocator: std.mem.Allocator,
+    /// The layout version. Always `schema_version` for a font this file produced.
+    schema_version: u32,
     /// The font size from `info size=`.
     size: i32,
     line_height: u32,
@@ -154,12 +174,12 @@ pub fn parse(allocator: std.mem.Allocator, text: []const u8, options: Options, d
         line_number += 1;
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0) continue;
-        builder.addLine(line) catch |err| {
+        builder.addLine(line, line_number) catch |err| {
             if (diagnostic) |d| d.line = line_number;
             return err;
         };
     }
-    return builder.finish(options.fallback);
+    return builder.finish(options.fallback, diagnostic);
 }
 
 // ---- lines and fields ------------------------------------------------------------------------------------------------
@@ -249,8 +269,25 @@ fn glyphLess(_: void, a: Glyph, b: Glyph) bool {
     return a.codepoint < b.codepoint;
 }
 
-fn kerningLess(_: void, a: Kerning, b: Kerning) bool {
-    return pairLess(a.first, a.second, b.first, b.second);
+fn pendingLess(_: void, a: PendingKerning, b: PendingKerning) bool {
+    if (a.pair.first != b.pair.first) return a.pair.first < b.pair.first;
+    if (a.pair.second != b.pair.second) return a.pair.second < b.pair.second;
+    return a.line < b.line;
+}
+
+/// The codepoint of `pair` that has no glyph, or null when both have one. `first` is checked before `second`.
+fn unmappedOf(glyphs: []const Glyph, pair: Kerning) ?u32 {
+    if (glyphIndex(glyphs, pair.first) == null) return pair.first;
+    if (glyphIndex(glyphs, pair.second) == null) return pair.second;
+    return null;
+}
+
+fn reportKerning(diagnostic: ?*Diagnostic, item: PendingKerning) void {
+    if (diagnostic) |d| {
+        d.line = item.line;
+        d.kerning_first = item.pair.first;
+        d.kerning_second = item.pair.second;
+    }
 }
 
 fn pageLess(_: void, a: Page, b: Page) bool {
@@ -285,7 +322,7 @@ const Builder = struct {
     /// The lines as they arrive. `finish` checks and copies them, and `deinit` frees them.
     pages: std.ArrayList(Page) = .empty,
     glyphs: std.ArrayList(Glyph) = .empty,
-    kernings: std.ArrayList(Kerning) = .empty,
+    kernings: std.ArrayList(PendingKerning) = .empty,
 
     fn deinit(self: *Builder) void {
         for (self.pages.items) |page_entry| self.allocator.free(page_entry.file);
@@ -294,7 +331,7 @@ const Builder = struct {
         self.kernings.deinit(self.allocator);
     }
 
-    fn addLine(self: *Builder, line: []const u8) ParseError!void {
+    fn addLine(self: *Builder, line: []const u8, line_number: usize) ParseError!void {
         const tag_end = std.mem.indexOfAny(u8, line, " \t") orelse line.len;
         const tag = line[0..tag_end];
         var buffer: [max_fields]Field = undefined;
@@ -306,7 +343,7 @@ const Builder = struct {
         if (std.mem.eql(u8, tag, "chars")) return self.charsCount(fields);
         if (std.mem.eql(u8, tag, "char")) return self.char(fields);
         if (std.mem.eql(u8, tag, "kernings")) return self.kerningsCount(fields);
-        if (std.mem.eql(u8, tag, "kerning")) return self.kerning(fields);
+        if (std.mem.eql(u8, tag, "kerning")) return self.kerning(fields, line_number);
         return error.UnknownTag;
     }
 
@@ -371,7 +408,7 @@ const Builder = struct {
         self.kernings_declared = try parseU32(try required(fields, "count"));
     }
 
-    fn kerning(self: *Builder, fields: []const Field) ParseError!void {
+    fn kerning(self: *Builder, fields: []const Field, line_number: usize) ParseError!void {
         const first = try parseInt(try required(fields, "first"));
         const second = try parseInt(try required(fields, "second"));
         if (first < 0 or second < 0) return error.InvalidCodepoint;
@@ -380,12 +417,12 @@ const Builder = struct {
             .second = @intCast(second),
             .amount = try parseInt(try required(fields, "amount")),
         };
-        try self.kernings.append(self.allocator, pair);
+        try self.kernings.append(self.allocator, .{ .pair = pair, .line = line_number });
     }
 
     /// Checks everything the file implies, then copies the lines into the `Font`. The copies are sorted, so the font
     /// can binary search. On an error, nothing is returned, and the builder still owns its lines for `deinit`.
-    fn finish(self: *Builder, fallback: u32) ParseError!Font {
+    fn finish(self: *Builder, fallback: u32, diagnostic: ?*Diagnostic) ParseError!Font {
         const line_height = self.line_height orelse return error.MissingSection;
         const size = self.size orelse return error.MissingSection;
         const pages_declared = self.pages_declared orelse return error.MissingSection;
@@ -413,8 +450,8 @@ const Builder = struct {
             if (@as(u64, glyph.x) + glyph.width > @as(u64, self.scale_w)) return error.GlyphOutsideAtlas;
             if (@as(u64, glyph.y) + glyph.height > @as(u64, self.scale_h)) return error.GlyphOutsideAtlas;
         }
-        for (self.kernings.items) |pair| {
-            if (!isCodepoint(pair.first) or !isCodepoint(pair.second)) return error.InvalidCodepoint;
+        for (self.kernings.items) |item| {
+            if (!isCodepoint(item.pair.first) or !isCodepoint(item.pair.second)) return error.InvalidCodepoint;
         }
 
         const glyphs = try self.allocator.dupe(Glyph, self.glyphs.items);
@@ -426,20 +463,30 @@ const Builder = struct {
         }
         if (glyphIndex(glyphs, fallback) == null) return error.MissingFallback;
 
-        const kernings = try self.allocator.dupe(Kerning, self.kernings.items);
-        errdefer self.allocator.free(kernings);
-        std.mem.sort(Kerning, kernings, {}, kerningLess);
-        var k: usize = 1;
-        while (k < kernings.len) : (k += 1) {
-            if (kernings[k].first == kernings[k - 1].first and kernings[k].second == kernings[k - 1].second) {
-                return error.DuplicateKerning;
-            }
-        }
-        for (kernings) |pair| {
-            if (glyphIndex(glyphs, pair.first) == null or glyphIndex(glyphs, pair.second) == null) {
+        // Unmapped pairs are checked in file order, so the first bad pair in the file is the one named.
+        for (self.kernings.items) |item| {
+            if (unmappedOf(glyphs, item.pair)) |missing| {
+                reportKerning(diagnostic, item);
+                if (diagnostic) |d| d.unmapped_id = missing;
                 return error.UnmappedKerning;
             }
         }
+        // A repeated pair is found after sorting. Equal pairs sort by line, so the later line is the one named.
+        const pending = try self.allocator.dupe(PendingKerning, self.kernings.items);
+        defer self.allocator.free(pending);
+        std.mem.sort(PendingKerning, pending, {}, pendingLess);
+        var k: usize = 1;
+        while (k < pending.len) : (k += 1) {
+            const earlier = pending[k - 1].pair;
+            const later = pending[k].pair;
+            if (earlier.first == later.first and earlier.second == later.second) {
+                reportKerning(diagnostic, pending[k]);
+                return error.DuplicateKerning;
+            }
+        }
+        const kernings = try self.allocator.alloc(Kerning, pending.len);
+        errdefer self.allocator.free(kernings);
+        for (pending, 0..) |item, index| kernings[index] = item.pair;
 
         const pages = try self.allocator.alloc(Page, self.pages.items.len);
         var copied: usize = 0;
@@ -455,6 +502,7 @@ const Builder = struct {
 
         return .{
             .allocator = self.allocator,
+            .schema_version = schema_version,
             .size = size,
             .line_height = line_height,
             .base = self.base,
@@ -524,6 +572,13 @@ test "line order does not change the result" {
     try testing.expectEqual(@as(i32, -1), font.kerningFor('A', 'A'));
 }
 
+test "the normalized font carries schema version 1" {
+    var font = try parse(testing.allocator, good, .{}, null);
+    defer font.deinit();
+    try testing.expectEqual(@as(u32, 1), schema_version);
+    try testing.expectEqual(schema_version, font.schema_version);
+}
+
 test "a descriptor without a page is rejected" {
     try expectRejected(info_line ++ common_line ++ chars_block, error.MissingSection);
 }
@@ -554,13 +609,32 @@ test "a missing fallback glyph is rejected" {
     try testing.expectError(error.MissingFallback, parse(testing.allocator, good, .{ .fallback = 'Z' }, null));
 }
 
-test "a kerning pair naming an unmapped glyph is rejected" {
-    try expectRejected(info_line ++ common_line ++ page_line ++ chars_block ++ "kernings count=1\nkerning first=65 second=66 amount=-1\n", error.UnmappedKerning);
+test "a kerning pair naming an unmapped glyph is rejected, and the diagnostic names the pair, its line, and the missing id" {
+    // Line 9 is the kerning line: info, common, page, the chars count and its three chars, the kernings count, then the pair.
+    const text = info_line ++ common_line ++ page_line ++ chars_block ++ "kernings count=1\nkerning first=65 second=66 amount=-1\n";
+    var diagnostic: Diagnostic = .{};
+    try testing.expectError(error.UnmappedKerning, parse(testing.allocator, text, .{}, &diagnostic));
+    try testing.expectEqual(@as(usize, 9), diagnostic.line);
+    try testing.expectEqual(@as(u32, 65), diagnostic.kerning_first);
+    try testing.expectEqual(@as(u32, 66), diagnostic.kerning_second);
+    try testing.expectEqual(@as(u32, 66), diagnostic.unmapped_id);
 }
 
-test "a duplicate kerning pair is rejected" {
+test "when both glyphs of a kerning pair are unmapped, the first is named" {
+    const text = info_line ++ common_line ++ page_line ++ chars_block ++ "kernings count=1\nkerning first=66 second=67 amount=-1\n";
+    var diagnostic: Diagnostic = .{};
+    try testing.expectError(error.UnmappedKerning, parse(testing.allocator, text, .{}, &diagnostic));
+    try testing.expectEqual(@as(u32, 66), diagnostic.unmapped_id);
+}
+
+test "a duplicate kerning pair is rejected, and the diagnostic names the later line" {
+    // Lines 9 and 10 are the two copies of the pair.
     const pair = "kerning first=65 second=65 amount=-1\n";
-    try expectRejected(info_line ++ common_line ++ page_line ++ chars_block ++ "kernings count=2\n" ++ pair ++ pair, error.DuplicateKerning);
+    const text = info_line ++ common_line ++ page_line ++ chars_block ++ "kernings count=2\n" ++ pair ++ pair;
+    var diagnostic: Diagnostic = .{};
+    try testing.expectError(error.DuplicateKerning, parse(testing.allocator, text, .{}, &diagnostic));
+    try testing.expectEqual(@as(usize, 10), diagnostic.line);
+    try testing.expectEqual(@as(u32, 65), diagnostic.kerning_first);
 }
 
 test "an unknown tag is rejected, and the diagnostic names its line" {

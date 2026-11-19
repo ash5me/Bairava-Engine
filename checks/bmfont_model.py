@@ -1,7 +1,7 @@
-"""Reference model of src/engine/text/bmfont.zig, run on the same 17 cases as its Zig tests.
+"""Reference model of src/engine/text/bmfont.zig, run on the same 19 cases as its Zig tests.
 
-This checks the algorithm and the test expectations against each other. It does not compile or run the Zig code, so it
-is supporting evidence only. It does not close any environment gate (plan section 6.4).
+This checks the algorithm and the test expectations against each other. It does not compile or run the Zig code, so it is
+supporting evidence only. It does not close any environment gate (plan section 6.4).
 
 Run from the repository root:  python3 checks/bmfont_model.py
 """
@@ -12,13 +12,15 @@ MAX_CODEPOINT = 0x10FFFF
 DEFAULT_FALLBACK = ord("?")
 MAX_CHANNEL = 15
 MAX_FIELDS = 32
+SCHEMA_VERSION = 1
 
 
 class Err(Exception):
-    def __init__(self, name, line=0):
+    def __init__(self, name, line=0, **diag):
         super().__init__(name)
         self.name = name
         self.line = line
+        self.diag = diag
 
 
 def parse_int(value):
@@ -109,6 +111,14 @@ def glyph_index(glyphs, cp):
     return None
 
 
+def unmapped_of(glyphs, first, second):
+    if glyph_index(glyphs, first) is None:
+        return first
+    if glyph_index(glyphs, second) is None:
+        return second
+    return None
+
+
 class Builder:
     def __init__(self):
         self.size = None
@@ -122,9 +132,9 @@ class Builder:
         self.kernings_declared = None
         self.pages = []
         self.glyphs = []
-        self.kernings = []
+        self.kernings = []  # each: {"first", "second", "amount", "line"}
 
-    def add_line(self, line):
+    def add_line(self, line, line_number):
         tag_end = len(line)
         for idx, c in enumerate(line):
             if c in " \t":
@@ -139,7 +149,7 @@ class Builder:
             "chars": self.chars_count,
             "char": self.char,
             "kernings": self.kernings_count,
-            "kerning": self.kerning,
+            "kerning": lambda f: self.kerning(f, line_number),
         }
         if tag not in handlers:
             raise Err("UnknownTag")
@@ -186,7 +196,7 @@ class Builder:
         channel = parse_u32(chnl) if chnl is not None else MAX_CHANNEL
         if channel > MAX_CHANNEL:
             raise Err("BadValue")
-        glyph = {
+        self.glyphs.append({
             "codepoint": cid,
             "x": parse_u32(required(f, "x")),
             "y": parse_u32(required(f, "y")),
@@ -197,30 +207,23 @@ class Builder:
             "x_advance": parse_u32(required(f, "xadvance")),
             "page": parse_u32(required(f, "page")),
             "channel": channel,
-        }
-        self.glyphs.append(glyph)
+        })
 
     def kernings_count(self, f):
         if self.kernings_declared is not None:
             raise Err("DuplicateSection")
         self.kernings_declared = parse_u32(required(f, "count"))
 
-    def kerning(self, f):
+    def kerning(self, f, line_number):
         first = parse_int(required(f, "first"))
         second = parse_int(required(f, "second"))
         if first < 0 or second < 0:
             raise Err("InvalidCodepoint")
         amount = parse_int(required(f, "amount"))
-        self.kernings.append({"first": first, "second": second, "amount": amount})
+        self.kernings.append({"first": first, "second": second, "amount": amount, "line": line_number})
 
     def finish(self, fallback):
-        if self.line_height is None:
-            raise Err("MissingSection")
-        if self.size is None:
-            raise Err("MissingSection")
-        if self.pages_declared is None:
-            raise Err("MissingSection")
-        if self.chars_declared is None:
+        if self.line_height is None or self.size is None or self.pages_declared is None or self.chars_declared is None:
             raise Err("MissingSection")
         if len(self.pages) == 0:
             raise Err("MissingSection")
@@ -243,9 +246,7 @@ class Builder:
                 raise Err("InvalidCodepoint")
             if g["page"] >= page_count:
                 raise Err("PageOutOfRange")
-            if g["x"] + g["width"] > self.scale_w:
-                raise Err("GlyphOutsideAtlas")
-            if g["y"] + g["height"] > self.scale_h:
+            if g["x"] + g["width"] > self.scale_w or g["y"] + g["height"] > self.scale_h:
                 raise Err("GlyphOutsideAtlas")
         for k in self.kernings:
             if not is_codepoint(k["first"]) or not is_codepoint(k["second"]):
@@ -258,16 +259,23 @@ class Builder:
         if glyph_index(glyphs, fallback) is None:
             raise Err("MissingFallback")
 
-        kernings = sorted((dict(k) for k in self.kernings), key=lambda k: (k["first"], k["second"]))
-        for i in range(1, len(kernings)):
-            if kernings[i]["first"] == kernings[i - 1]["first"] and kernings[i]["second"] == kernings[i - 1]["second"]:
-                raise Err("DuplicateKerning")
-        for k in kernings:
-            if glyph_index(glyphs, k["first"]) is None or glyph_index(glyphs, k["second"]) is None:
-                raise Err("UnmappedKerning")
+        # Unmapped pairs, in file order.
+        for k in self.kernings:
+            missing = unmapped_of(glyphs, k["first"], k["second"])
+            if missing is not None:
+                raise Err("UnmappedKerning", k["line"], kerning_first=k["first"],
+                          kerning_second=k["second"], unmapped_id=missing)
+        # Duplicates, after sorting by (first, second, line): the later line is the one named.
+        pending = sorted((dict(k) for k in self.kernings), key=lambda k: (k["first"], k["second"], k["line"]))
+        for i in range(1, len(pending)):
+            a, b = pending[i - 1], pending[i]
+            if a["first"] == b["first"] and a["second"] == b["second"]:
+                raise Err("DuplicateKerning", b["line"], kerning_first=b["first"], kerning_second=b["second"])
+        kernings = [{"first": k["first"], "second": k["second"], "amount": k["amount"]} for k in pending]
 
         pages = sorted((dict(p) for p in self.pages), key=lambda p: p["id"])
         return {
+            "schema_version": SCHEMA_VERSION,
             "size": self.size,
             "line_height": self.line_height,
             "base": self.base,
@@ -290,9 +298,12 @@ def parse(text, fallback=DEFAULT_FALLBACK):
             line = raw.strip(" \t\r")
             if line == "":
                 continue
-            b.add_line(line)
-    except Err as e:
-        e.line = line_no
+            try:
+                b.add_line(line, line_no)
+            except Err as e:
+                e.line = line_no
+                raise
+    except Err:
         raise
     return b.finish(fallback)
 
@@ -309,7 +320,7 @@ def kerning_for(font, first, second):
     return 0
 
 
-# ---- the same strings as bmfont.zig's tests ---------------------------------------------------------------------------
+# ---- the same strings as bmfont.zig's tests -------------------------------------------------------------------------
 INFO = 'info face="Test Face" size=8 bold=0 italic=0 charset="" unicode=1 stretchH=100 smooth=0 aa=1 padding=0,0,0,0 spacing=1,1 outline=0\n'
 COMMON = "common lineHeight=8 base=7 scaleW=128 scaleH=48 pages=1 packed=0 alphaChnl=1 redChnl=0 greenChnl=0 blueChnl=0\n"
 PAGE = 'page id=0 file="ui font 8px.png"\n'
@@ -354,14 +365,24 @@ def ok_line_order(failures):
     check(kerning_for(f, 65, 65) == -1, "reordered kerning", failures)
 
 
-def expect_error(text, name, failures, fallback=DEFAULT_FALLBACK, line=None):
+def ok_schema(failures):
+    f = parse(GOOD)
+    check(f["schema_version"] == 1, "schema version is 1", failures)
+
+
+def expect_error(text, name, failures, fallback=DEFAULT_FALLBACK, line=None, **diag):
     try:
         parse(text, fallback)
     except Err as e:
         if e.name != name:
             failures.append(f"expected {name}, got {e.name}")
-        elif line is not None and e.line != line:
+            return
+        if line is not None and e.line != line:
             failures.append(f"{name}: expected line {line}, got {e.line}")
+        for key, want in diag.items():
+            got = e.diag.get(key)
+            if got != want:
+                failures.append(f"{name}: expected {key}={want}, got {got}")
         return
     failures.append(f"expected {name}, but parse succeeded")
 
@@ -370,6 +391,7 @@ CASES = [
     ("descriptor parses into fields, pages, glyphs, kerning", ok_parses_fields),
     ("glyphs found by codepoint, kerning by pair", ok_lookup),
     ("line order does not change the result", ok_line_order),
+    ("normalized font carries schema version 1", ok_schema),
     ("no page is rejected", lambda fl: expect_error(INFO + COMMON + CHARS, "MissingSection", fl)),
     ("no info or common is rejected", lambda fl: expect_error(PAGE + CHARS, "MissingSection", fl)),
     ("glyph outside atlas is rejected", lambda fl: expect_error(
@@ -385,13 +407,16 @@ CASES = [
     ("count mismatch is rejected", lambda fl: expect_error(
         INFO + COMMON + PAGE + "chars count=4\n" + SPACE + QUESTION + A, "CountMismatch", fl)),
     ("missing fallback is rejected", lambda fl: expect_error(GOOD, "MissingFallback", fl, fallback=ord("Z"))),
-    ("unmapped kerning is rejected", lambda fl: expect_error(
+    ("unmapped kerning: diagnostic names pair, line 9, missing id 66", lambda fl: expect_error(
         INFO + COMMON + PAGE + CHARS + "kernings count=1\nkerning first=65 second=66 amount=-1\n",
-        "UnmappedKerning", fl)),
-    ("duplicate kerning is rejected", lambda fl: expect_error(
+        "UnmappedKerning", fl, line=9, kerning_first=65, kerning_second=66, unmapped_id=66)),
+    ("both kerning glyphs unmapped: the first is named", lambda fl: expect_error(
+        INFO + COMMON + PAGE + CHARS + "kernings count=1\nkerning first=66 second=67 amount=-1\n",
+        "UnmappedKerning", fl, unmapped_id=66)),
+    ("duplicate kerning: diagnostic names the later line, 10", lambda fl: expect_error(
         INFO + COMMON + PAGE + CHARS + "kernings count=2\n" +
         "kerning first=65 second=65 amount=-1\nkerning first=65 second=65 amount=-1\n",
-        "DuplicateKerning", fl)),
+        "DuplicateKerning", fl, line=10, kerning_first=65)),
     ("unknown tag is rejected, diagnostic names line 10", lambda fl: expect_error(
         GOOD + "bogus x=1\n", "UnknownTag", fl, line=10)),
     ("value that does not parse is rejected", lambda fl: expect_error(
