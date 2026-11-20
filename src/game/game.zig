@@ -93,6 +93,9 @@ pub const Game = struct {
     enemy_clips: enemy.Clips,
     /// Plans the enemies' routes. Its arrays grow to the map's size on the first search, and are reused after that.
     pathfinder: engine.navigation.Pathfinder,
+    /// One shared cost field for every enemy chasing the player's current cell.
+    flow_field: engine.navigation.FlowField,
+    flow_goal: ?engine.navigation.Cell = null,
     /// The allocator the enemy list came from, so `deinit` can free it.
     allocator: std.mem.Allocator,
     /// Immediate-mode UI for the demo panel. It owns its font and its widget state.
@@ -210,6 +213,8 @@ pub const Game = struct {
         // Nothing below can fail, so these need no cleanup on the error paths above.
         var pathfinder = engine.navigation.Pathfinder.init(ctx.allocators.game) catch return error.OutOfMemory;
         errdefer pathfinder.deinit();
+        var flow_field = engine.navigation.FlowField.init(ctx.allocators.game) catch return error.OutOfMemory;
+        errdefer flow_field.deinit();
         const enemies = spawnEnemies(ctx.allocators.game, level.enemies, &enemy_clips) catch return error.OutOfMemory;
 
         var game: Game = .{
@@ -238,6 +243,7 @@ pub const Game = struct {
             .enemies = enemies,
             .enemy_clips = enemy_clips,
             .pathfinder = pathfinder,
+            .flow_field = flow_field,
             .allocator = ctx.allocators.game,
         };
         game.loadSave(ctx);
@@ -279,6 +285,7 @@ pub const Game = struct {
         self.entities.deinit();
         self.allocator.free(self.enemies);
         self.pathfinder.deinit();
+        self.flow_field.deinit();
         self.animations.deinit();
         self.atlas.deinit();
         self.ui.deinit();
@@ -642,10 +649,22 @@ pub const Game = struct {
     fn updateEnemies(self: *Game, dt: f32) void {
         const feet = self.player.collisionBox(1);
         const center = engine.tilemap.Point{ .x = feet.x + feet.w / 2.0, .y = feet.y + feet.h / 2.0 };
+        const target_cell = engine.navigation.cellOf(center);
+        if (self.flow_goal == null or !self.flow_goal.?.eql(target_cell)) {
+            self.flow_field.build(engine.navigation.Grid.init(&self.level.map), target_cell) catch |err| {
+                log.err("enemy chase flow field for ({d}, {d}) could not be built: {s}", .{
+                    target_cell.col,
+                    target_cell.row,
+                    @errorName(err),
+                });
+            };
+            self.flow_goal = target_cell;
+        }
         const stage = enemy.Stage{
             .map = &self.level.map,
             .finder = &self.pathfinder,
-            .target = .{ .center = center, .cell = engine.navigation.cellOf(center) },
+            .flow = &self.flow_field,
+            .target = .{ .center = center, .cell = target_cell },
             .clips = &self.enemy_clips,
             .dt = dt,
         };

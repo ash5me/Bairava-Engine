@@ -96,17 +96,54 @@ pub const Follower = struct {
             return position;
         }
 
-        // The waypoint is farther than arrive_px, so the distance is not zero, and a step of at most that distance
-        // never passes the waypoint.
-        const here = centerAt(position, box.w, box.h);
         const target = grid_mod.cellCenter(self.cells[self.index]);
-        const dx = target.x - here.x;
-        const dy = target.y - here.y;
-        const dist = @sqrt(dx * dx + dy * dy);
-        const travel = @min(speed * dt, dist);
-        const moved_to = map.moveBox(.{ .x = position.x, .y = position.y, .w = box.w, .h = box.h }, dx / dist * travel, dy / dist * travel);
+        return self.stepTowardFrom(
+            map,
+            .{ .x = position.x, .y = position.y, .w = box.w, .h = box.h },
+            target,
+            speed,
+            dt,
+            .{ .x = box.x, .y = box.y },
+        );
+    }
 
-        self.moved = @abs(moved_to.x - box.x) > move_eps or @abs(moved_to.y - box.y) > move_eps;
+    /// Moves a box toward one pixel-space waypoint with the same collision, arrival snap, and stuck rules as `step`.
+    /// This lets a flow-field user steer one cell at a time without storing a route.
+    pub fn stepToward(self: *Follower, map: *const tilemap.TileMap, box: tilemap.Box, waypoint: tilemap.Point, speed: f32, dt: f32) tilemap.Point {
+        return self.stepTowardFrom(map, box, waypoint, speed, dt, .{ .x = box.x, .y = box.y });
+    }
+
+    fn stepTowardFrom(
+        self: *Follower,
+        map: *const tilemap.TileMap,
+        box: tilemap.Box,
+        waypoint: tilemap.Point,
+        speed: f32,
+        dt: f32,
+        movement_origin: tilemap.Point,
+    ) tilemap.Point {
+        if (!std.math.isFinite(speed) or speed <= 0 or !std.math.isFinite(dt) or dt <= 0 or
+            !std.math.isFinite(box.x) or !std.math.isFinite(box.y) or
+            !std.math.isFinite(box.w) or !std.math.isFinite(box.h) or box.w <= 0 or box.h <= 0 or
+            !std.math.isFinite(waypoint.x) or !std.math.isFinite(waypoint.y))
+        {
+            self.moved = false;
+            return .{ .x = box.x, .y = box.y };
+        }
+
+        const here = centerAt(.{ .x = box.x, .y = box.y }, box.w, box.h);
+        const dx = waypoint.x - here.x;
+        const dy = waypoint.y - here.y;
+        const dist = @sqrt(dx * dx + dy * dy);
+        var moved_to: tilemap.Point = undefined;
+        if (dist <= arrive_px) {
+            moved_to = .{ .x = waypoint.x - box.w / 2.0, .y = waypoint.y - box.h / 2.0 };
+        } else {
+            const travel = @min(speed * dt, dist);
+            moved_to = map.moveBox(box, dx / dist * travel, dy / dist * travel);
+        }
+
+        self.moved = @abs(moved_to.x - movement_origin.x) > move_eps or @abs(moved_to.y - movement_origin.y) > move_eps;
         if (self.moved) {
             self.stuck_time = 0;
         } else {

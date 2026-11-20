@@ -32,7 +32,7 @@ pub const FindError = error{
 };
 
 /// Offsets to the eight neighbors: east, west, south, north, and then the four diagonals.
-const offsets = [8][2]i32{
+pub const offsets = [8][2]i32{
     .{ 1, 0 }, .{ -1, 0 }, .{ 0, 1 },  .{ 0, -1 },
     .{ 1, 1 }, .{ -1, 1 }, .{ 1, -1 }, .{ -1, -1 },
 };
@@ -42,14 +42,70 @@ const no_parent: u32 = std.math.maxInt(u32);
 
 /// One entry of the open list. `g` is the cost when the entry was made. When a cell is reached again more cheaply,
 /// the older entry is still in the heap. It is stale, and the search skips it.
-const Node = struct {
+pub const HeapNode = struct {
     f: u32,
     g: u32,
     cell: u32,
 };
 
-fn lessThan(a: Node, b: Node) bool {
+fn lessThan(a: HeapNode, b: HeapNode) bool {
     return a.f < b.f or (a.f == b.f and a.g > b.g);
+}
+
+/// Adds an entry to the shared binary min-heap, growing it when full.
+pub fn heapPush(allocator: std.mem.Allocator, heap: *[]HeapNode, heap_len: *usize, node: HeapNode) std.mem.Allocator.Error!void {
+    if (heap_len.* == heap.len) {
+        heap.* = try allocator.realloc(heap.*, @max(64, heap.len * 2));
+    }
+    var child = heap_len.*;
+    heap.*[child] = node;
+    heap_len.* += 1;
+    while (child > 0) {
+        const parent_index = (child - 1) / 2;
+        if (!lessThan(heap.*[child], heap.*[parent_index])) break;
+        std.mem.swap(HeapNode, &heap.*[child], &heap.*[parent_index]);
+        child = parent_index;
+    }
+}
+
+/// Removes and returns the first entry. The heap must not be empty.
+pub fn heapPop(heap: []HeapNode, heap_len: *usize) HeapNode {
+    const top = heap[0];
+    heap_len.* -= 1;
+    if (heap_len.* == 0) return top;
+    heap[0] = heap[heap_len.*];
+    var parent_index: usize = 0;
+    while (true) {
+        const left = 2 * parent_index + 1;
+        if (left >= heap_len.*) break;
+        var smallest = left;
+        const right = left + 1;
+        if (right < heap_len.* and lessThan(heap[right], heap[left])) smallest = right;
+        if (!lessThan(heap[smallest], heap[parent_index])) break;
+        std.mem.swap(HeapNode, &heap[parent_index], &heap[smallest]);
+        parent_index = smallest;
+    }
+    return top;
+}
+
+/// Cost of one adjacent step.
+pub fn stepCost(from: Cell, to: Cell) u32 {
+    return if (from.col != to.col and from.row != to.row) diagonal_cost else straight_cost;
+}
+
+/// Whether the forward edge from `from` to `to` follows A*'s one-way and corner rules.
+/// A blocked start remains allowed so A* can route a unit out of collision; fields separately require walkable sources.
+pub fn legalStep(grid: Grid, from: Cell, to: Cell) bool {
+    const dc = to.col - from.col;
+    const dr = to.row - from.row;
+    if (@abs(dc) > 1 or @abs(dr) > 1 or (dc == 0 and dr == 0)) return false;
+    if (!grid.walkable(to)) return false;
+    if (dr > 0 and grid.map.isOneWay(to.col, to.row)) return false;
+    if (dc != 0 and dr != 0) {
+        if (!grid.walkable(.{ .col = to.col, .row = from.row }) or
+            !grid.walkable(.{ .col = from.col, .row = to.row })) return false;
+    }
+    return true;
 }
 
 /// The octile distance from `from` to `goal`: the cheapest cost to get there with no walls in the way.
@@ -70,7 +126,7 @@ pub const Pathfinder = struct {
     seen: []u32,
     closed: []u32,
     /// A binary min-heap of open entries, ordered by `f` and then by the larger `g`. It grows as needed.
-    heap: []Node,
+    heap: []HeapNode,
     heap_len: usize,
     /// The number of the current search. Zero means no search has run since the arrays were made.
     stamp: u32,
@@ -82,7 +138,7 @@ pub const Pathfinder = struct {
             .parent = try allocator.alloc(u32, 0),
             .seen = try allocator.alloc(u32, 0),
             .closed = try allocator.alloc(u32, 0),
-            .heap = try allocator.alloc(Node, 0),
+            .heap = try allocator.alloc(HeapNode, 0),
             .heap_len = 0,
             .stamp = 0,
         };
@@ -113,11 +169,11 @@ pub const Pathfinder = struct {
         self.parent[start_index] = no_parent;
         self.seen[start_index] = current;
         self.heap_len = 0;
-        try self.push(.{ .f = heuristic(start, goal), .g = 0, .cell = @intCast(start_index) });
+        try heapPush(self.allocator, &self.heap, &self.heap_len, .{ .f = heuristic(start, goal), .g = 0, .cell = @intCast(start_index) });
 
         var found = false;
         while (self.heap_len > 0) {
-            const node = self.pop();
+            const node = heapPop(self.heap, &self.heap_len);
             const index: usize = node.cell;
             if (self.closed[index] == current or node.g > self.g[index]) continue;
             if (index == goal_index) {
@@ -129,23 +185,15 @@ pub const Pathfinder = struct {
             const from = grid.cellAt(index);
             for (offsets) |offset| {
                 const next = Cell{ .col = from.col + offset[0], .row = from.row + offset[1] };
-                if (!grid.walkable(next)) continue;
-                if (next.row > from.row and grid.map.isOneWay(next.col, next.row)) continue;
-                const diagonal = offset[0] != 0 and offset[1] != 0;
-                if (diagonal) {
-                    // No cutting corners: both cells beside the diagonal must be open as well.
-                    if (!grid.walkable(.{ .col = next.col, .row = from.row }) or
-                        !grid.walkable(.{ .col = from.col, .row = next.row })) continue;
-                }
+                if (!legalStep(grid, from, next)) continue;
                 const next_index = grid.index(next);
                 if (self.closed[next_index] == current) continue;
-                const step = if (diagonal) diagonal_cost else straight_cost;
-                const cost = node.g + step;
+                const cost = node.g + stepCost(from, next);
                 if (self.seen[next_index] == current and cost >= self.g[next_index]) continue;
                 self.seen[next_index] = current;
                 self.g[next_index] = cost;
                 self.parent[next_index] = @intCast(index);
-                try self.push(.{ .f = cost + heuristic(next, goal), .g = cost, .cell = @intCast(next_index) });
+                try heapPush(self.allocator, &self.heap, &self.heap_len, .{ .f = cost + heuristic(next, goal), .g = cost, .cell = @intCast(next_index) });
             }
         }
         if (!found) return error.NoPath;
@@ -184,42 +232,6 @@ pub const Pathfinder = struct {
             @memset(self.closed, 0);
             self.stamp = 1;
         }
-    }
-
-    /// Adds an entry to the open list, growing the heap when it is full.
-    fn push(self: *Pathfinder, node: Node) std.mem.Allocator.Error!void {
-        if (self.heap_len == self.heap.len) {
-            self.heap = try self.allocator.realloc(self.heap, @max(64, self.heap.len * 2));
-        }
-        var child = self.heap_len;
-        self.heap[child] = node;
-        self.heap_len += 1;
-        while (child > 0) {
-            const parent_index = (child - 1) / 2;
-            if (!lessThan(self.heap[child], self.heap[parent_index])) break;
-            std.mem.swap(Node, &self.heap[child], &self.heap[parent_index]);
-            child = parent_index;
-        }
-    }
-
-    /// Removes and returns the entry that comes first. The heap must not be empty.
-    fn pop(self: *Pathfinder) Node {
-        const top = self.heap[0];
-        self.heap_len -= 1;
-        if (self.heap_len == 0) return top;
-        self.heap[0] = self.heap[self.heap_len];
-        var parent_index: usize = 0;
-        while (true) {
-            const left = 2 * parent_index + 1;
-            if (left >= self.heap_len) break;
-            var smallest = left;
-            const right = left + 1;
-            if (right < self.heap_len and lessThan(self.heap[right], self.heap[left])) smallest = right;
-            if (!lessThan(self.heap[smallest], self.heap[parent_index])) break;
-            std.mem.swap(Node, &self.heap[parent_index], &self.heap[smallest]);
-            parent_index = smallest;
-        }
-        return top;
     }
 
     /// Walks the parents back from the goal, and writes the route into `out` from start to goal.

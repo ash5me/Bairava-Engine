@@ -5,6 +5,7 @@
 const grid = @import("grid.zig");
 const pathfind = @import("pathfind.zig");
 const follow = @import("follow.zig");
+const flow = @import("navigation/flow.zig");
 
 /// A cell of the map, counted from the top-left corner.
 pub const Cell = grid.Cell;
@@ -17,6 +18,10 @@ pub const cellCenter = grid.cellCenter;
 /// Finds cheapest routes between cells. It keeps its arrays between searches.
 pub const Pathfinder = pathfind.Pathfinder;
 pub const FindError = pathfind.FindError;
+
+/// One shared Dijkstra field for units moving toward the same goal.
+pub const FlowField = flow.FlowField;
+pub const FlowError = flow.FlowError;
 
 /// Walks a box along a route, one waypoint at a time, through the map's collision.
 pub const Follower = follow.Follower;

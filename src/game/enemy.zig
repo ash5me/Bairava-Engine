@@ -24,9 +24,6 @@ const patrol_speed: f32 = 20.0;
 const sight_range: f32 = 88.0;
 /// Wander targets lie within this many cells of home, on each axis.
 const wander_radius: i32 = 4;
-/// Seconds between route updates while chasing. Between them the route stays fixed, so a moving target does not
-/// cost a search every step. A chase also replans as soon as the target moves into another cell.
-const repath_seconds: f32 = 0.4;
 /// The warrior's sprites, tinted so the enemies read as different from the player.
 const tint = [3]f32{ 1.0, 0.5, 0.5 };
 /// Debug colors: the enemy's feet, and the cells left on its route.
@@ -43,6 +40,7 @@ pub const Target = struct {
 pub const Stage = struct {
     map: *const engine.tilemap.TileMap,
     finder: *nav.Pathfinder,
+    flow: *const nav.FlowField,
     target: Target,
     clips: *const Clips,
     dt: f32,
@@ -78,10 +76,6 @@ pub const Enemy = struct {
     moving: bool = false,
     brain: enemy_ai.Brain,
     route: nav.Follower = .{},
-    /// Seconds until the next route update while chasing.
-    repath_timer: f32 = 0,
-    /// The cell the current chase route leads to, so a change of target cell can replan it.
-    chase_goal: ?nav.Cell = null,
     timeline: engine.animation.Timeline,
 
     /// An enemy standing on `home`. Its brain is seeded with `seed`, so each enemy wanders on its own course.
@@ -109,7 +103,7 @@ pub const Enemy = struct {
         return draw_depth.interpolatedFeetBottom(self.prev_y, self.y, alpha, feet_px);
     }
 
-    /// Runs one update step: decides, plans when the decision or the target changes, then walks and animates.
+    /// Runs one update step: decides, plans unique goals, then follows either the shared chase field or its route.
     pub fn update(self: *Enemy, stage: Stage) void {
         const grid = nav.Grid.init(stage.map);
         const eye = self.feetCenter();
@@ -118,14 +112,8 @@ pub const Enemy = struct {
         switch (order) {
             .none => {},
             .wander => self.wander(grid, stage.finder),
-            .chase => self.chase(grid, stage.finder, stage.target.cell),
+            .chase => self.chase(),
             .return_home => self.plan(grid, stage.finder, self.home),
-        }
-        if (self.brain.state == .chase and sees) {
-            self.repath_timer -= stage.dt;
-            if (self.repath_timer <= 0 or !sameCell(self.chase_goal, stage.target.cell)) {
-                self.chase(grid, stage.finder, stage.target.cell);
-            }
         }
         self.walk(stage);
         self.animate(stage);
@@ -167,11 +155,9 @@ pub const Enemy = struct {
         return .{ .x = self.x + feet_px / 2.0, .y = self.y + feet_px / 2.0 };
     }
 
-    /// Starts chasing: routes to `goal`, and sets the route timer so the next update waits for it to run out.
-    fn chase(self: *Enemy, grid: nav.Grid, finder: *nav.Pathfinder, goal: nav.Cell) void {
-        self.chase_goal = goal;
-        self.repath_timer = repath_seconds;
-        self.plan(grid, finder, goal);
+    /// Starts sampling the shared flow field rather than keeping a per-enemy route.
+    fn chase(self: *Enemy) void {
+        self.route.clear();
     }
 
     /// Picks a random open cell near home and routes to it. When none of a few tries is open, the enemy keeps its
@@ -212,7 +198,23 @@ pub const Enemy = struct {
         self.prev_x = self.x;
         self.prev_y = self.y;
         const box = engine.tilemap.Box{ .x = self.x, .y = self.y, .w = feet_px, .h = feet_px };
-        const next = self.route.step(stage.map, box, speed, stage.dt);
+        const next = if (self.brain.state == .chase) blk: {
+            const grid = nav.Grid.init(stage.map);
+            const field_goal = stage.flow.goal orelse {
+                self.route.clear();
+                break :blk engine.tilemap.Point{ .x = self.x, .y = self.y };
+            };
+            if (!field_goal.eql(stage.target.cell)) {
+                self.route.clear();
+                break :blk engine.tilemap.Point{ .x = self.x, .y = self.y };
+            }
+            const cell = nav.cellOf(self.feetCenter());
+            const next_cell = stage.flow.nextCell(grid, cell) orelse {
+                self.route.clear();
+                break :blk engine.tilemap.Point{ .x = self.x, .y = self.y };
+            };
+            break :blk self.route.stepToward(stage.map, box, nav.cellCenter(next_cell), speed, stage.dt);
+        } else self.route.step(stage.map, box, speed, stage.dt);
         self.x = next.x;
         self.y = next.y;
         self.moving = self.route.moved;
@@ -237,9 +239,4 @@ fn seesTarget(grid: nav.Grid, from: engine.tilemap.Point, to: engine.tilemap.Poi
 fn facingOf(dx: f32, dy: f32) Facing {
     if (@abs(dx) >= @abs(dy)) return if (dx < 0) .left else .right;
     return if (dy < 0) .up else .down;
-}
-
-fn sameCell(a: ?nav.Cell, b: nav.Cell) bool {
-    const value = a orelse return false;
-    return value.eql(b);
 }

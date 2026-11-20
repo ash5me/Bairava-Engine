@@ -116,6 +116,7 @@ test {
     _ = @import("engine/scene/host.zig");
     _ = @import("engine/navigation/grid.zig");
     _ = @import("engine/navigation/pathfind.zig");
+    _ = @import("engine/navigation/flow.zig");
     _ = @import("engine/navigation/follow.zig");
     _ = @import("engine/navigation/agent.zig");
     _ = @import("engine/ai.zig");

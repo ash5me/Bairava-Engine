@@ -38,7 +38,22 @@ a direction vector rather than a game-facing enum; callers map their own facing 
 - The pathfinder keeps its arrays between searches, and only grows them when a bigger map is searched.
 
 A search can visit every cell of the map, so its worst case grows with the map. Enemies keep the cost low: a chasing
-enemy replans every 0.4 seconds, or as soon as the player moves into another cell.
+unit can instead share a flow field with all other units chasing the same cell.
+
+## Shared-goal flow fields
+
+`navigation.FlowField` runs Dijkstra backward from one or more walkable goal cells. It stores a cost-to-goal for each
+reachable cell and, after the costs settle, one legal neighbor with a lower cost. `nextCell(grid, cell)` samples that
+direction without running another search. One-way entry and diagonal corner rules use the same step legality and
+10/14 costs as A*.
+
+Build the field when its shared goal changes. `buildGoals` can seed several destinations; a failed build caused by
+an empty, blocked, or out-of-bounds goal leaves the previous field intact. Unreachable cells and goal cells return
+no next cell. The field has no route-length limit, and A* remains available for unique destinations.
+
+`Follower.stepToward` moves a box toward one pixel-space waypoint using the same tile collision, 2 px arrival snap,
+and 0.35 second stuck handling as route following. This is the intended movement step for a unit sampling a flow
+field; it does not allocate or retain a cell route.
 
 ## Navigation agent
 
@@ -73,7 +88,7 @@ Each enemy is in one of four states. The brain in `enemy_ai.zig` picks the state
 |---|---|---|---|
 | idle | at spawn, or after a rest | stands still for a random 1.5 to 3.0 seconds | sees the player: chase. Wait over: wander |
 | wander | the idle wait ends | routes to a random walkable cell within 4 cells of home | sees the player: chase. Route done: idle |
-| chase | sees the player, from any state | routes to the player's cell, at 44 pixels per second | no sight for 2.0 seconds: return home |
+| chase | sees the player, from any state | samples the shared field toward the player's cell at 44 pixels per second | no sight for 2.0 seconds: return home |
 | return_home | lost sight of the player | routes back to home, at 20 pixels per second | sees the player: chase. Arrived: idle |
 
 An enemy sees the player when the player's feet are within 88 pixels of its own feet, and a clear line joins them.
@@ -100,14 +115,15 @@ Enemies are placed with `enemy <col> <row>` lines in the level's metadata file. 
 
 ## Tests
 
-`zig build test` runs the grid, pathfinder, follower, navigation agent, and behavior brain tests. The enemy glue in
+`zig build test` runs the grid, pathfinder, flow field, follower, navigation agent, and behavior brain tests. The enemy glue in
 `enemy.zig` imports the engine, so the tests do not cover it. The game is the check for that part.
 
 ## Limits
 
 - Enemies do not fight, and the player takes no damage.
 - Enemies are not saved. Loading a save leaves them on their home cells, as the level placed them.
-- A route holds at most 128 cells. A longer one is refused with `PathTooLong`, and the enemy stays where it is.
+- An A* route holds at most 128 cells. A longer one is refused with `PathTooLong`; flow-field steering has no route
+  length limit.
 - Enemies do not avoid each other or the player, so they can overlap.
 - The grid is built from the static tiles of the level. A route does not change when a tile changes.
 - Routes are not smoothed. A route can zigzag between diagonal and straight steps.
