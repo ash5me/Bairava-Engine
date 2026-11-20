@@ -25,6 +25,18 @@ class SiteAssemblyTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             build_site.rewrite_links("[plan](plans/notes.md)", "guide.md", {"guide.md"})
 
+    def test_animation_asset_links_point_outside_the_generated_site(self):
+        source = (build_site.DOCS / "animation.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "https://github.com/ash5me/Bairava-Engine/blob/main/assets/animations/warrior.anim",
+            source,
+        )
+        self.assertIn(
+            "https://github.com/ash5me/Bairava-Engine/blob/main/assets/animations/warrior.machine",
+            source,
+        )
+        self.assertNotIn("../assets/animations/", source)
+
     def test_source_reference_check_catches_engine_paths(self):
         self.assertIsNotNone(build_site.INTERNAL_PATH.search("See src/engine/core/context.zig."))
 

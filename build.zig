@@ -818,5 +818,6 @@ pub fn build(b: *std.Build) void {
     docs_site_tests.addFileInput(b.path("docs/rendering.md"));
     docs_site_tests.addFileInput(b.path("docs/scenes.md"));
     docs_site_tests.addFileInput(b.path("docs/getting-started.md"));
+    docs_site_tests.addFileInput(b.path("docs/animation.md"));
     test_step.dependOn(&docs_site_tests.step);
 }

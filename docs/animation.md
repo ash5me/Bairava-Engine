@@ -95,8 +95,11 @@ library may be replaced without invalidating it, but the clip indices must still
 
 ## The warrior
 
-The sample warrior's clips are in [`assets/animations/warrior.anim`](../assets/animations/warrior.anim), and
-its machine is [`assets/animations/warrior.machine`](../assets/animations/warrior.machine). The machine has
+The sample warrior's clips are in
+[`assets/animations/warrior.anim`](https://github.com/ash5me/Bairava-Engine/blob/main/assets/animations/warrior.anim),
+and its machine is
+[`assets/animations/warrior.machine`](https://github.com/ash5me/Bairava-Engine/blob/main/assets/animations/warrior.machine).
+The machine has
 `moving` and `facing` parameters, with facing 0 down, 1 right, 2 up, and 3 left, so it chooses the idle or walk
 clip for each direction. The game sets those two parameters each update and does not name clips. It checks the
 frame rectangles against the warrior atlas region at startup, and the machine checks its clip names when it loads.
