@@ -8,6 +8,53 @@
 const std = @import("std");
 const tilemap = @import("../scene/tilemap.zig");
 
+/// Range and facing constraints used before the grid blocker walk.
+pub const Sight = struct {
+    /// Pixels. A target at exactly this distance is in range. Non-finite means unlimited.
+    range: f32 = std.math.inf(f32),
+    /// Facing direction in world pixels, with y down. Its length is ignored.
+    facing_x: f32 = 0,
+    facing_y: f32 = 0,
+    /// Half-angle in radians on either side of facing. Pi or more means a full circle.
+    half_angle: f32 = std.math.pi,
+};
+
+/// True when two finite points are within range. A non-finite range is unlimited.
+pub fn inRange(from: tilemap.Point, to: tilemap.Point, range: f32) bool {
+    if (!finitePoint(from) or !finitePoint(to)) return false;
+    if (!std.math.isFinite(range)) return true;
+    if (range < 0) return false;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const distance_squared = dx * dx + dy * dy;
+    if (!std.math.isFinite(distance_squared)) return false;
+    return distance_squared <= range * range;
+}
+
+/// True when `to` lies inside the supplied forward cone. Facing length is ignored.
+pub fn inCone(from: tilemap.Point, to: tilemap.Point, facing_x: f32, facing_y: f32, half_angle: f32) bool {
+    if (!finitePoint(from) or !finitePoint(to) or !std.math.isFinite(half_angle) or half_angle < 0) return false;
+    if (half_angle >= std.math.pi) return true;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dist2 = dx * dx + dy * dy;
+    if (dist2 == 0) return true;
+    if (!std.math.isFinite(facing_x) or !std.math.isFinite(facing_y)) return false;
+    const face2 = facing_x * facing_x + facing_y * facing_y;
+    if (face2 == 0) return false;
+    const dot = facing_x * dx + facing_y * dy;
+    const cos_half = @cos(half_angle);
+    const threshold = dist2 * face2 * cos_half * cos_half;
+    if (cos_half >= 0) {
+        return dot >= 0 and dot * dot >= threshold;
+    }
+    return dot >= 0 or dot * dot <= threshold;
+}
+
+fn finitePoint(point: tilemap.Point) bool {
+    return std.math.isFinite(point.x) and std.math.isFinite(point.y);
+}
+
 /// A cell of the grid, counted from the top-left corner of the map. The fields are signed, so a neighbor past
 /// the edge is easy to name. Such a cell is never walkable.
 pub const Cell = struct {
@@ -125,6 +172,14 @@ pub const Grid = struct {
             }
         }
     }
+
+    /// Applies finite-point, range, and cone filters before the unchanged walkability test.
+    pub fn perceive(self: Grid, from: tilemap.Point, to: tilemap.Point, sight: Sight) bool {
+        if (!finitePoint(from) or !finitePoint(to)) return false;
+        if (!inRange(from, to, sight.range)) return false;
+        if (!inCone(from, to, sight.facing_x, sight.facing_y, sight.half_angle)) return false;
+        return self.lineOfSight(from, to);
+    }
 };
 
 const room_text =
@@ -200,4 +255,81 @@ test "a diagonal line of sight is blocked by a wall it crosses, and not by open 
     try std.testing.expect(!grid.lineOfSight(.{ .x = 24, .y = 24 }, .{ .x = 72, .y = 56 }));
     // From cell (1, 1) to cell (4, 4). The line passes (2, 2) and (3, 3), which are open, and never touches (3, 2).
     try std.testing.expect(grid.lineOfSight(.{ .x = 24, .y = 24 }, .{ .x = 72, .y = 72 }));
+}
+
+test "default perception preserves LOS cell traversal and corner tie-breaking" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const grid = Grid.init(&map);
+    const cases = [_]struct { from: tilemap.Point, to: tilemap.Point }{
+        .{ .from = .{ .x = 24, .y = 24 }, .to = .{ .x = 72, .y = 24 } },
+        .{ .from = .{ .x = 24, .y = 24 }, .to = .{ .x = 24, .y = 72 } },
+        .{ .from = .{ .x = 24, .y = 40 }, .to = .{ .x = 72, .y = 40 } },
+        .{ .from = .{ .x = 24, .y = 24 }, .to = .{ .x = -24, .y = 24 } },
+        .{ .from = .{ .x = 20, .y = 20 }, .to = .{ .x = 28, .y = 28 } },
+        .{ .from = .{ .x = 24, .y = 24 }, .to = .{ .x = 72, .y = 56 } },
+        .{ .from = .{ .x = 24, .y = 24 }, .to = .{ .x = 72, .y = 72 } },
+    };
+    for (cases) |case| try std.testing.expectEqual(
+        grid.lineOfSight(case.from, case.to),
+        grid.perceive(case.from, case.to, .{}),
+    );
+}
+
+test "range and cone filters include their boundaries and reject invalid inputs" {
+    const origin = tilemap.Point{ .x = 24, .y = 24 };
+    try std.testing.expect(inRange(origin, .{ .x = 72, .y = 24 }, 88));
+    try std.testing.expect(inRange(origin, .{ .x = 112, .y = 24 }, 88));
+    try std.testing.expect(!inRange(origin, .{ .x = 72, .y = 24 }, 40));
+    try std.testing.expect(inRange(origin, origin, 0));
+    try std.testing.expect(!inRange(origin, .{ .x = 25, .y = 24 }, -1));
+    try std.testing.expect(!inRange(origin, .{ .x = std.math.nan(f32), .y = 24 }, std.math.inf(f32)));
+
+    const right = tilemap.Point{ .x = 72, .y = 24 };
+    const up = tilemap.Point{ .x = 24, .y = 0 };
+    const left = tilemap.Point{ .x = -24, .y = 24 };
+    const half = std.math.pi / 2.0;
+    try std.testing.expect(inCone(origin, right, 1, 0, half));
+    try std.testing.expect(inCone(origin, up, 1, 0, half));
+    try std.testing.expect(!inCone(origin, left, 1, 0, half));
+    try std.testing.expect(inCone(origin, left, 0, 0, std.math.pi));
+    try std.testing.expect(!inCone(origin, right, 0, 0, 0));
+    try std.testing.expect(inCone(origin, origin, 0, 0, 0));
+    try std.testing.expect(!inCone(origin, right, 1, 0, std.math.nan(f32)));
+    try std.testing.expect(!inCone(origin, right, 1, 0, -0.1));
+}
+
+test "perception rejects invalid points and filters distance before LOS" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+    const grid = Grid.init(&map);
+    const from = tilemap.Point{ .x = 24, .y = 24 };
+    try std.testing.expect(!grid.perceive(from, .{ .x = 72, .y = 24 }, .{ .range = 40 }));
+    try std.testing.expect(!grid.perceive(from, .{ .x = std.math.nan(f32), .y = 24 }, .{}));
+    try std.testing.expect(!grid.perceive(.{ .x = 56, .y = 40 }, .{ .x = 56, .y = 40 }, .{ .range = 0 }));
+    try std.testing.expect(grid.perceive(.{ .x = 24, .y = 24 }, .{ .x = 24, .y = 24 }, .{ .range = 0, .half_angle = 0 }));
+    try std.testing.expect(!grid.perceive(from, .{ .x = 72, .y = 24 }, .{ .range = -1 }));
+    try std.testing.expect(!grid.perceive(from, .{ .x = 72, .y = 24 }, .{ .half_angle = -1 }));
+
+    const wide_map = try tilemap.TileMap.parse(
+        allocator,
+        "size 10 3\nsolid 1\nlayer ground\n1 1 1 1 1 1 1 1 1 1\n1 0 0 0 0 0 0 0 0 1\n1 1 1 1 1 1 1 1 1 1\n",
+    );
+    defer wide_map.deinit(allocator);
+    const wide_grid = Grid.init(&wide_map);
+    try std.testing.expect(wide_grid.perceive(from, .{ .x = 112, .y = 24 }, .{ .range = 88 }));
+    try std.testing.expect(!wide_grid.perceive(from, .{ .x = 112.01, .y = 24 }, .{ .range = 88 }));
+}
+
+test "one-way tiles do not block perception" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(
+        allocator,
+        "size 6 2\nsolid 1\noneway 2\nlayer ground\n1 1 1 1 1 1\n1 0 2 0 0 1\n",
+    );
+    defer map.deinit(allocator);
+    const grid = Grid.init(&map);
+    try std.testing.expect(grid.perceive(.{ .x = 24, .y = 24 }, .{ .x = 72, .y = 24 }, .{}));
 }

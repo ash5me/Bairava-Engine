@@ -11,6 +11,12 @@ const agent = @import("agent.zig");
 pub const Cell = grid.Cell;
 /// Which cells of a tile map a unit can stand on, and the sight lines between points.
 pub const Grid = grid.Grid;
+/// Range and facing constraints applied before a grid line-of-sight walk.
+pub const Sight = grid.Sight;
+/// Checks a pair of points against a pixel-distance limit.
+pub const inRange = grid.inRange;
+/// Checks whether a point lies within a facing cone.
+pub const inCone = grid.inCone;
 /// The cell that holds a point in pixels, and the center of a cell.
 pub const cellOf = grid.cellOf;
 pub const cellCenter = grid.cellCenter;

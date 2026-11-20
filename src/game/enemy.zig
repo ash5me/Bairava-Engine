@@ -230,10 +230,7 @@ pub const Enemy = struct {
 
 /// True when the target is close enough, and a clear line joins the two points.
 fn seesTarget(grid: nav.Grid, from: engine.tilemap.Point, to: engine.tilemap.Point) bool {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    if (dx * dx + dy * dy > sight_range * sight_range) return false;
-    return grid.lineOfSight(from, to);
+    return grid.perceive(from, to, .{ .range = sight_range });
 }
 
 /// The direction of a step, as the sprite's facing. The larger axis wins, and a tie goes to horizontal.

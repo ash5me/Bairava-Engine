@@ -20,6 +20,11 @@ into a one-way cell; northward and sideways entry remain available.
 answers whether a straight line between two points crosses only walkable cells. It checks every cell the line
 crosses, in order, so it cannot step past a thin wall at a corner.
 
+`Grid.perceive(from, to, sight)` filters finite points by an optional pixel range and facing cone before calling the
+same line-of-sight walk. The default `Sight` is unlimited and omnidirectional, so it behaves like `lineOfSight` for
+finite points. One-way tiles remain transparent to sight because only solid cells block the walk. The engine takes
+a direction vector rather than a game-facing enum; callers map their own facing to world-space x/y.
+
 ## Routes
 
 `navigation.Pathfinder` runs A* over the grid, and returns the cheapest route as a list of cells, from start to goal.

@@ -28,6 +28,9 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.physics.shapes.OrientedBox;
     _ = bairava.physics.collision.Component;
     _ = bairava.physics.queries.all_layers;
+    _ = bairava.navigation.Sight;
+    _ = bairava.navigation.inRange;
+    _ = bairava.navigation.inCone;
 }
 
 test "the public engine version is the initial semantic API version" {

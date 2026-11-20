@@ -287,6 +287,7 @@ test "circle colliders use exact narrow-phase queries and ignore their box field
         .{
             .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
             .layer = 1,
+            .mask = 0,
             .circle = .{ .x = 50, .y = 10, .r = 5 },
         },
         .{ .box = .{ .x = 40, .y = 0, .w = 10, .h = 10 }, .layer = 1 },
@@ -294,6 +295,12 @@ test "circle colliders use exact narrow-phase queries and ignore their box field
             .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
             .layer = 1,
             .circle = .{ .x = 100, .y = 100, .r = 0 },
+        },
+        .{
+            .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+            .layer = 1,
+            .circle = .{ .x = 50, .y = 10, .r = 5 },
+            .enabled = false,
         },
     };
     try expectEqual(@as(?usize, 0), firstOverlap(&colliders, .{ .x = 45, .y = 8, .w = 2, .h = 2 }, all_layers));
