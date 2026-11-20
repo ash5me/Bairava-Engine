@@ -307,6 +307,12 @@ pub const Console = struct {
             self.setOutput("device closed: nothing plays", .{});
         }
         self.appendOutput("\nvoices {d}/{d} busy, master gain {d:.2}", .{ audio.voices_busy, audio.voices_max, audio.master_gain });
+        self.appendOutput("\nbuses music {d:.2}, sfx {d:.2}, ambience {d:.2}, ui {d:.2}", .{
+            audio.bus_gain[0],
+            audio.bus_gain[1],
+            audio.bus_gain[2],
+            audio.bus_gain[3],
+        });
         for (audio.listed[0..audio.listed_count], 0..) |voice, index| {
             self.appendOutput("\n{d}: {s}, gain {d:.2}, {d} bytes", .{
                 index + 1,
@@ -526,13 +532,14 @@ test "the audio command reports the device, the busy voices, and the first few b
         .voices_busy = 4,
         .voices_max = 32,
         .master_gain = 0.5,
+        .bus_gain = .{ 0.1, 0.2, 0.3, 0.4 },
         .listed_count = 1,
     };
     collector.snapshot.audio.listed[0] = .{ .looping = true, .gain = 0.25, .sound_bytes = 1024 };
 
     console.execute("audio", &collector, &overlay);
     try std.testing.expectEqualStrings(
-        "device open: 48000 Hz, 2 channels\nvoices 4/32 busy, master gain 0.50\n1: loop, gain 0.25, 1024 bytes\n3 more busy",
+        "device open: 48000 Hz, 2 channels\nvoices 4/32 busy, master gain 0.50\nbuses music 0.10, sfx 0.20, ambience 0.30, ui 0.40\n1: loop, gain 0.25, 1024 bytes\n3 more busy",
         console.outputText(),
     );
     console.execute("audio extra", &collector, &overlay);

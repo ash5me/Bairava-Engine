@@ -31,6 +31,7 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.navigation.Sight;
     _ = bairava.navigation.inRange;
     _ = bairava.navigation.inCone;
+    _ = bairava.audio.Bus;
 }
 
 test "the public engine version is the current semantic API version" {

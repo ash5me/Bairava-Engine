@@ -103,10 +103,10 @@ pub fn Pool(comptime Payload: type, comptime capacity: u16) type {
     };
 }
 
-/// The gain a voice plays at: its own gain times the master gain. Each factor is clamped to
+/// The gain a voice plays at: its own gain, bus gain, and master gain. Each factor is clamped to
 /// [0, 1], and NaN counts as 0.
-pub fn effectiveGain(voice_gain: f32, master_gain: f32) f32 {
-    return clamp01(voice_gain) * clamp01(master_gain);
+pub fn effectiveGain(voice_gain: f32, bus_gain: f32, master_gain: f32) f32 {
+    return clamp01(voice_gain) * clamp01(bus_gain) * clamp01(master_gain);
 }
 
 fn clamp01(x: f32) f32 {
@@ -222,12 +222,14 @@ test "the iterator visits busy slots once, and releasing during the walk is safe
     try std.testing.expectEqual(@as(usize, 2), pool.count());
 }
 
-test "gain multiplies voice and master gain, each clamped to [0, 1]" {
-    try std.testing.expectEqual(@as(f32, 0.25), effectiveGain(0.5, 0.5));
-    try std.testing.expectEqual(@as(f32, 1.0), effectiveGain(2.0, 1.0));
-    try std.testing.expectEqual(@as(f32, 0.0), effectiveGain(-1.0, 1.0));
-    try std.testing.expectEqual(@as(f32, 0.0), effectiveGain(1.0, std.math.nan(f32)));
-    try std.testing.expectEqual(@as(f32, 0.5), effectiveGain(1.0, 0.5));
+test "gain multiplies voice, bus, and master gain, each clamped to [0, 1]" {
+    try std.testing.expectEqual(@as(f32, 0.125), effectiveGain(0.5, 0.5, 0.5));
+    try std.testing.expectEqual(@as(f32, 1.0), effectiveGain(2.0, 2.0, 1.0));
+    try std.testing.expectEqual(@as(f32, 0.0), effectiveGain(-1.0, 1.0, 1.0));
+    try std.testing.expectEqual(@as(f32, 0.0), effectiveGain(1.0, std.math.nan(f32), 1.0));
+    try std.testing.expectEqual(@as(f32, 0.0), effectiveGain(1.0, 1.0, std.math.nan(f32)));
+    try std.testing.expectEqual(@as(f32, 0.5), effectiveGain(1.0, 1.0, 0.5));
+    try std.testing.expectEqual(@as(f32, 0.25), effectiveGain(0.5, 1.0, 0.5));
 }
 
 test "a non-looping voice finishes only when it is fed and nothing is queued or available" {

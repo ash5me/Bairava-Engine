@@ -45,6 +45,9 @@ const positional_lookahead_divisor: u32 = 10;
 
 pub const Handle = rules.Handle;
 
+/// Fixed live gain categories for voices.
+pub const Bus = enum { music, sfx, ambience, ui };
+
 pub const Error = error{
     /// No playback device is open, so nothing can play or load.
     NoDevice,
@@ -89,8 +92,10 @@ pub const StreamedSound = struct {
 };
 
 pub const PlayOptions = struct {
-    /// Volume of this voice, from 0 (silent) to 1 (full). The master gain multiplies it.
+    /// Volume of this voice, from 0 (silent) to 1 (full). Its bus and the master gain multiply it.
     gain: f32 = 1.0,
+    /// Category gain applied live alongside the master gain.
+    bus: Bus = .sfx,
     /// Repeat until stopped.
     loop: bool = false,
     /// Left-right placement, from -1 (full left) to 1 (full right), with 0 at center. A positional voice adds its own
@@ -134,8 +139,10 @@ const Playing = struct {
     stream: *platform.AudioStream,
     source: Source,
     looping: bool,
-    /// The voice's own gain, from 0 to 1, kept so the master gain can change without losing it.
+    /// The voice's own gain, from 0 to 1, kept so bus and master gain can change without losing it.
     gain: f32,
+    /// Fixed category selected when the voice started.
+    bus: Bus,
     /// The pan the caller asked for, from -1 (left) to 1 (right). A positional voice adds its place to it.
     pan: f32,
     /// Where the voice is, in world pixels. Null for a voice that plays the same everywhere.
@@ -173,6 +180,7 @@ pub const Audio = struct {
     format: platform.PcmFormat = undefined,
     playing: rules.Pool(Playing, max_voices) = .{},
     master_gain: f32 = 1.0,
+    bus_gain: [4]f32 = .{ 1, 1, 1, 1 },
     /// Where the listener is, in world pixels. Positional voices are heard from here.
     listener: spatial.Point = .{ .x = 0, .y = 0 },
     /// Holds one panned run at a time. Its bytes are copied into a stream, so every voice shares it.
@@ -352,8 +360,22 @@ pub const Audio = struct {
         while (it.next()) |entry| self.applyGain(entry.payload);
     }
 
+    /// Sets one bus's live gain, applying it to voices already on that bus.
+    pub fn setBusGain(self: *Audio, bus: Bus, gain: f32) void {
+        self.bus_gain[@intFromEnum(bus)] = clampGain(gain);
+        var it = self.playing.iterator();
+        while (it.next()) |entry| {
+            if (entry.payload.bus == bus) self.applyGain(entry.payload);
+        }
+    }
+
+    /// Returns the current gain for one bus.
+    pub fn busGain(self: *const Audio, bus: Bus) f32 {
+        return self.bus_gain[@intFromEnum(bus)];
+    }
+
     /// Copies the audio state into `out` for the console's `audio` command: whether a device is open and
-    /// its format, the busy voice count, the master gain, and the first few busy voices. Allocates nothing.
+    /// its format, the busy voice count, master and bus gains, and the first few busy voices. Allocates nothing.
     pub fn describe(self: *Audio, out: *collector.AudioState) void {
         out.* = .{};
         out.device_open = self.device != null;
@@ -364,6 +386,7 @@ pub const Audio = struct {
         out.voices_busy = @intCast(self.playing.count());
         out.voices_max = max_voices;
         out.master_gain = self.master_gain;
+        out.bus_gain = self.bus_gain;
 
         var it = self.playing.iterator();
         while (it.next()) |entry| {
@@ -422,6 +445,7 @@ pub const Audio = struct {
             .source = owned,
             .looping = options.loop,
             .gain = clampGain(options.gain),
+            .bus = options.bus,
             .pan = spatial.clampPan(options.pan),
             .position = options.position,
             .range = options.range,
@@ -481,9 +505,13 @@ pub const Audio = struct {
         }
     }
 
-    /// Sets the stream's gain from the voice's own gain, its attenuation, and the master gain.
+    /// Sets the stream's gain from the voice's own gain, its attenuation, bus gain, and master gain.
     fn applyGain(self: *const Audio, voice: *const Playing) void {
-        platform.audio.setStreamGain(voice.stream, rules.effectiveGain(voice.gain * voice.attenuation, self.master_gain));
+        platform.audio.setStreamGain(voice.stream, rules.effectiveGain(
+            voice.gain * voice.attenuation,
+            self.bus_gain[@intFromEnum(voice.bus)],
+            self.master_gain,
+        ));
     }
 
     /// Keeps a voice's stream fed. Returns false when the platform refuses the data.
@@ -715,10 +743,12 @@ test "a silent Audio refuses to play, open, and stream, and ignores the other ca
     audio.stop(never);
     audio.update();
     audio.setMasterGain(0.5);
+    audio.setBusGain(.music, 0.5);
     audio.setListener(.{ .x = 10, .y = 10 });
     audio.setPosition(never, .{ .x = 0, .y = 0 });
     try std.testing.expectEqual(@as(usize, 0), audio.playing.count());
     try std.testing.expectEqual(@as(f32, 0.5), audio.master_gain);
+    try std.testing.expectEqual(@as(f32, 0.5), audio.busGain(.music));
 }
 
 test "a Sound frees its samples with the allocator it was made with" {
@@ -739,6 +769,8 @@ test "master gain and play options clamp invalid values and empty sounds" {
     var audio = Audio{};
     defer audio.deinit();
 
+    const default_options = PlayOptions{};
+    try std.testing.expectEqual(Bus.sfx, default_options.bus);
     audio.setMasterGain(std.math.nan(f32));
     try std.testing.expectEqual(@as(f32, 0.0), audio.master_gain);
 
@@ -750,6 +782,25 @@ test "master gain and play options clamp invalid values and empty sounds" {
     try std.testing.expectEqual(@as(f32, 1.0), audio.master_gain);
 }
 
+test "bus gains clamp independently and master gain does not change them" {
+    var audio = Audio{};
+    defer audio.deinit();
+
+    audio.setBusGain(.music, std.math.nan(f32));
+    audio.setBusGain(.sfx, 5);
+    try std.testing.expectEqual(@as(f32, 0), audio.busGain(.music));
+    try std.testing.expectEqual(@as(f32, 1), audio.busGain(.sfx));
+    try std.testing.expectEqual(@as(f32, 1), audio.busGain(.ambience));
+    try std.testing.expectEqual(@as(f32, 1), audio.busGain(.ui));
+
+    audio.setMasterGain(0.25);
+    try std.testing.expectEqual(@as(f32, 0.25), audio.master_gain);
+    try std.testing.expectEqual(@as(f32, 0), audio.busGain(.music));
+    try std.testing.expectEqual(@as(f32, 1), audio.busGain(.sfx));
+    try std.testing.expectEqual(@as(f32, 1), audio.busGain(.ambience));
+    try std.testing.expectEqual(@as(f32, 1), audio.busGain(.ui));
+}
+
 test "describe reports a silent audio state with no voices" {
     var audio = Audio{};
     defer audio.deinit();
@@ -759,6 +810,13 @@ test "describe reports a silent audio state with no voices" {
     try std.testing.expectEqual(@as(u32, 0), state.voices_busy);
     try std.testing.expectEqual(@as(u32, max_voices), state.voices_max);
     try std.testing.expectEqual(@as(u8, 0), state.listed_count);
+    try std.testing.expectEqual([_]f32{ 1, 1, 1, 1 }, state.bus_gain);
+    audio.setBusGain(.music, 0.1);
+    audio.setBusGain(.sfx, 0.2);
+    audio.setBusGain(.ambience, 0.3);
+    audio.setBusGain(.ui, 0.4);
+    audio.describe(&state);
+    try std.testing.expectEqual([_]f32{ 0.1, 0.2, 0.3, 0.4 }, state.bus_gain);
 }
 
 test "a positional voice's attenuation and pan come from the listener, and its own pan is added to them" {
@@ -770,6 +828,7 @@ test "a positional voice's attenuation and pan come from the listener, and its o
         .source = .{ .memory = &sound },
         .looping = false,
         .gain = 1,
+        .bus = .sfx,
         .pan = -0.25,
         .position = .{ .x = 80, .y = 0 },
         .range = 160,
@@ -789,6 +848,13 @@ test "a positional voice's attenuation and pan come from the listener, and its o
     audio.refreshMix(&voice);
     try std.testing.expectEqual(@as(f32, 1.0), voice.attenuation);
     try std.testing.expectEqual(@as(f32, -0.25), voice.effective_pan);
+}
+
+test "full bus gain preserves the voice attenuation and master product" {
+    try std.testing.expectEqual(
+        @as(f32, 0.6 * 0.4 * 0.5),
+        rules.effectiveGain(0.6 * 0.4, 1, 0.5),
+    );
 }
 
 test "the lookahead is a tenth of a second of whole frames, and at least one frame" {
@@ -811,6 +877,7 @@ test "a streamed voice reports its file's size as its sound length" {
         .source = .{ .streamed = streamed },
         .looping = false,
         .gain = 1,
+        .bus = .sfx,
         .pan = 0,
         .position = null,
         .range = spatial.default_range,

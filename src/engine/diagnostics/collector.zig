@@ -137,6 +137,8 @@ pub const AudioState = struct {
     voices_busy: u32 = 0,
     voices_max: u32 = 0,
     master_gain: f32 = 1,
+    /// Bus gains in music, sfx, ambience, ui order.
+    bus_gain: [4]f32 = .{ 1, 1, 1, 1 },
     /// The first busy voices, in slot order.
     listed: [max_listed]AudioVoice = [_]AudioVoice{.{}} ** max_listed,
     listed_count: u8 = 0,

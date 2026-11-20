@@ -7,13 +7,19 @@ whole with `Context.loadSound`, because they start at once and can be positioned
 
 ```zig
 var music = try ctx.openStreamed("music/theme.wav");   // reads only the header
-const voice = try ctx.audio.playStreamed(&music, .{ .loop = true, .gain = 0.6 });
+const voice = try ctx.audio.playStreamed(&music, .{ .loop = true, .gain = 0.6, .bus = .music });
 ```
 
 `openStreamed` takes the same relative path as `loadSound`, and it prefers the build-encoded IMA sidecar
 (`music/theme.wav.ima`) when one exists, as `loadSound` does. `playStreamed` takes the same `PlayOptions` as `play`:
-gain, loop, pan, and an optional position for a positional sound. Stop a voice with `stop`, and check it with
+gain, bus, loop, pan, and an optional position for a positional sound. Stop a voice with `stop`, and check it with
 `isPlaying`, as for any other voice.
+
+Every voice uses its own gain multiplied by its bus gain and the master gain. The fixed buses are `.music`, `.sfx`,
+`.ambience`, and `.ui`, each defaulting to gain 1. Set one with `audio.setBusGain(.music, 0.5)`; this applies immediately
+to already-playing voices on that bus. Gains clamp to `[0, 1]`, and non-finite gains become zero. `PlayOptions.bus`
+defaults to `.sfx`; choose `.music` for a music stream or `.ambience` for an ambience loop. The master gain remains the
+overall volume control.
 
 A `StreamedSound` holds only the path and the format. It owns no file and needs no `deinit`. Each playing voice opens
 its own reader, which closes when the voice ends or is stopped. The same `StreamedSound` can play several times at once.
@@ -53,6 +59,5 @@ function, and a size), so its tests run with no device and no file system.
 ## Not covered yet
 
 - Streaming from a file that changes while a voice plays. The reader trusts the size it read when the voice started.
-- Volume categories, such as separate music and effects levels, and reacting to a device change.
 - Music that is decoded ahead on a worker thread. Each chunk is decoded on the main thread, which is cheap for these
   formats.

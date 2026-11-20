@@ -510,7 +510,7 @@ pub const Game = struct {
         if (self.ambient_attempted) return;
         self.ambient_attempted = true;
         if (self.ambient_sound) |*sound| {
-            self.ambient_voice = self.audio.play(sound, .{ .loop = true }) catch |err| {
+            self.ambient_voice = self.audio.play(sound, .{ .loop = true, .bus = .ambience }) catch |err| {
                 log.warn("ambient sound could not start: {s}", .{@errorName(err)});
                 return;
             };
