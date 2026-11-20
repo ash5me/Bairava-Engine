@@ -407,7 +407,7 @@ test "Canvas keeps runtime glyph clusters across wrapping and widgets measure th
 
 /// A font with empty metrics, except for a 1x1 white block at the origin. Its texture comes from the test fixtures, with no GPU object.
 fn emptyFont() font_mod.Font {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     // A C struct literal must name every field, so start from zeros and set the one that matters here.
     var baked = std.mem.zeroes(c.ui_font);
     baked.white = .{ .x = 0, .y = 0, .w = 1, .h = 1 };
@@ -417,7 +417,7 @@ fn emptyFont() font_mod.Font {
 /// Stores a font with a 2x2 white block at the origin and a 64x64 fixture texture, for the Canvas tests. The tests call
 /// `discard` on their store, not `destroy`, because the fixture texture has no GPU object to release.
 fn insertFixtureFont(fonts: *FontStore) !FontHandle {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     var font = font_mod.Font{ .baked = std.mem.zeroes(c.ui_font), .texture = fixtures.texture(64, 64) };
     font.baked.white = .{ .x = 0, .y = 0, .w = 2, .h = 2 };
     return font_store.insertBfnt(fonts, font);
@@ -470,7 +470,7 @@ test "ui begin passes Escape as the cancel, and the key pressed as its control" 
 
 test "a solid rectangle draws from the batch's white texture, not the font atlas" {
     const allocator = std.testing.allocator;
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
 
     const fonts = try font_store.create(allocator);
     defer font_store.discard(fonts);
@@ -502,7 +502,7 @@ test "a solid rectangle draws from the batch's white texture, not the font atlas
 
 test "a glyph keeps the font atlas, and a fill after it starts a run on the white texture" {
     const allocator = std.testing.allocator;
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
 
     const fonts = try font_store.create(allocator);
     defer font_store.discard(fonts);
@@ -539,7 +539,7 @@ test "a glyph keeps the font atlas, and a fill after it starts a run on the whit
 
 test "without a white texture on the batch, a fill is not drawn" {
     const allocator = std.testing.allocator;
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
 
     const fonts = try font_store.create(allocator);
     defer font_store.discard(fonts);
@@ -564,7 +564,7 @@ test "without a white texture on the batch, a fill is not drawn" {
 
 test "a fill is drawn from the white texture even when the handle names no font" {
     const allocator = std.testing.allocator;
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
 
     const fonts = try font_store.create(allocator);
     defer font_store.discard(fonts);

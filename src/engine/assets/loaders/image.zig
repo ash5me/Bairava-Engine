@@ -60,7 +60,7 @@ pub fn parseCompressed(allocator: std.mem.Allocator, data: []const u8, expected:
 }
 
 test "compressed variants validate dimensions and format-specific payload lengths" {
-    const fixtures = @import("../../test_fixtures.zig");
+    const fixtures = @import("../../testing/fixtures.zig");
     const cases = .{
         .{ .format = Compression.rgba8, .width = 2, .height = 2, .size = 16 },
         .{ .format = Compression.bc1, .width = 4, .height = 4, .size = 8 },
@@ -80,7 +80,7 @@ test "compressed variants validate dimensions and format-specific payload length
 }
 
 test "compressed variants reject truncated headers, mismatched formats, and invalid payload sizes" {
-    const fixtures = @import("../../test_fixtures.zig");
+    const fixtures = @import("../../testing/fixtures.zig");
     const valid = try fixtures.compressedImageVariant(std.testing.allocator, @intFromEnum(Compression.bc1), 4, 4, 8);
     defer std.testing.allocator.free(valid);
     try std.testing.expectError(error.InvalidCompressedImage, parseCompressed(std.testing.allocator, valid[0..15], .bc1));
@@ -94,7 +94,7 @@ test "compressed variants reject truncated headers, mismatched formats, and inva
 }
 
 test "compressed variants reject zero dimensions and guard payload size overflow" {
-    const fixtures = @import("../../test_fixtures.zig");
+    const fixtures = @import("../../testing/fixtures.zig");
     const zero_width = try fixtures.compressedImageVariant(std.testing.allocator, @intFromEnum(Compression.rgba8), 0, 2, 0);
     defer std.testing.allocator.free(zero_width);
     try std.testing.expectError(error.InvalidCompressedImage, parseCompressed(std.testing.allocator, zero_width, .rgba8));

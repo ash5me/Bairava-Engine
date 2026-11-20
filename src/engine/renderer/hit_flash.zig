@@ -93,7 +93,7 @@ test "invalid hit flash duration and update time do not arm or advance" {
 }
 
 test "an inactive hit flash queues only the caller's unchanged sprite" {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     var no_vertices: [0]sprite.Vertex = .{};
     var no_batches: [0]sprite.Batch = .{};
     var batch = fixtures.batch(&no_vertices, &no_batches);
@@ -109,7 +109,7 @@ test "an inactive hit flash queues only the caller's unchanged sprite" {
 }
 
 test "an active flash overlays the base tint with the requested color and alpha" {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     var no_vertices: [0]sprite.Vertex = .{};
     var no_batches: [0]sprite.Batch = .{};
     var batch = fixtures.batch(&no_vertices, &no_batches);
@@ -144,7 +144,7 @@ test "an active flash overlays the base tint with the requested color and alpha"
 }
 
 test "a half-strength overlay uses half the base alpha and retains painter order" {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     var no_vertices: [0]sprite.Vertex = .{};
     var no_batches: [0]sprite.Batch = .{};
     var batch = fixtures.batch(&no_vertices, &no_batches);

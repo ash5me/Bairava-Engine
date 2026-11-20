@@ -4,8 +4,8 @@
 //! `fr-CA` becomes `fr-ca`). Translation keys use the engine's validated-name rules.
 
 const std = @import("std");
-const strings = @import("memory/string.zig");
-const StringMap = @import("memory/hash_map.zig").StringMap;
+const strings = @import("../memory/string.zig");
+const StringMap = @import("../memory/hash_map.zig").StringMap;
 
 /// A normalized locale tag, such as `en`, `fr-ca`, or `zh-hant`.
 pub const LocaleId = struct {

@@ -5,7 +5,9 @@ route search, and a follower that walks a box along a route through the tile map
 enemies, which use those parts to wander, chase the player, and walk home. The engine code is in
 `src/engine/navigation/`. The enemy code is in `src/game/enemy.zig` and `src/game/enemy_ai.zig`.
 
-The engine modules name no game type. They are reached through `engine.navigation`.
+The engine modules name no game type. The public namespace is exported through `engine.navigation` and implemented
+under `src/engine/navigation/`, with `navigation.zig` collecting the grid, pathfinder, follower, agent, and flow-field
+APIs. The enemy state machine and game-specific movement remain under `src/game/`.
 
 ## The walkable grid
 

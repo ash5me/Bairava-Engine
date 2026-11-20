@@ -2,10 +2,10 @@
 //! State bytes are supplied by the game so snapshots remain independent of game types.
 
 const std = @import("std");
-const input = @import("input/input.zig");
-const gamepad = @import("input/gamepad.zig");
-const platform_types = @import("platform/types.zig");
-const fixed_timestep = @import("core/fixed_timestep.zig");
+const input = @import("../input/input.zig");
+const gamepad = @import("../input/gamepad.zig");
+const platform_types = @import("../platform/types.zig");
+const fixed_timestep = @import("../core/fixed_timestep.zig");
 
 pub const InputSnapshot = input.Input.Snapshot;
 

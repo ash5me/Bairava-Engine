@@ -106,7 +106,7 @@ fn axisCopies(origin: f32, view_size: f32, period: f32, repeats: bool, anchor: f
 }
 
 test "repeating planes cover the view with seam-free integer periods" {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     const test_sprite = @import("sprite.zig");
     const test_camera = @import("camera.zig").Camera;
     var no_vertices: [0]test_sprite.Vertex = .{};
@@ -163,7 +163,7 @@ test "repeating planes cover the view with seam-free integer periods" {
 }
 
 test "a non-repeating plane emits one anchored quad" {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     const test_sprite = @import("sprite.zig");
     const test_camera = @import("camera.zig").Camera;
     var no_vertices: [0]test_sprite.Vertex = .{};

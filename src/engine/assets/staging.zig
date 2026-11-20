@@ -270,7 +270,7 @@ pub fn packagedReader() Reader {
 
 // ---- Tests --------------------------------------------------------------------------------------
 
-const fixtures = @import("../test_fixtures.zig");
+const fixtures = @import("../testing/fixtures.zig");
 
 /// A reader that serves a fixed set of files by name, and reports the rest as missing.
 const FakeFiles = struct {

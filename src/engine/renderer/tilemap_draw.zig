@@ -65,7 +65,7 @@ fn clampIndex(index: f32, count: u32) u32 {
 }
 
 test "tile draw window includes the one-tile pad but not tiles two cells beyond it" {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     const allocator = std.testing.allocator;
     const map = try tilemap.TileMap.parse(allocator, "size 6 1\nlayer ground\n0 0 0 0 0 0\n");
     defer map.deinit(allocator);

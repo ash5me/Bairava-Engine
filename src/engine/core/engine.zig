@@ -132,9 +132,9 @@ pub const parallax = @import("../renderer/parallax.zig");
 /// Walkable grid, A* paths, and the path follower for AI. See docs/navigation.md.
 pub const navigation = @import("../navigation/navigation.zig");
 /// Allocation-free behavior trees with running, sequence, and selector nodes.
-pub const ai = @import("../ai.zig");
+pub const ai = @import("../ai/behavior_tree.zig");
 /// Fixed-step input recording/replay and caller-serialized state checkpoints.
-pub const replay = @import("../replay.zig");
+pub const replay = @import("../replay/replay.zig");
 /// Queues a skeleton's attachments as sprites, with each pivot on its bone. The skeleton data stays SDL-free.
 pub const skeleton_draw = @import("../renderer/skeleton_draw.zig");
 /// Sprite-sheet animation: clips that name a row of frames, and an animator that plays them.
@@ -144,9 +144,9 @@ pub const audio = @import("../audio/audio.zig");
 /// The settings file: `name = value` lines, and the window settings the engine reads from them.
 pub const settings = @import("settings.zig");
 /// Locale IDs, translated string lookup, and fallback locale resolution.
-pub const localization = @import("../localization.zig");
+pub const localization = @import("../localization/localization.zig");
 /// Bounded, deterministic particle simulation and SpriteBatch rendering.
-pub const particles = @import("../particles.zig");
+pub const particles = @import("../particles/particles.zig");
 /// Diagnostics: the text lines and debug shapes a game adds, and the frame snapshot. See docs/diagnostics.md.
 pub const diagnostics = @import("../diagnostics/diagnostics.zig");
 /// Bounded, development-only command registry and parser. See docs/developer-console.md.

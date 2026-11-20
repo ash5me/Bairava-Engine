@@ -8,7 +8,7 @@ const animation = @import("engine/animation/animation.zig");
 const math = @import("engine/core/math.zig");
 const camera = @import("engine/renderer/camera.zig");
 const sprite = @import("engine/renderer/sprite.zig");
-const fixtures = @import("engine/test_fixtures.zig");
+const fixtures = @import("engine/testing/fixtures.zig");
 const Texture = @import("engine/renderer/texture.zig").Texture;
 const tilemap = @import("engine/scene/tilemap.zig");
 const physics_queries = @import("engine/physics/queries.zig");
@@ -57,7 +57,7 @@ test {
     _ = @import("engine/animation/machine.zig");
     _ = @import("engine/animation/skeleton.zig");
     _ = @import("engine/renderer/skeleton_draw.zig");
-    _ = @import("engine/particles.zig");
+    _ = @import("engine/particles/particles.zig");
     _ = @import("game/level_data.zig");
     _ = @import("game/prefab.zig");
     _ = @import("game/save.zig");
@@ -83,7 +83,7 @@ test {
     _ = @import("engine/ecs/entity.zig");
     _ = @import("engine/core/math.zig");
     _ = @import("engine/core/fixed_timestep.zig");
-    _ = @import("engine/replay.zig");
+    _ = @import("engine/replay/replay.zig");
     _ = @import("engine/core/game_events.zig");
     _ = @import("engine/text/layout.zig");
     _ = @import("engine/core/transform.zig");
@@ -120,7 +120,7 @@ test {
     _ = @import("engine/navigation/flow.zig");
     _ = @import("engine/navigation/follow.zig");
     _ = @import("engine/navigation/agent.zig");
-    _ = @import("engine/ai.zig");
+    _ = @import("engine/ai/behavior_tree.zig");
     _ = @import("game/enemy_ai.zig");
     _ = @import("game/player.zig");
 }

@@ -2,6 +2,13 @@
 
 Use the subsystem guides for current behavior. Plans describe proposed work or preserve implementation decisions; the text guide is the current behavioral reference.
 
+## Engine source layout
+
+`src/engine/` is organized by subsystem. Keep implementation modules in their owning directories (for example,
+`navigation/`, `renderer/`, or `audio/`); the root is reserved for the package facade and small shared modules such as
+`bairava.zig`, `capabilities.zig`, and `version.zig`. Game-specific implementations belong under `src/game/`, not
+inside the engine. Avoid leaving duplicate or obsolete implementations beside their active subsystem modules.
+
 ## Core guides
 
 - [AI](ai.md)

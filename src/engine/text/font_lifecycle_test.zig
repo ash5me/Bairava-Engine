@@ -13,7 +13,7 @@ const platform = @import("../platform/platform.zig");
 const font_mod = @import("font.zig");
 const font_resource = @import("font_resource.zig");
 const font_store = @import("font_store.zig");
-const fixtures = @import("../test_fixtures.zig");
+const fixtures = @import("../testing/fixtures.zig");
 
 const testing = std.testing;
 

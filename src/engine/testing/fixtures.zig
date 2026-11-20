@@ -1,6 +1,6 @@
 const std = @import("std");
-const sprite = @import("renderer/sprite.zig");
-const Texture = @import("renderer/texture.zig").Texture;
+const sprite = @import("../renderer/sprite.zig");
+const Texture = @import("../renderer/texture.zig").Texture;
 
 pub fn texture(width: u32, height: u32) Texture {
     return .{ .gpu_state = undefined, .width = width, .height = height, .has_upload_fence = false };

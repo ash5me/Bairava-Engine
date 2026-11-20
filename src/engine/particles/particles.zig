@@ -1,9 +1,9 @@
 //! Bounded, deterministic particle simulation with optional SpriteBatch rendering.
 
 const std = @import("std");
-const camera = @import("renderer/camera.zig");
-const sprite = @import("renderer/sprite.zig");
-const texture = @import("renderer/texture.zig");
+const camera = @import("../renderer/camera.zig");
+const sprite = @import("../renderer/sprite.zig");
+const texture = @import("../renderer/texture.zig");
 
 /// Per-system parameters shared by continuous and burst emission.
 pub const Config = struct {
@@ -298,7 +298,7 @@ test "invalid configuration leaves the previous configuration unchanged" {
 }
 
 test "particle draw submits only sprites whose rotated bounds meet the camera view" {
-    const fixtures = @import("test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     const allocator = std.testing.allocator;
     var system = try System.init(allocator, 2, 4);
     defer system.deinit();

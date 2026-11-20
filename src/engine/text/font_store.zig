@@ -724,7 +724,7 @@ const bmfont = @import("bmfont.zig");
 /// A font with empty metrics, except for a 1x1 white block at the origin. Its texture comes from the test fixtures: a
 /// texture with no GPU object, so `discard` can free the store without releasing anything.
 fn emptyFont() font_mod.Font {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     // A C struct literal must name every field, so start from zeros and set the one that matters here.
     var baked = std.mem.zeroes(c.ui_font);
     baked.white = .{ .x = 0, .y = 0, .w = 1, .h = 1 };
@@ -804,7 +804,7 @@ const bitmap_fixture =
 ;
 
 fn bitmapFixture() !font_resource.BitmapFont {
-    const fixtures = @import("../test_fixtures.zig");
+    const fixtures = @import("../testing/fixtures.zig");
     const descriptor = try bmfont.parse(testing.allocator, bitmap_fixture, .{}, null);
     const pages = try testing.allocator.alloc(Texture, 2);
     pages[0] = fixtures.texture(16, 8);

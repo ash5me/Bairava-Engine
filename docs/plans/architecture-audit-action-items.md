@@ -39,11 +39,11 @@
 
 **Review rule:** Broad dependencies are acceptable in composition-root code such as lifecycle/startup. Subsystems should not depend on unrelated subsystems without a clear reason.
 
-**Validated result:** The engine contains 147 Zig modules and 480 local file-import edges. Excluding the test-only `test_fixtures.zig`, the production graph has 146 modules, 469 edges, and no cycles. The test-helper cycles are:
+**Validated result at audit time:** The engine contained 147 Zig modules and 480 local file-import edges. Excluding the test-only `testing/fixtures.zig`, the production graph had 146 modules, 469 edges, and no cycles. The test-helper cycles were:
 
-- `renderer/sprite.zig` → `renderer/backends/sdl_gpu/backend.zig` → `renderer/backends/sdl_gpu/texture.zig` → `assets/loaders/image.zig` → `test_fixtures.zig` → `renderer/sprite.zig`.
-- `assets/loaders/image.zig` → `test_fixtures.zig` → `renderer/texture.zig` → `assets/loaders/image.zig`.
-- `renderer/backends/sdl_gpu/backend.zig` → `renderer/backends/sdl_gpu/texture.zig` → `assets/loaders/image.zig` → `test_fixtures.zig` → `renderer/texture.zig` → `renderer/backends/sdl_gpu/backend.zig`.
+- `renderer/sprite.zig` → `renderer/backends/sdl_gpu/backend.zig` → `renderer/backends/sdl_gpu/texture.zig` → `assets/loaders/image.zig` → `testing/fixtures.zig` → `renderer/sprite.zig`.
+- `assets/loaders/image.zig` → `testing/fixtures.zig` → `renderer/texture.zig` → `assets/loaders/image.zig`.
+- `renderer/backends/sdl_gpu/backend.zig` → `renderer/backends/sdl_gpu/texture.zig` → `assets/loaders/image.zig` → `testing/fixtures.zig` → `renderer/texture.zig` → `renderer/backends/sdl_gpu/backend.zig`.
 
 These cycles pass through imports used by tests in `assets/loaders/image.zig`; the test suite compiles and passes. The previous production cycle between `animation/animation.zig` and `animation/machine.zig` was removed by extracting `animation/timeline.zig`.
 
@@ -265,7 +265,7 @@ Use one entry per confirmed finding. Do not record a suspicion as a defect until
 | ARCH-002 | Unused renderer shader module duplicated the SDL_GPU backend shader path | `renderer/shader.zig`, `renderer/backends/sdl_gpu/` | Coupling | Low | Module had no callers and was the only direct SDL import outside platform/backend folders | Duplicated backend ownership and weakened boundary | Remove the unused duplicate module | Full build | Fixed |
 | ARCH-003 | Scene teardown could not release session-owned font handles | `scene/scene_manager.zig`, `scene/host.zig`, `core/runtime.zig`, `game/game.zig` | Ownership | Medium | Scene `deinit` had no `Context`; Semkootru loaded a store-owned font | Font residency extended beyond scene lifetime | Add optional `deinitWithContext` and release the font at scene close | Scene pop/replace/shutdown tests | Fixed |
 | ARCH-004 | Lighting overflow panicked despite being a recoverable per-frame capacity limit | `renderer/sprite.zig` | Policy | Medium | Filling fixed light/shadow uniform arrays reached panic paths | Content-heavy scenes could terminate the process | Return acceptance/counts, expose capacities, skip excess entries | Exact-capacity and overflow tests | Fixed |
-| ARCH-005 | Test-only imports form cycles through the shared renderer fixtures | `assets/loaders/image.zig`, `test_fixtures.zig`, `renderer/texture.zig`, `renderer/sprite.zig`, `renderer/backends/sdl_gpu/` | Coupling | Low | Three cycles are listed in section 1; each passes through an image test's `test_fixtures.zig` import | Test graph is harder to reason about; production graph remains acyclic | If test compilation/import issues arise, move image-only compressed fixtures to a renderer-independent helper | Full test suite currently passes | Deferred; test-only |
+| ARCH-005 | Test-only imports form cycles through the shared renderer fixtures | `assets/loaders/image.zig`, `testing/fixtures.zig`, `renderer/texture.zig`, `renderer/sprite.zig`, `renderer/backends/sdl_gpu/` | Coupling | Low | Three cycles are listed in section 1; each passes through an image test's `testing/fixtures.zig` import | Test graph is harder to reason about; production graph remains acyclic | If test compilation/import issues arise, move image-only compressed fixtures to a renderer-independent helper | Full test suite currently passes | Deferred; test-only |
 
 ### Severity guide
 
