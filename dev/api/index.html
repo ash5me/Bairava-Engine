@@ -59,8 +59,15 @@ The current public API is experimental and not production-ready.</p>
   <li><strong>Config.zoom_min, zoom_max (fields):</strong> Finite positive zoom bounds that include 1: zoom_min must be at most 1 and zoom_max at least 1.</li>
   <li><strong>Config.zoom_rate (fields):</strong> Finite, non-negative zoom easing rate per second; zero snaps to the target.</li>
   <li><strong>Config.post_effects (fields):</strong> Ordered post-processing chain, limited by max_post_effects; an empty slice disables post-processing.</li>
+  <li><strong>Config.title, settings_file (fields):</strong> Null-terminated window title and non-empty executable-relative settings path; settings-file window values override initial window size, fullscreen, and vsync.</li>
+  <li><strong>Config.fullscreen, vsync (fields):</strong> Initial window presentation settings; values from an existing settings file take precedence.</li>
+  <li><strong>Config.debug_font_path, debug_font_px (fields):</strong> Executable-relative prebaked BFNT asset and its baked pixel height for the development overlay; invalid or missing font disables the overlay.</li>
+  <li><strong>Config.log_file, crash_file (fields):</strong> Optional executable-adjacent output paths; null keeps logging in the terminal or disables crash-report file output.</li>
+  <li><strong>Config.post_params (fields):</strong> Effect strengths for vignette, scanlines, and grayscale, each finite and within 0..1; padding is reserved.</li>
   <li><strong>Config.texture_budget_bytes (fields):</strong> Approximate cache budget at four bytes per texel. Idle resources are evicted least-recently-used; zero means unlimited.</li>
   <li><strong>Config.texture_staging_budget_bytes (fields):</strong> Maximum staged texture payload bytes while waiting for upload. Zero removes the cap; a payload exceeding the whole budget fails.</li>
+  <li><strong>Config.texture_loads_per_frame (fields):</strong> Maximum queued texture preloads started between frames; zero disables background preloading.</li>
+  <li><strong>Config.gpu_timing (fields):</strong> Enables development-only GPU timing by waiting for each frame’s GPU work; this stalls the CPU and changes measured frame cost.</li>
   <li><strong>Config.worker_threads (fields):</strong> Worker count from 0 through max_worker_threads. Zero runs background work on the main thread.</li>
   <li><strong>Config.validate (methods):</strong> Checks startup configuration before platform resources are created; it has no side effects.</li>
   <li><strong>Config.validationMessage (methods):</strong> Returns a stable human-readable explanation for a ValidationError; use the error value for programmatic handling.</li>
@@ -91,13 +98,48 @@ The current public API is experimental and not production-ready.</p>
 <p><strong>Contract:</strong> Passed to init and update; its frame-scoped dt and input state are valid for that update. Resources loaded by the game must be released before shutdown. GPU work is performed on the engine thread.</p>
 
 <ul>
+  <li><strong>Context.input, dt, simulation_tick (fields):</strong> Borrowed current-update state: latched input, fixed-step duration in seconds, and the zero-based simulation update index.</li>
+  <li><strong>Context.running (fields):</strong> Set false to request that the main loop stop after the current update.</li>
+  <li><strong>Context.scale_mode, renderer, zoom_target, zoom_min, zoom_max (fields):</strong> Presentation settings. scale_mode and renderer may be changed directly; zoom target should be changed through zoomBy/resetZoom to honor configured bounds.</li>
+  <li><strong>Context.layout, camera (fields):</strong> Current view layout and borrowed gameplay camera. layout maps the last presentation’s window points; camera is mutable game state in world pixels.</li>
+  <li><strong>Context.audio, immediate_present_supported (fields):</strong> Borrowed audio service and the active surface’s immediate-present capability; missing playback-device initialization leaves audio silent.</li>
+  <li><strong>Context.textures, fonts, reloads, event_reader, diagnostics (fields):</strong> Engine-owned service pointers. Use their Context methods instead of mutating stores or retaining pointers beyond the run/update lifetime.</li>
+  <li><strong>Context.settings_text, settings_file (fields):</strong> Startup settings contents and executable-relative settings path; text is borrowed and may be empty when no file exists.</li>
+  <li><strong>Context.gpu_state, worker_allocator, jobs, diagnostics_enabled (fields):</strong> Runtime implementation state. GPU access is engine-thread-only; worker_allocator must be thread-safe; development-only diagnostics may be disabled in release builds.</li>
+  <li><strong>Context.allocators (fields):</strong> Run-owned game, asset, and frame allocator scopes; their lifetime rules are described by Allocators.</li>
   <li><strong>Context.mouseWorld (methods):</strong> Maps the current input mouse position through the last presented view layout and current camera to world pixels; call during update.</li>
+  <li><strong>Context.rendererBackend, setRendererBackend, toggleRendererBackend (methods):</strong> Read or request the renderer for the next frame. The reserved SDL2D request resolves to SDL_GPU until that backend is enabled.</li>
+  <li><strong>Context.capabilities (methods):</strong> Returns a snapshot of renderer, texture, presentation, and audio-playback capabilities for this run.</li>
   <li><strong>Context.pollEvent (methods):</strong> Consumes the next translated event for this update, returning null when the queue is empty. Events are returned by value.</li>
+  <li><strong>Context.zoomBy, resetZoom (methods):</strong> Change the bounded zoom target; the camera approaches it during presentation frames.</li>
   <li><strong>Context.loadTexture (methods):</strong> Loads and uploads immediately on the calling thread. The caller owns the returned Texture and must call deinit before run ends; file/decode errors are returned.</li>
+  <li><strong>Context.stageFormats (methods):</strong> Reports compressed texture formats usable by the active renderer, for choosing a staged asset variant.</li>
+  <li><strong>Context.registerTexture, acquireTexture, requestTexture, textureOf, unloadUnusedTextures, textureStats (methods):</strong> Named texture registry operations: register unique names before first use, acquire counted handles, queue prioritized preloads, resolve live references, unload unreferenced textures, and read counters.</li>
+  <li><strong>Context.loadSound, openStreamed (methods):</strong> Load a short decoded sound or open a streamed sound for long-form audio; loaded Sound is caller-owned and deinitialized, while StreamedSound manages per-voice readers.</li>
+  <li><strong>Context.readFile, writeFile, fileExistsBeside, removeFile (methods):</strong> Access packaged or executable-adjacent files with safe relative paths. Packaged files are read-only; writes/removes target the beside-executable location.</li>
+  <li><strong>Context.saveBindings (methods):</strong> Persists the supplied action map’s bindings to the configured settings file for its compile-time action enum.</li>
+  <li><strong>Context.watchAsset, watchAssetGraph, takeChanged, takeAssetChanged (methods):</strong> Register files or asset graphs for development hot reload and consume change notifications; release builds may not watch assets.</li>
+  <li><strong>Context.waitGpuIdle (methods):</strong> Waits for the GPU to finish submitted work; use only when synchronization is required, not as a normal frame operation.</li>
+  <li><strong>Context.loadFont, loadMsdfFont, loadOutlineFont, loadBitmapFont, unloadFont (methods):</strong> Load a baked, MSDF, TrueType outline, or bitmap font into the run-owned store and release it by handle when no longer needed. Pixel size is fixed at load time.</li>
+  <li><strong>Context.loadAtlas (methods):</strong> Loads an image and index, checks that their dimensions match, and returns a caller-owned LoadedAtlas.</li>
   <li><strong>Context.acquireTexture, retainTexture, releaseTexture (handles):</strong> Named textures use counted handles: balance each successful acquire or retain with one release. releaseTexture clears the passed handle; resolution after unload/release reports a handle error.</li>
   <li><strong>Context.readFile (allocators):</strong> Reads a packaged file using the caller-supplied allocator; the caller owns the returned bytes and frees them with that allocator.</li>
+  <li><strong>Context.relative, name, path, priority, allocator, bytes (parameters):</strong> Asset paths are safe relative paths; names follow registry rules. readFile allocator is caller-supplied; file bytes and staged pixels are borrowed only for the duration stated by each method.</li>
+  <li><strong>Context.factor, renderer, priority, kind (parameters):</strong> Zoom factors above 1 zoom in; renderer and preload priority select a supported mode; hot-reload kind identifies how the watched file is interpreted.</li>
+  <li><strong>Context.pixel_height (parameters):</strong> Font pixel size must be positive and is fixed into the loaded face or baked resource; bitmap fonts take their size from the descriptor.</li>
+  <li><strong>Context.mouseWorld, capabilities, textureStats, stageFormats (returns):</strong> Return value snapshots in world pixels or capability/statistics structs; they do not transfer ownership.</li>
+  <li><strong>Context.pollEvent, takeChanged, takeAssetChanged, fileExistsBeside (returns):</strong> Return optional event/change state or file-existence status; polling/consuming change methods remove the returned item from their queue.</li>
+  <li><strong>Context.acquireTexture (returns):</strong> Returns one counted TextureHandle reference; release it once with releaseTexture.</li>
+  <li><strong>Context.textureOf (returns):</strong> Returns a borrowed pointer to the texture while the handle remains live; do not retain it across release or unload.</li>
+  <li><strong>Context.loadTexture, loadSound, loadAtlas, loadFont, loadMsdfFont, loadOutlineFont, loadBitmapFont (returns):</strong> Successful calls return caller-owned resources or a font registry id; deinitialize owned resources and unload font ids with their matching API.</li>
+  <li><strong>Context.openStreamed (returns):</strong> Returns a streamed-sound descriptor for playback; no explicit resource deinit is required because each voice opens and closes its reader.</li>
+  <li><strong>Context.registerTexture, requestTexture, retainTexture, releaseTexture, writeFile, removeFile, saveBindings, unloadFont (returns):</strong> Successful commands return void; unloadUnusedTextures instead returns the number of GPU textures reclaimed.</li>
+  <li><strong>Context.AssetError and file/audio errors (errors):</strong> Missing files, unsafe/overlong paths, decode/format failures, invalid atlas data/dimensions, I/O errors, and allocation failures are returned; callers may retry transient I/O failures or report invalid content.</li>
+  <li><strong>Context.loadFont variants and unloadFont (errors):</strong> Font loaders return FontLoadFailed for unsupported or malformed font data, OutOfMemory for allocation failure, and PathTooLong/FileNotFound/ReadFailed for file access; unloadFont reports stale or invalid handles.</li>
+  <li><strong>Context.allocators.asset, allocators.game, allocators.frame, worker_allocator (allocators):</strong> Context allocator scopes are borrowed for their documented lifetimes. worker_allocator is thread-safe and used for worker-side decode; caller-owned readFile bytes must be freed by the allocator passed to that call.</li>
+  <li><strong>Context.TextureHandle, FontHandle (handles):</strong> TextureHandle is counted and must be released once per acquisition; FontHandle is a non-owning registry id invalidated permanently by unloadFont. Never use either after its release/removal.</li>
+  <li><strong>Context.max_full_path, max_registered_textures (capacities):</strong> Relative file paths are bounded by max_full_path bytes; the named texture registry holds at most max_registered_textures entries.</li>
   <li><strong>Context.uploadStaged (methods):</strong> Uploads staged pixels to the GPU on the engine thread. Staged CPU data may be freed as soon as the call returns.</li>
-  <li><strong>Context.max_registered_textures (capacities):</strong> At most max_registered_textures distinct names may be registered; registerTexture returns an error when the limit is reached.</li>
 </ul>
 
 <h2 id="bairavaasseterror"><code class="language-plaintext highlighter-rouge">bairava.AssetError</code></h2>
@@ -118,11 +160,22 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Capabilities reported by the selected renderer backend.</p>
 
+<ul>
+  <li><strong>Capabilities.audio_playback (fields):</strong> False when playback-device initialization failed; the game continues without audio playback.</li>
+  <li><strong>Capabilities.shader_formats (fields):</strong> Shader formats both embedded in this executable and accepted by the active GPU.</li>
+  <li><strong>Capabilities.texture_formats (fields):</strong> Sampleable texture formats on the active GPU; RGBA8 is required, while compressed formats are optional.</li>
+  <li><strong>Capabilities.presentation (fields):</strong> Presentation features available for the active window surface.</li>
+</ul>
+
 <h2 id="bairavashaderformats"><code class="language-plaintext highlighter-rouge">bairava.ShaderFormats</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Shader formats available to the selected renderer backend.</p>
+
+<ul>
+  <li><strong>ShaderFormats.spirv, dxil, msl (fields):</strong> True only when the corresponding default shaders are embedded in the executable and the active GPU supports that format.</li>
+</ul>
 
 <h2 id="bairavatextureformats"><code class="language-plaintext highlighter-rouge">bairava.TextureFormats</code></h2>
 
@@ -130,11 +183,20 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Texture formats supported by the selected renderer backend.</p>
 
+<ul>
+  <li><strong>TextureFormats.rgba8 (fields):</strong> Whether RGBA8 textures can be sampled. This is required for uncompressed images and font paths.</li>
+  <li><strong>TextureFormats.bc1, bc3, astc_4x4 (fields):</strong> Whether each compressed format can be sampled; these formats are optional and image loading can fall back to RGBA8.</li>
+</ul>
+
 <h2 id="bairavapresentationcapabilities"><code class="language-plaintext highlighter-rouge">bairava.PresentationCapabilities</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Presentation and surface capabilities exposed by the renderer.</p>
+
+<ul>
+  <li><strong>PresentationCapabilities.immediate (fields):</strong> True when the active window can present without vsync.</li>
+</ul>
 
 <h2 id="bairavaevent"><code class="language-plaintext highlighter-rouge">bairava.Event</code></h2>
 
@@ -142,11 +204,26 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Platform events translated into the engine’s SDL-independent event model.</p>
 
+<ul>
+  <li><strong>Event.quit (fields):</strong> Window-close request; the event pump handles shutdown and Input.apply does not change state.</li>
+  <li><strong>Event.key_down, key_up (fields):</strong> Physical Scancode transitions; key_down.repeat identifies auto-repeat, which input state ignores.</li>
+  <li><strong>Event.mouse_motion (fields):</strong> Cursor coordinates x/y in window points.</li>
+  <li><strong>Event.mouse_button_down, mouse_button_up (fields):</strong> Transitions for the supported MouseButton enum values.</li>
+  <li><strong>Event.gamepad_added, gamepad_removed (fields):</strong> Connection lifecycle for a generation-checked GamepadId; an added id is valid until its matching removal.</li>
+  <li><strong>Event.gamepad_button_down, gamepad_button_up (fields):</strong> Button transitions identified by gamepad id and standard GamepadButton.</li>
+  <li><strong>Event.gamepad_axis (fields):</strong> Raw axis position identified by gamepad id and GamepadAxis; stick range is -1..1 and trigger range is 0..1, before dead-zone processing.</li>
+  <li><strong>Event.text_input (fields):</strong> UTF-8 bytes copied from the active platform text-input session; bounded by TextInput capacity.</li>
+</ul>
+
 <h2 id="bairavascancode"><code class="language-plaintext highlighter-rouge">bairava.Scancode</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Keyboard scancode used by the platform input model.</p>
+
+<ul>
+  <li><strong>Scancode.all enum values (fields):</strong> Physical keyboard positions, independent of the character produced by the active layout. Includes engine command keys and gameplay keys; only the subset represented by Key can be queried as game input.</li>
+</ul>
 
 <h2 id="bairavagamepadid"><code class="language-plaintext highlighter-rouge">bairava.GamepadId</code></h2>
 
@@ -154,11 +231,26 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Identifier for a connected gamepad.</p>
 
+<ul>
+  <li><strong>GamepadId.slot (fields):</strong> Index in the fixed engine gamepad table, from 0 through max_gamepads - 1.</li>
+  <li><strong>GamepadId.generation (fields):</strong> Increases whenever a slot is assigned to another device, preventing a stale id from matching its replacement.</li>
+  <li><strong>GamepadId.GamepadId (handles):</strong> A value identifier, not an owning resource handle; the platform creates it and generation checks make stale ids inert.</li>
+  <li><strong>GamepadId.slot (capacities):</strong> Valid slot range is 0..max_gamepads - 1; events with an out-of-range slot are ignored.</li>
+</ul>
+
 <h2 id="bairavatextinput"><code class="language-plaintext highlighter-rouge">bairava.TextInput</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Text-input event data delivered to game code.</p>
+
+<ul>
+  <li><strong>TextInput.bytes (fields):</strong> Fixed 32-byte storage containing the event’s UTF-8 bytes in the prefix selected by len; bytes after len are not part of the text.</li>
+  <li><strong>TextInput.len (fields):</strong> Number of valid UTF-8 bytes, in the range 0..32.</li>
+  <li><strong>TextInput.slice (methods):</strong> Returns a borrowed slice of bytes[0..len]; valid only while this TextInput value remains alive.</li>
+  <li><strong>TextInput.slice (returns):</strong> Borrowed UTF-8 bytes backed by this value; the returned slice does not own storage.</li>
+  <li><strong>TextInput.bytes (capacities):</strong> At most 32 bytes fit in one event; longer native text is truncated to the first 32 bytes, which may split a multibyte code point.</li>
+</ul>
 
 <h2 id="bairavadrawcontext"><code class="language-plaintext highlighter-rouge">bairava.DrawContext</code></h2>
 
@@ -174,6 +266,9 @@ The current public API is experimental and not production-ready.</p>
   <li><strong>DrawContext.view_w, view_h (fields):</strong> Current view dimensions in pixels; coordinate-space inputs to drawing are in this view.</li>
   <li><strong>DrawContext.alpha (fields):</strong> Interpolation factor from previous update (0) to latest update (1), intended for render-only interpolation.</li>
   <li><strong>DrawContext.dt (fields):</strong> Elapsed seconds since the previous presented frame, capped by the frame loop; use for frame-rate-independent presentation smoothing.</li>
+  <li><strong>DrawContext.debug (handles):</strong> Borrowed debug-shape queue valid only for this draw; submit view-pixel shapes only when the corresponding show switch is enabled.</li>
+  <li><strong>DrawContext.show (fields):</strong> Debug geometry visibility switches controlled by development commands and F4.</li>
+  <li><strong>DrawContext.layers (fields):</strong> Game-owned tile-layer visibility flags that development commands may change.</li>
 </ul>
 
 <h2 id="bairavaallocators"><code class="language-plaintext highlighter-rouge">bairava.Allocators</code></h2>
@@ -181,6 +276,13 @@ The current public API is experimental and not production-ready.</p>
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Allocator set available to game code through the engine context.</p>
+
+<ul>
+  <li><strong>Allocators.game (fields):</strong> Persistent game-instance allocator; game-owned allocations must be released or allowed to expire with that instance.</li>
+  <li><strong>Allocators.asset (fields):</strong> Allocator for loaded asset data whose lifetime is the current run.</li>
+  <li><strong>Allocators.frame (fields):</strong> Temporary allocator whose allocations are valid only until the next outer frame begins.</li>
+  <li><strong>Allocators.game, asset, frame (allocators):</strong> Borrowed allocator interfaces owned by the active engine run; do not retain them beyond their documented scope or deinitialize them.</li>
+</ul>
 
 <h2 id="bairavarun"><code class="language-plaintext highlighter-rouge">bairava.run</code></h2>
 
@@ -210,11 +312,21 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Policy for fitting the logical view into the native window.</p>
 
+<ul>
+  <li><strong>ScaleMode.fit (fields):</strong> Stretches the logical view to fill the window; pixel dimensions need not scale uniformly.</li>
+  <li><strong>ScaleMode.integer (fields):</strong> Uses a centered whole-number scale when the window can fit at least one logical view; otherwise falls back to fit.</li>
+</ul>
+
 <h2 id="bairavarenderer"><code class="language-plaintext highlighter-rouge">bairava.Renderer</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Renderer backend selection in application configuration.</p>
+
+<ul>
+  <li><strong>Renderer.sdl_gpu (fields):</strong> Selects the supported SDL_GPU renderer.</li>
+  <li><strong>Renderer.sdl2d (fields):</strong> Reserved renderer request; until the alternate backend is complete, it resolves to SDL_GPU.</li>
+</ul>
 
 <h2 id="bairavaeffect"><code class="language-plaintext highlighter-rouge">bairava.Effect</code></h2>
 
@@ -222,11 +334,24 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Post-processing effect that can be enabled in application configuration.</p>
 
+<ul>
+  <li><strong>Effect.grayscale (fields):</strong> Desaturates the completed world image by the grayscale strength in PostParams.</li>
+  <li><strong>Effect.vignette (fields):</strong> Darkens image corners according to the vignette strength in PostParams.</li>
+  <li><strong>Effect.scanlines (fields):</strong> Applies scanline dimming according to the scanline_dim strength in PostParams.</li>
+</ul>
+
 <h2 id="bairavapostparams"><code class="language-plaintext highlighter-rouge">bairava.PostParams</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Strength parameters consumed by the post-processing effects.</p>
+
+<ul>
+  <li><strong>PostParams.vignette (fields):</strong> Expected strength from 0 to 1; zero disables corner darkening.</li>
+  <li><strong>PostParams.scanline_dim (fields):</strong> Expected strength from 0 to 1 controlling brightness of dimmed scanline rows.</li>
+  <li><strong>PostParams.grayscale (fields):</strong> Expected strength from 0 to 1; zero preserves color and one produces full grayscale.</li>
+  <li><strong>PostParams.padding (fields):</strong> Reserved layout padding; not used as an effect strength and normally left at zero.</li>
+</ul>
 
 <h2 id="bairavadefault_post_params"><code class="language-plaintext highlighter-rouge">bairava.default_post_params</code></h2>
 
@@ -240,11 +365,45 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Priority used when requesting texture preloading.</p>
 
+<ul>
+  <li><strong>TexturePriority.low (fields):</strong> Lowest request priority; serviced after normal and high priority work.</li>
+  <li><strong>TexturePriority.normal (fields):</strong> Default middle priority for requested texture preloads.</li>
+  <li><strong>TexturePriority.high (fields):</strong> Highest request priority among pending preload requests.</li>
+</ul>
+
 <h2 id="bairavainput"><code class="language-plaintext highlighter-rouge">bairava.Input</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Current keyboard, mouse, and gamepad input state.</p>
+
+<p><strong>Contract:</strong> Query during update. Press/release edges are latched for exactly one fixed update, while held state and mouse coordinates reflect the latest event pump.</p>
+
+<ul>
+  <li><strong>Input.held_keys, pressed, released, pending_pressed, pending_released (fields):</strong> Key state and event-edge arrays indexed by Key enum value. Prefer held/wasPressed/wasReleased; direct mutation can desynchronize pending events.</li>
+  <li><strong>Input.mouse_held, mouse_pressed, mouse_released, pending_mouse_pressed, pending_mouse_released (fields):</strong> Mouse button state and event-edge arrays indexed by MouseButton; held state is live, while edges are latched for one update. Prefer the mouse query methods.</li>
+  <li><strong>Input.mouse_x, mouse_y (fields):</strong> Current cursor position in window points, not view/world pixels. Use Context.mouseWorld for world coordinates.</li>
+  <li><strong>Input.pads, connections (fields):</strong> Gamepad slots and connection ordering used to select the primary device; treat as input implementation state and query through primaryPad.</li>
+  <li><strong>Input.latch (methods):</strong> Transfers queued input edges into the current update snapshot and clears pending edges; the runtime calls it once before each update.</li>
+  <li><strong>Input.held, wasPressed, wasReleased (methods):</strong> Query key state: held is live to the latest event pump; press/release are true only in the update step receiving that edge.</li>
+  <li><strong>Input.mouseDown, mousePressed, mouseReleased (methods):</strong> Query mouse-button held state and one-update press/release edges.</li>
+  <li><strong>Input.primaryPad (methods):</strong> Returns a borrowed pointer to the earliest-connected still-present gamepad slot, or null if none is connected. A later controller does not become primary until the earlier one disconnects.</li>
+  <li><strong>Input.snapshot, restoreSnapshot (methods):</strong> Copy or restore deterministic update-visible input state; restoring clears platform events pending for a later step.</li>
+  <li><strong>Input.heldCount, pressedCount, heldMask, addHeldNames (methods):</strong> Diagnostics helpers that count held/pressed keys, pack held keys by enum ordinal, or append held key names to a caller-provided list.</li>
+  <li><strong>Input.setHeld, sampleHeld (methods):</strong> Platform sampling helpers. sampleHeld queries every supported key once; game code normally reads state rather than setting it.</li>
+  <li><strong>Input.apply (methods):</strong> Consumes one platform-neutral Event; key auto-repeat and quit do not create input state changes.</li>
+  <li><strong>Input.keyDown, keyUp, moveMouse, mouseButton, gamepadAdded, gamepadRemoved, gamepadButton, gamepadAxis (methods):</strong> Record translated platform events into held state and pending edges. The runtime/platform normally calls these; applying an unknown or stale gamepad ID has no effect.</li>
+  <li><strong>Input.primaryPad (returns):</strong> The pointer is borrowed from Input and is invalidated by mutation/replacement of its pad slot; do not retain across input updates.</li>
+  <li><strong>Input.snapshot (returns):</strong> Returns a by-value copy of update-visible input, suitable for deterministic save/restore; pending platform edges are not included.</li>
+  <li><strong>Input.held, wasPressed, wasReleased, mouseDown, mousePressed, mouseReleased (returns):</strong> Return true only when the corresponding key/button condition is met; edge results are scoped to one latched update.</li>
+  <li><strong>Input.heldCount, pressedCount, heldMask (returns):</strong> Return key counts or a u64 key-ordinal bit mask; the mask has one bit for each supported Key.</li>
+  <li><strong>Input.sampleHeld.isHeld (callbacks):</strong> Called synchronously once per Key while sampleHeld runs; it must return whether that key’s Scancode is down and must not retain engine-owned state.</li>
+  <li><strong>Input.primaryPad (handles):</strong> The returned slot pointer is borrowed from the Input value; it is not owned and must not be freed. Re-query after input mutation.</li>
+  <li><strong>Input.sampleHeld.isHeld (parameters):</strong> A compile-time function taking Scancode and returning bool; it supplies physical held state for each supported Key.</li>
+  <li><strong>Input.moveMouse.x, moveMouse.y (parameters):</strong> Cursor coordinates in window points, as delivered by the platform; they are not converted to view or world coordinates.</li>
+  <li><strong>Input.gamepadAxis.value (parameters):</strong> Normalized platform axis value; stick axes are signed and trigger axes are non-negative.</li>
+  <li><strong>Input.pads (capacities):</strong> Tracks up to max_gamepads (8) devices; added devices beyond the available slots are ignored.</li>
+</ul>
 
 <h2 id="bairavakey"><code class="language-plaintext highlighter-rouge">bairava.Key</code></h2>
 
@@ -252,11 +411,21 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Keyboard key values used by input bindings.</p>
 
+<ul>
+  <li><strong>Key.all enum values (fields):</strong> Supported keyboard key identities (escape, arrows, WASD, and the listed control keys). They represent physical scancodes, not layout-dependent characters; F3 and F11 are engine commands rather than Key values.</li>
+</ul>
+
 <h2 id="bairavabinding"><code class="language-plaintext highlighter-rouge">bairava.Binding</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Physical control that can be assigned to a game action.</p>
+
+<ul>
+  <li><strong>Binding.key, mouse, gamepad_button (fields):</strong> Bind one keyboard Key, MouseButton, or standard GamepadButton. Gamepad bindings read the primary connected pad.</li>
+  <li><strong>Binding.gamepad_axis (fields):</strong> Binds one axis and direction half. Stick directions have negative and positive halves; triggers only have a positive half.</li>
+  <li><strong>Binding.gamepad_axis.axis, direction (parameters):</strong> Axis selects the stick/trigger; direction selects which half is active. Axis strength is normalized past a dead zone.</li>
+</ul>
 
 <h2 id="bairavaactionmap"><code class="language-plaintext highlighter-rouge">bairava.ActionMap</code></h2>
 
@@ -264,17 +433,50 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Maps game-defined actions to configurable physical input bindings.</p>
 
+<ul>
+  <li><strong>ActionMap.Action (parameters):</strong> The compile-time type argument must be an enum owned by the game; each enum tag has an independent binding list.</li>
+  <li><strong>ActionMap.fromDefaults (methods):</strong> Copies each action’s default binding slice into fixed per-action storage. More than max_bindings_per_action defaults is a programmer error and panics.</li>
+  <li><strong>ActionMap.set (methods):</strong> Replaces one action’s bindings by copying the supplied slice; caller must keep its length at or below max_bindings_per_action.</li>
+  <li><strong>ActionMap.bindingsOf (methods):</strong> Returns a borrowed slice in binding order; valid while the map storage remains alive and unchanged.</li>
+  <li><strong>ActionMap.held, pressed, released, value (methods):</strong> Evaluate the bound action against one Input state. Any held binding makes held true; value is the strongest binding from 0 to 1; edges last one update.</li>
+  <li><strong>ActionMap.addHeldNames (methods):</strong> Append the enum names of all currently held actions to a caller-provided list, in action enum order.</li>
+  <li><strong>ActionMap.bindings, counts (fields):</strong> Fixed-capacity copied binding storage and per-action lengths. Prefer the public methods instead of mutating these arrays directly.</li>
+  <li><strong>ActionMap.fromDefaults, set (capacities):</strong> Each action accepts at most max_bindings_per_action (4) bindings. fromDefaults panics if exceeded; set requires the caller to uphold the limit.</li>
+  <li><strong>ActionMap.bindingsOf (returns):</strong> Returns a borrowed slice into this map; do not retain it after map deinitialization or concurrent mutation.</li>
+  <li><strong>ActionMap.fromDefaults (errors):</strong> Panics when any default binding slice exceeds max_bindings_per_action; validate caller-supplied defaults before construction.</li>
+  <li><strong>ActionMap.set.list, held/pressed/released/value.state (parameters):</strong> The binding list must fit the fixed per-action capacity. Query state is borrowed for the call and should be the Input snapshot for the current update.</li>
+  <li><strong>ActionMap.held, pressed, released, value (returns):</strong> Return action state as bool or an analog strength in the inclusive range 0..1; a missing primary gamepad makes gamepad bindings inactive.</li>
+</ul>
+
 <h2 id="bairavaactionbuffer"><code class="language-plaintext highlighter-rouge">bairava.ActionBuffer</code></h2>
 
 <p><strong>Kind:</strong> type factory<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Simulation-owned press windows for selected input actions.</p>
 
+<ul>
+  <li><strong>ActionBuffer.Action (parameters):</strong> The compile-time type argument must be the same game-owned action enum used by ActionMap.</li>
+  <li><strong>ActionBuffer.setWindow (methods):</strong> Sets the action’s buffer duration in seconds; negative and non-finite values disable buffering.</li>
+  <li><strong>ActionBuffer.begin (methods):</strong> Advance once per fixed update after input is latched. dt is fixed-step seconds; new presses arm/refresh the window and other active windows age by one update.</li>
+  <li><strong>ActionBuffer.pending, consume (methods):</strong> pending observes an unexpired press; consume returns and clears it so one buffered press cannot trigger twice.</li>
+  <li><strong>ActionBuffer.windows, remaining (fields):</strong> Per-action durations and remaining fixed-update ticks. Treat these as implementation state; use setWindow and query methods.</li>
+  <li><strong>ActionBuffer.begin.dt (parameters):</strong> The fixed simulation step in seconds. Invalid or non-positive dt produces no buffered ticks.</li>
+  <li><strong>ActionBuffer.consume (returns):</strong> Returns whether the selected action had an unexpired press, then clears it; false means there is no pending press.</li>
+</ul>
+
 <h2 id="bairavaactiondefaults"><code class="language-plaintext highlighter-rouge">bairava.ActionDefaults</code></h2>
 
 <p><strong>Kind:</strong> type factory<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Default binding table for a game’s action enum.</p>
+
+<ul>
+  <li><strong>ActionDefaults.Action (parameters):</strong> The compile-time type argument must be the game-owned action enum used to create its ActionMap.</li>
+  <li><strong>ActionDefaults.each action entry (fields):</strong> An enum-indexed slice of default Binding values. The slices are borrowed when passed to ActionMap.fromDefaults, which copies their contents.</li>
+  <li><strong>ActionDefaults.init (methods):</strong> Constructs the enum-indexed table from a struct literal whose fields match the Action enum tags.</li>
+  <li><strong>ActionDefaults.init (returns):</strong> Returns an EnumArray value containing the supplied per-action binding slices; the array does not own the referenced slices.</li>
+  <li><strong>ActionDefaults.each action entry (capacities):</strong> Each supplied slice must contain no more than max_bindings_per_action (4) bindings if it will be used to construct an ActionMap.</li>
+</ul>
 
 <h2 id="bairavabindings"><code class="language-plaintext highlighter-rouge">bairava.bindings</code></h2>
 
@@ -288,17 +490,30 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Mouse button values used by input bindings.</p>
 
+<ul>
+  <li><strong>MouseButton.left, right, middle (fields):</strong> The three mouse buttons tracked by the engine; other native mouse buttons are not represented.</li>
+</ul>
+
 <h2 id="bairavagamepadbutton"><code class="language-plaintext highlighter-rouge">bairava.GamepadButton</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Standard gamepad button values used by input bindings.</p>
 
+<ul>
+  <li><strong>GamepadButton.all enum values (fields):</strong> Standard face, menu, stick, shoulder, and D-pad controls. Non-standard extras such as paddles or touchpads are not reported.</li>
+</ul>
+
 <h2 id="bairavagamepadaxis"><code class="language-plaintext highlighter-rouge">bairava.GamepadAxis</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Gamepad axis values used by input bindings.</p>
+
+<ul>
+  <li><strong>GamepadAxis.left_x, left_y, right_x, right_y (fields):</strong> The two signed axes of each stick; raw stick travel is normalized to -1..1 and split into direction halves for actions.</li>
+  <li><strong>GamepadAxis.left_trigger, right_trigger (fields):</strong> Unsigned trigger axes normalized to 0..1; only the positive binding direction is meaningful.</li>
+</ul>
 
 <h2 id="bairavacamera"><code class="language-plaintext highlighter-rouge">bairava.camera</code></h2>
 
@@ -312,11 +527,56 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> 2D camera state and world-to-screen coordinate conversion.</p>
 
+<p><strong>Contract:</strong> Keep the camera in world-pixel coordinates. Follow methods clamp the view to the world; view dimensions must be positive and world/view dimensions should be updated consistently when zoom or the viewport changes.</p>
+
+<ul>
+  <li><strong>Camera.x, y (fields):</strong> Unrounded world-pixel coordinates of the visible view’s top-left. Conversion methods round sprite positions once after subtracting these values.</li>
+  <li><strong>Camera.view_w, view_h (fields):</strong> Visible view dimensions in world pixels, after zoom; must be positive for follow operations.</li>
+  <li><strong>Camera.world_w, world_h (fields):</strong> World bounds in pixels used to clamp the camera so the view stays inside the world.</li>
+  <li><strong>Camera.placed (fields):</strong> False before the first successful follow; the first placement snaps instead of easing or applying a prior dead-zone.</li>
+  <li><strong>Camera.zoom (fields):</strong> Positive multiplicative zoom; 1 is normal, above 1 shows less world, and below 1 shows more. The engine derives visible view dimensions from it.</li>
+  <li><strong>Camera.viewRect (methods):</strong> Returns the current world-space visible rectangle without modifying camera state.</li>
+  <li><strong>Camera.follow, followWith (methods):</strong> Centers on a world-pixel target and clamps to world bounds; followWith also applies dead-zone, look-ahead, and keep-inside constraints.</li>
+  <li><strong>Camera.followSmooth, followSmoothWith (methods):</strong> Eases toward the constrained target using a frame-rate-independent exponential rate. The first call snaps; rate &lt;= 0 snaps thereafter.</li>
+  <li><strong>Camera.approachZoom (methods):</strong> Eases toward a positive zoom target geometrically; invalid target falls back to 1, and non-positive rate snaps.</li>
+  <li><strong>Camera.zoomTarget (methods):</strong> Multiplies current zoom by factor and clamps the result to caller-provided lo..hi bounds; caller must supply valid positive bounds.</li>
+  <li><strong>Camera.screenX, screenY (methods):</strong> Convert one world coordinate to whole view pixels by subtracting the camera origin and rounding once.</li>
+  <li><strong>Camera.offset, scrolled (methods):</strong> Return draw-only camera copies; offset adds a finite pixel displacement, while scrolled applies independent parallax factors and pixel offsets. The original camera is unchanged.</li>
+  <li><strong>Camera.Constraint.lead_x, lead_y (fields):</strong> World-pixel look-ahead applied after dead-zone tracking and capped to half the view.</li>
+  <li><strong>Camera.Constraint.dead_x, dead_y (fields):</strong> Dead-zone half-extents as fractions of view size, clamped to 0..0.5.</li>
+  <li><strong>Camera.Constraint.limit_x, limit_y (fields):</strong> Hard keep-inside half-extents as fractions of view size, clamped to 0..0.5.</li>
+  <li><strong>Camera.Scroll.factor_x, factor_y (fields):</strong> Independent parallax factors applied to camera origin; 1 follows the camera fully and 0 keeps the layer fixed.</li>
+  <li><strong>Camera.Scroll.offset_x, offset_y (fields):</strong> World-pixel offsets added after each parallax factor.</li>
+  <li><strong>Camera.followWith.constraint, followSmoothWith.constraint (parameters):</strong> Constraint values use world pixels for lead and fractions of visible view size for dead-zone and hard-limit extents.</li>
+  <li><strong>Camera.followSmooth.dt, rate (parameters):</strong> dt is elapsed seconds and should be nonnegative; rate is exponential response per second. A zero or negative rate snaps.</li>
+  <li><strong>Camera.approachZoom.target, dt, rate (parameters):</strong> Target zoom must be positive; dt and rate are seconds and response-per-second respectively. A zero or negative rate snaps.</li>
+  <li><strong>Camera.zoomTarget.current, factor, lo, hi (parameters):</strong> factor above 1 zooms in and below 1 zooms out; lo and hi are the inclusive zoom bounds and must be ordered and positive.</li>
+  <li><strong>Camera.offset.dx, dy (parameters):</strong> Draw-space camera displacement in world pixels; non-finite offsets are ignored.</li>
+  <li><strong>Camera.scrolled.scroll (parameters):</strong> Parallax factors and offsets are independently applied to the camera’s x and y origins.</li>
+  <li><strong>Camera.viewRect, offset, scrolled (returns):</strong> Return a value copy; no camera-owned resource or borrowed reference is returned.</li>
+  <li><strong>Camera.screenX, screenY (returns):</strong> Return a rounded view-pixel coordinate; no world-to-window scaling is applied here.</li>
+</ul>
+
 <h2 id="bairavashake"><code class="language-plaintext highlighter-rouge">bairava.Shake</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Deterministic game-owned draw-time camera shake.</p>
+
+<ul>
+  <li><strong>Shake.trauma (fields):</strong> Shake severity in 0..1; add clamps valid additions to this range, and sample uses its square as amplitude.</li>
+  <li><strong>Shake.max_offset (fields):</strong> Maximum displacement amplitude in view pixels at full trauma.</li>
+  <li><strong>Shake.frequency (fields):</strong> Noise phase units advanced per second by update.</li>
+  <li><strong>Shake.decay (fields):</strong> Trauma removed per second by update; set to zero to prevent decay.</li>
+  <li><strong>Shake.seed (fields):</strong> Deterministic noise seed; equal seeds and phase sequences produce equal samples.</li>
+  <li><strong>Shake.phase (fields):</strong> Noise phase accumulated during update; game-owned if it needs synchronized/reproducible shake.</li>
+  <li><strong>Shake.add (methods):</strong> Adds nonnegative finite trauma, clamped at 1; negative or non-finite amounts are ignored.</li>
+  <li><strong>Shake.update (methods):</strong> Advance once per draw with elapsed seconds; invalid or negative dt leaves state unchanged.</li>
+  <li><strong>Shake.sample (methods):</strong> Produces deterministic, smoothly interpolated x/y offsets scaled by squared trauma; call without mutating state.</li>
+  <li><strong>Shake.add.amount (parameters):</strong> Nonnegative finite trauma increment; values above 1 saturate final trauma at 1.</li>
+  <li><strong>Shake.update.dt (parameters):</strong> Elapsed draw-frame seconds; finite nonnegative values advance phase and decay.</li>
+  <li><strong>Shake.sample (returns):</strong> Returns a two-component displacement in view pixels; zero trauma or invalid amplitude returns {0, 0}.</li>
+</ul>
 
 <h2 id="bairavahit_flash"><code class="language-plaintext highlighter-rouge">bairava.hit_flash</code></h2>
 
@@ -330,11 +590,27 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Timer and state for a sprite hit-flash overlay.</p>
 
+<ul>
+  <li><strong>HitFlash.color (fields):</strong> RGB overlay tint, each channel normally in 0..1.</li>
+  <li><strong>HitFlash.duration (fields):</strong> Flash duration in seconds; non-positive or non-finite duration disables trigger.</li>
+  <li><strong>HitFlash.remaining (fields):</strong> Seconds left in the current flash, advanced by update; zero means inactive.</li>
+  <li><strong>HitFlash.trigger (methods):</strong> Starts or restarts remaining time to duration; invalid duration clears the flash.</li>
+  <li><strong>HitFlash.update (methods):</strong> Subtracts elapsed seconds from remaining, clamped to zero; invalid or negative dt leaves the timer unchanged.</li>
+  <li><strong>HitFlash.amount (methods):</strong> Returns remaining divided by duration, clamped to 0..1; inactive or invalid state returns zero.</li>
+  <li><strong>HitFlash.update.dt (parameters):</strong> Elapsed time in seconds; valid updates require a finite nonnegative value.</li>
+  <li><strong>HitFlash.amount (returns):</strong> Linear remaining flash strength in 0..1, suitable for overlay alpha.</li>
+</ul>
+
 <h2 id="bairavarect"><code class="language-plaintext highlighter-rouge">bairava.Rect</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Floating-point rectangle used by sprite rendering APIs.</p>
+
+<ul>
+  <li><strong>Rect.x, y (fields):</strong> Top-left coordinate: destination rectangles use pixels, while source rectangles use texture texels.</li>
+  <li><strong>Rect.w, h (fields):</strong> Rectangle width and height in the same coordinate unit as x and y; rendering requires positive dimensions.</li>
+</ul>
 
 <h2 id="bairavaspritebatch"><code class="language-plaintext highlighter-rouge">bairava.SpriteBatch</code></h2>
 
@@ -345,13 +621,34 @@ The current public API is experimental and not production-ready.</p>
 <p><strong>Contract:</strong> Use only from the draw callback. Submission order and z values control layering; the renderer owns upload and flush. The batch is not an independently initialized or drawable backend object.</p>
 
 <ul>
+  <li><strong>SpriteBatch.allocator (allocators):</strong> Allocator supplied by the engine for dynamically growing per-frame quad, vertex, and batch arrays; the batch owns those allocations.</li>
+  <li><strong>SpriteBatch.quads, sprite_count (fields):</strong> Queued sprite records and the number currently used; drawSprite appends and begin resets the count.</li>
+  <li><strong>SpriteBatch.vertices, vertex_count, batches, batch_count (fields):</strong> Prepared CPU vertex and texture-run arrays, rebuilt by prepare from queued sprites. Their pointers may move when capacity grows.</li>
+  <li><strong>SpriteBatch.draw_calls (fields):</strong> Number of texture runs actually submitted by the most recent renderer draw.</li>
+  <li><strong>SpriteBatch.projection (fields):</strong> Pixel-to-clip transform set by begin for the current viewport.</li>
+  <li><strong>SpriteBatch.lighting, light_count, shadow_segment_count, has_lit_runs (fields):</strong> Per-frame light uniforms and counts, reset by begin; has_lit_runs is set during prepare when a sprite uses a normal map.</li>
+  <li><strong>SpriteBatch.allocator, gpu_state, flat_normal, white (handles):</strong> Batch-owned allocator/backend state and helper textures; do not retain, replace, or release these pointers independently.</li>
   <li><strong>SpriteBatch.begin (methods):</strong> Starts the frame and clears queued sprites, lights, shadows, and counters. The runtime calls it before game draw.</li>
+  <li><strong>SpriteBatch.setAmbient (methods):</strong> Sets RGB ambient brightness for lit sprites; begin restores full ambient light each frame.</li>
   <li><strong>SpriteBatch.addLight (methods):</strong> Adds one view-space point light; returns false without modifying the batch when max_lights is reached.</li>
   <li><strong>SpriteBatch.addShadowSegment (methods):</strong> Adds one view-space occluder; returns false without modifying the batch when max_shadow_segments is reached.</li>
   <li><strong>SpriteBatch.addPointLightComponents, addShadowSegmentComponents (methods):</strong> Adds enabled values in input order and stops at capacity; the returned count is the number accepted.</li>
+  <li><strong>SpriteBatch.addPointLightWorld, addShadowSegmentWorld (methods):</strong> Collects enabled components from ECS rows in iteration order, supporting AoS or SoA row storage, and stops when the relevant per-frame capacity is full.</li>
+  <li><strong>SpriteBatch.drawSprite (methods):</strong> Queues one sprite using texel-space src and pixel-space dst; prepare sorts by z, depth_y, and insertion order, then renderer submission samples the referenced texture.</li>
+  <li><strong>SpriteBatch.prepare (methods):</strong> Sorts queued sprites and builds vertices and adjacent texture runs; may be called repeatedly and rebuilds the same frame result.</li>
   <li><strong>SpriteBatch.deinit (methods):</strong> Releases backend and batch-owned GPU/CPU resources. The engine normally owns this lifecycle; game code should not deinitialize DrawContext.batch.</li>
   <li><strong>SpriteBatch.max_lights, max_shadow_segments (capacities):</strong> Fixed per-frame light and shadow capacities. Add methods report overflow through false or a partial accepted count.</li>
-  <li><strong>SpriteBatch.gpu_state, flat_normal, white (handles):</strong> Backend and helper textures are batch-owned; do not retain or release their pointers independently.</li>
+  <li><strong>SpriteBatch.quads, vertices, batches (capacities):</strong> Sprite, vertex, and texture-run storage grows as needed; there is no per-frame sprite or texture-switch limit, but storage growth uses the batch allocator.</li>
+  <li><strong>SpriteBatch.begin.viewport_w, viewport_h (parameters):</strong> Viewport width and height in pixels with origin at the top-left; used to build the pixel projection.</li>
+  <li><strong>SpriteBatch.setAmbient.rgb (parameters):</strong> Ambient RGB brightness, conventionally channel values from 0 to 1.</li>
+  <li><strong>SpriteBatch.addLight.light, addShadowSegment.segment (parameters):</strong> Light and segment positions/radii are expressed in view pixels, not world coordinates.</li>
+  <li><strong>SpriteBatch.component and world collection methods (parameters):</strong> Slices are borrowed during the call. ECS world rows must expose count(), rows.get(index), and the requested component field or component type.</li>
+  <li><strong>SpriteBatch.drawSprite.texture_ref (parameters):</strong> Borrowed texture pointer retained by the queued sprite; the texture must remain alive through renderer submission.</li>
+  <li><strong>SpriteBatch.drawSprite.src, dst, opts (parameters):</strong> src is a texel rectangle, dst is a viewport-pixel rectangle, and Options controls tint, alpha, flips, pivot, rotation, and sort order.</li>
+  <li><strong>SpriteBatch.addLight, addShadowSegment (returns):</strong> Return true if accepted; false means the corresponding fixed per-frame capacity is full and the batch is unchanged.</li>
+  <li><strong>SpriteBatch.component and world collection methods (returns):</strong> Return the number accepted before capacity was reached; disabled components do not count.</li>
+  <li><strong>SpriteBatch.drawSprite (errors):</strong> Panics for non-finite depth_y, a normal map whose dimensions differ from its sprite texture, or a request to light a coverage/MSDF font texture.</li>
+  <li><strong>SpriteBatch.deinit (errors):</strong> Must be called at most once and only while the owning renderer/device is alive; it invalidates the batch value.</li>
 </ul>
 
 <h2 id="bairavalight"><code class="language-plaintext highlighter-rouge">bairava.Light</code></h2>
@@ -359,6 +656,14 @@ The current public API is experimental and not production-ready.</p>
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Point light submitted to a sprite batch.</p>
+
+<ul>
+  <li><strong>Light.x, y (fields):</strong> Light center in view pixels, not world coordinates; convert world positions through Camera.screenX/screenY.</li>
+  <li><strong>Light.height (fields):</strong> Height above the view plane in pixels; higher lights spread more uniformly across lit sprites.</li>
+  <li><strong>Light.radius (fields):</strong> Light reach in view pixels; contribution fades to zero by this distance.</li>
+  <li><strong>Light.color (fields):</strong> RGB light color with expected channel values from 0 to 1.</li>
+  <li><strong>Light.intensity (fields):</strong> Multiplier on the light color; 1 is full strength.</li>
+</ul>
 
 <h2 id="bairavamax_lights"><code class="language-plaintext highlighter-rouge">bairava.max_lights</code></h2>
 
@@ -372,6 +677,10 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> Line segment that blocks point lights added to a sprite batch.</p>
 
+<ul>
+  <li><strong>ShadowSegment.start, end (fields):</strong> Two endpoints in view pixels; the segment blocks point-light rays crossing it.</li>
+</ul>
+
 <h2 id="bairavamax_shadow_segments"><code class="language-plaintext highlighter-rouge">bairava.max_shadow_segments</code></h2>
 
 <p><strong>Kind:</strong> constant<br />
@@ -384,11 +693,25 @@ The current public API is experimental and not production-ready.</p>
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> ECS-friendly point-light data accumulated by a sprite batch.</p>
 
+<ul>
+  <li><strong>PointLightComponent.x, y, height, radius, color, intensity (fields):</strong> Light properties using Light’s view-pixel coordinate/radius/height contract; field defaults match Light.</li>
+  <li><strong>PointLightComponent.enabled (fields):</strong> When false, component-collection methods skip this value; conversion through light() itself still returns its Light data.</li>
+  <li><strong>PointLightComponent.light (methods):</strong> Copies light properties into a Light value; does not retain the component or submit it.</li>
+  <li><strong>PointLightComponent.light (returns):</strong> Returns a value copy; no allocation or borrowed lifetime.</li>
+</ul>
+
 <h2 id="bairavashadowsegmentcomponent"><code class="language-plaintext highlighter-rouge">bairava.ShadowSegmentComponent</code></h2>
 
 <p><strong>Kind:</strong> type<br />
 <strong>Stability:</strong> experimental<br />
 <strong>Summary:</strong> ECS-friendly shadow-segment data accumulated by a sprite batch.</p>
+
+<ul>
+  <li><strong>ShadowSegmentComponent.start, end (fields):</strong> Segment endpoints in view pixels, copied into a ShadowSegment by segment().</li>
+  <li><strong>ShadowSegmentComponent.enabled (fields):</strong> When false, component-collection methods skip this value; segment() itself still performs the conversion.</li>
+  <li><strong>ShadowSegmentComponent.segment (methods):</strong> Copies endpoints into a ShadowSegment value; does not retain the component or submit it.</li>
+  <li><strong>ShadowSegmentComponent.segment (returns):</strong> Returns a value copy; no allocation or borrowed lifetime.</li>
+</ul>
 
 <h2 id="bairavatexture"><code class="language-plaintext highlighter-rouge">bairava.Texture</code></h2>
 
@@ -400,10 +723,16 @@ The current public API is experimental and not production-ready.</p>
 
 <ul>
   <li><strong>Texture.width, height (fields):</strong> Texture dimensions in texels.</li>
+  <li><strong>Texture.gpu_state (fields):</strong> Opaque backend resource pointer owned by this Texture; do not copy it or mutate it.</li>
+  <li><strong>Texture.sdl2d_state, sdl2d_fallback (fields):</strong> Optional alternate-renderer state and fallback texture managed together with the GPU resource; game code must not replace or release them independently.</li>
+  <li><strong>Texture.has_upload_fence (fields):</strong> Whether asynchronous GPU upload completion must be checked before sampling.</li>
+  <li><strong>Texture.coverage (fields):</strong> True for alpha-only glyph/coverage textures, which use the coverage material and cannot be lit.</li>
+  <li><strong>Texture.msdf, msdf_px_range (fields):</strong> MSDF texture flag and encoded distance-field pixel range used to reconstruct glyph edges.</li>
   <li><strong>Texture.deinit (methods):</strong> Destroys GPU resources and invalidates the Texture value. Call exactly once while its owning engine runtime is alive.</li>
   <li><strong>Texture.isReady (methods):</strong> Reports whether an asynchronous upload has completed; textures without an upload fence are immediately ready.</li>
   <li><strong>Texture.isReady (returns):</strong> Returns true when the texture is safe to sample; it does not wait for an upload to finish.</li>
   <li><strong>Texture.gpu_state (handles):</strong> Opaque backend-owned state. It is not a game-facing handle and must not be copied for independent ownership.</li>
+  <li><strong>Texture.gpu_state, sdl2d_state, sdl2d_fallback (handles):</strong> Backend-specific resource pointers are owned by Texture; only Texture.deinit may release them.</li>
 </ul>
 
 <h2 id="bairavaloadedatlas"><code class="language-plaintext highlighter-rouge">bairava.LoadedAtlas</code></h2>
@@ -430,6 +759,8 @@ The current public API is experimental and not production-ready.</p>
 <ul>
   <li><strong>TextureHandle.acquireTexture, retainTexture, releaseTexture (handles):</strong> Each successful acquire or retain adds one reference; pair every reference with releaseTexture. Releasing clears the passed handle. Lookup can fail with InvalidHandle or StaleHandle.</li>
   <li><strong>TextureHandle.textureOf, retainTexture, releaseTexture (errors):</strong> InvalidHandle means the handle was never issued or was released; StaleHandle means its texture was unloaded. Reacquire by registered name after either error.</li>
+  <li><strong>TextureHandle.id (fields):</strong> Registry asset id naming the texture slot; the invalid sentinel is zero.</li>
+  <li><strong>TextureHandle.generation (fields):</strong> Slot generation captured at acquisition; a mismatch means the slot was reused and the handle is stale. Generation zero is invalid.</li>
 </ul>
 
 <h2 id="bairavahandleerror"><code class="language-plaintext highlighter-rouge">bairava.HandleError</code></h2>
@@ -655,6 +986,10 @@ The current public API is experimental and not production-ready.</p>
   <li><strong>SceneHost.Root.update (callbacks):</strong> Runs only for the active scene; receives a borrowed Context and SceneNavigator. Requests are deferred until the update safe point.</li>
   <li><strong>SceneHost.Root.draw (callbacks):</strong> Draws open scenes bottom-to-top; DrawContext is borrowed for the callback.</li>
   <li><strong>SceneHost.Root.deinit / Root.deinitWithContext (callbacks):</strong> Optional teardown runs once when a scene is popped, replaced, or the host shuts down. Use deinitWithContext when resource release needs Context.</li>
+  <li><strong>SceneHost.Ctx.allocators.game (allocators):</strong> The host uses the run’s game allocator for scene stack and scene-owned storage; that allocator must outlive the host and is supplied by Context.</li>
+  <li><strong>SceneHost.Root.init (errors):</strong> The root scene’s initialization error is returned from host init. Later transition initialization errors are logged, and the currently open stack remains active.</li>
+  <li><strong>SceneHost.push, pop (errors):</strong> A push past max_depth or pop of the root is rejected at the transition safe point; SceneHost logs the error and continues with the existing scene stack.</li>
+  <li><strong>SceneHost.max_depth (capacities):</strong> The host stack holds at most eight open scenes; extra push requests are refused without changing the stack.</li>
 </ul>
 
 <h2 id="bairavascenenavigator"><code class="language-plaintext highlighter-rouge">bairava.SceneNavigator</code></h2>
@@ -669,11 +1004,14 @@ The current public API is experimental and not production-ready.</p>
   <li><strong>SceneNavigator.switchTo (methods):</strong> Requests replacement of the active scene while keeping scenes below it open. The new scene is initialized before the replaced scene is released.</li>
   <li><strong>SceneNavigator.push (methods):</strong> Requests a new scene above the active scene, suspending but continuing to draw the prior scene. Applying beyond max_depth fails and leaves the stack unchanged.</li>
   <li><strong>SceneNavigator.pop (methods):</strong> Requests closing the active scene so the one below resumes. Popping the root is rejected when the request is applied; use switchTo to replace it.</li>
+  <li><strong>SceneNavigator.pending (fields):</strong> Internal deferred transition request; the host applies it after update. Do not read or mutate this field directly.</li>
   <li><strong>SceneNavigator.max_depth (capacities):</strong> The scene stack holds at most eight scenes; an over-capacity push is refused when pending transitions are applied.</li>
   <li><strong>SceneNavigator.SceneNavigator (handles):</strong> Borrowed during the active scene’s update callback; do not retain it after update returns.</li>
+  <li><strong>SceneNavigator.switchTo.T, push.T (parameters):</strong> Compile-time scene type implementing the host’s lifecycle callbacks; the requested scene is constructed and transitioned at the next safe point.</li>
+  <li><strong>SceneNavigator.push, pop, scene init (errors):</strong> Requests return no error immediately. At application, a full stack, root pop, or requested scene init failure is reported by the host logger; the previous stack remains active.</li>
 </ul>
 
-<p>304 of 360 type/member contract areas are marked needs_review. This is a visible coverage report, not a claim that the API is fully documented.</p>
+<p>0 of 360 type/member contract areas are marked needs_review. This is a visible coverage report, not a claim that the API is fully documented.</p>
 
 <h2 id="member-level-contract-checklist">Member-level contract checklist</h2>
 
@@ -697,7 +1035,7 @@ The current public API is experimental and not production-ready.</p>
   <tbody>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Config</code></td>
-      <td>needs_review</td>
+      <td>documented</td>
       <td>documented</td>
       <td>not_applicable</td>
       <td>documented</td>
@@ -709,115 +1047,115 @@ The current public API is experimental and not production-ready.</p>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Context</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Capabilities</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.ShaderFormats</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.TextureFormats</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.PresentationCapabilities</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Event</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Scancode</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.GamepadId</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.TextInput</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.DrawContext</code></td>
-      <td>needs_review</td>
+      <td>documented</td>
       <td>not_applicable</td>
       <td>not_applicable</td>
       <td>not_applicable</td>
@@ -829,295 +1167,295 @@ The current public API is experimental and not production-ready.</p>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Allocators</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.ScaleMode</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Renderer</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Effect</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.PostParams</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.TexturePriority</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Input</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Key</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Binding</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.ActionMap</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.ActionBuffer</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.ActionDefaults</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.MouseButton</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.GamepadButton</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.GamepadAxis</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Camera</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Shake</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.HitFlash</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Rect</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.SpriteBatch</code></td>
-      <td>needs_review</td>
       <td>documented</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
       <td>documented</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
       <td>documented</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Light</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.ShadowSegment</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.PointLightComponent</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.ShadowSegmentComponent</code></td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.Texture</code></td>
-      <td>needs_review</td>
+      <td>documented</td>
       <td>documented</td>
       <td>not_applicable</td>
       <td>documented</td>
@@ -1141,7 +1479,7 @@ The current public API is experimental and not production-ready.</p>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.TextureHandle</code></td>
-      <td>needs_review</td>
+      <td>documented</td>
       <td>not_applicable</td>
       <td>not_applicable</td>
       <td>not_applicable</td>
@@ -1157,19 +1495,19 @@ The current public API is experimental and not production-ready.</p>
       <td>not_applicable</td>
       <td>not_applicable</td>
       <td>not_applicable</td>
-      <td>needs_review</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
       <td>not_applicable</td>
       <td>documented</td>
-      <td>needs_review</td>
+      <td>documented</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">bairava.SceneNavigator</code></td>
-      <td>needs_review</td>
       <td>documented</td>
-      <td>needs_review</td>
+      <td>documented</td>
+      <td>documented</td>
       <td>not_applicable</td>
-      <td>needs_review</td>
+      <td>documented</td>
       <td>not_applicable</td>
       <td>documented</td>
       <td>not_applicable</td>
@@ -1205,7 +1543,7 @@ The current public API is experimental and not production-ready.</p>
 
     </main>
     <footer>
-      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 1841f4df546176626fb303a7ba7f9f402f4d5250. Experimental software; APIs and documentation may change.</p>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source a2ed8949e7fffdfa4a8909d9bf4a0b7262aebd91. Experimental software; APIs and documentation may change.</p>
       <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
     </footer>
     <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
