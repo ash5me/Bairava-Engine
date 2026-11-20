@@ -1,5 +1,7 @@
 **Current implementation status:** The common provider path, bitmap validator/loader, HarfBuzz shaping/layout, runtime atlas submission, and MSDF pipeline are implemented. This update adds CPU-backed text-resource rebuild hooks, retryable atlas dirt through successful frame submission, idle-safe font retirement, a deterministic typography reference workload, and shaping/cache/upload profiling. SDL device-loss recovery and per-copy upload confirmation remain constrained by the current platform API. Display-backed comparison and fresh cross-platform CI remain acceptance gates.
 
+This is the implementation decision and evidence record; [text.md](../text.md) is the concise guide to current behavior.
+
 # Bairava Engine — Text and Font System Migration Plan
 
 

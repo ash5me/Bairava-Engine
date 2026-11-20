@@ -1,6 +1,0 @@
-tamil.ttf @48 px (PoC Tamil font):
-tamil.ttf {'upem': 1000, 'pixel_height': 48.0, 'inked_glyphs': 190, 'texels': 183137, 'with_pack_loss': 210607, 'pages_1024': 1, 'largest_cell': (59, 51)}
-font.ttf @48 px (PoC Latin font, full set upper bound):
-font.ttf {'upem': 2048, 'pixel_height': 48.0, 'inked_glyphs': 4648, 'texels': 4087677, 'with_pack_loss': 4700828, 'pages_1024': 5, 'largest_cell': (73, 48)}
-VT323 (Bairava shipped UI font) @9 px:
-/home/claude/work/bairava/assets/font.ttf {'upem': 1000, 'pixel_height': 9.0, 'inked_glyphs': 579, 'texels': 23480, 'with_pack_loss': 27001, 'pages_1024': 1, 'largest_cell': (6, 12)}

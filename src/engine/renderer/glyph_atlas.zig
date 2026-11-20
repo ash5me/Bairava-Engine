@@ -1,6 +1,5 @@
 //! The runtime glyph atlas: the glyph cache (text/glyph_cache.zig) with its coverage pages on the GPU and, while the 2D
-//! renderer is active, a 2D copy of each page. Phase 3 of the rendering migration plan. Decisions P3-1, P3-2, P3-10, and
-//! P3-11 are recorded in docs/Bairava_Phase0/Bairava-Engine-Rendering-Migration-Plan.phase0-status.md, section 21.
+//! renderer is active, a 2D copy of each page.
 //!
 //! Frame use (wired in the runtime frame loop):
 //!   1. Text draws call `lookup` on the cache. On a miss they rasterize the glyph and call `insert`.

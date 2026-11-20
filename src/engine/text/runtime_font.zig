@@ -10,9 +10,9 @@
 //! `staging.packagedReader()`. `init` takes bytes the caller already holds. Neither path logs or
 //! touches the GPU, so a face can be built on a worker thread.
 //!
-//! Pixel height follows the gray convention recorded in docs/Bairava_Phase0/design-note.md (D2):
-//! em in pixels = pixel_height * upem / (ascent - descent). stb's stbtt_ScaleForPixelHeight and the
-//! HarfBuzz scale both use it, so a runtime face and a gray BFNT at the same size measure the same.
+//! Pixel height follows the gray convention: em in pixels = pixel_height * upem / (ascent - descent).
+//! stb's stbtt_ScaleForPixelHeight and the HarfBuzz scale both use it, so a runtime face and a gray
+//! BFNT at the same size measure the same.
 //!
 //! Only TrueType glyf outlines are accepted. OpenType CFF, CFF2, and TrueType collections return
 //! error.UnsupportedFontFormat. CFF stays prebaked (Phase 0 decision).
@@ -318,7 +318,7 @@ test "rasterizing A produces 11 by 11 coverage with full-strength ink" {
         sum += @as(u64, v);
         if (v > max) max = v;
     }
-    // Pinned to the stb_truetype 1.28 output measured in docs/Bairava_Phase0/baseline/arial/.
+    // Pinned to the expected stb_truetype 1.28 output for the shipped Arial face.
     try testing.expectEqual(@as(u64, 8030), sum);
     try testing.expectEqual(@as(u8, 255), max);
 }

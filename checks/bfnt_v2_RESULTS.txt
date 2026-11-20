@@ -19,7 +19,6 @@ Environment (sandbox)
   -fno-sanitize-recover=undefined.
 - stb_truetype.h: upstream v1.28, fetched from raw.githubusercontent.com/nothings/stb (master).
   SHA-256 428cfe93520f2aed5e413a220b0db5bba5b17e2ebe5a64e4a8efa9eeeb67ec5f, which matches the raw hash that
-  docs/Bairava_Phase0/Bairava-Engine-Rendering-Migration-Plan.phase0-status.md records for commit 9600522.
   The commit itself was not checked against that hash.
 - stb_truetype_impl.c: one line that defines STB_TRUETYPE_IMPLEMENTATION and includes the header. It is a shim,
   not the repository's file, because vendor/ is absent from the upload.

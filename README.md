@@ -138,12 +138,6 @@ For texture formats, the runtime prefers a format supported by the active GPU de
 
 Font assets can be prebaked BFNT coverage, authored bitmap coverage, runtime TrueType coverage, or offline-baked MSDF. BFNT and MSDF use the exact baked `pixel_height`; runtime outline faces fix their size at load. Missing runtime glyphs use `?` from that face, with no fallback chain. The asset builder pins msdfgen 1.13.0 for MSDF generation; it is not linked into the game. See [text and fonts](docs/text.md). Audio rows can produce either copied WAV files or WAV plus IMA ADPCM sidecars.
 
-## Requirements status
-
-The implementation manifest in [requirements.md](requirements.md) is complete. This includes manifest-driven asset builds and generated indexes; BC1/BC3/ASTC variants with RGBA8 fallback; build-time bitmap fonts with kerning and FreeType CFF support; ECS collision components with rotated boxes, layers, and masks; uniform-grid collision queries and movement; string or integer animation events; and normal-map sprites with ECS-accumulated point lights and shadow segments.
-
-Rotated boxes use separating-axis overlap and exact oriented-box point containment. Rotated grid insertion uses conservative AABB bounds, while movement performs exact narrow-phase overlap checks. Broad-phase movement and linear queries share X-first/Y-second resolution; the complete movement response remains axis-based and does not rotate the mover.
-
 ## Project structure
 
 ```text
@@ -169,7 +163,7 @@ src/engine/diagnostics/      Debug overlay, console, plots, and frame diagnostic
 sample/                      Public API scene and benchmark samples
 tools/                       Asset tools built through Zig
 tests/                       Zig and C test suites
-docs/                        Architecture and subsystem documentation
+docs/                        Guides, references, plans, and historical records
 assets/                      Runtime sources, maps, scripts, sprites, and fonts
 ```
 
@@ -177,33 +171,7 @@ The package root is `src/engine/bairava.zig`. Normal game code should depend on 
 
 ## Documentation
 
-Start with the subsystem guides that match your work:
-
-- [Architecture](docs/whole-architecture.jfif)
-- [API compatibility](docs/api-compatibility.md)
-- [Build profiles](docs/build-profiles.md)
-- [Platform capabilities](docs/platform-capabilities.md)
-- [Asset streaming](docs/asset-streaming.md)
-- [Animation](docs/animation.md)
-- [AI](docs/ai.md)
-- [Audio streaming](docs/audio-streaming.md)
-- [Lighting](docs/lighting.md)
-- [Physics and collision queries](docs/physics.md)
-- [Navigation](docs/navigation.md)
-- [Particles](docs/particles.md)
-- [Jobs](docs/jobs.md)
-- [Scripting](docs/scripting.md)
-- [Prefabs](docs/prefabs.md)
-- [Tile maps](docs/tilemap.md)
-- [Text and prebaked fonts](docs/text.md)
-- [Saves and replay](docs/replay.md)
-- [Developer console](docs/developer-console.md)
-- [Logging](docs/logging.md)
-- [Diagnostics](docs/diagnostics.md)
-- [Profiling](docs/profiling.md)
-- [Localization](docs/localization.md)
-- [Dear ImGui migration plan](docs/dearimgui-migration-plan.md)
-- [Release migration status](docs/p3-migration-status.md)
+See the [documentation index](docs/README.md) for current subsystem guides, API references, plans, and audits.
 
 ## Architecture notes
 

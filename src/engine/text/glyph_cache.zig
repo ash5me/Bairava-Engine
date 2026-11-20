@@ -6,8 +6,7 @@
 //! (renderer/glyph_atlas.zig) uploads the regions this file reports as changed. Nothing in this
 //! file touches SDL or the GPU, so every rule below is tested without a window.
 //!
-//! Policy, from docs/Bairava_Phase0/design-note.md section 5 (Q1) and the Phase 3 working
-//! assumptions:
+//! Cache policy:
 //! - Four 1024 by 1024 coverage pages, shelf-packed. Every glyph has one texel of padding on its
 //!   right and bottom edges. Sampling is nearest, so the padding keeps a sampled texel from ever
 //!   reaching the neighbouring glyph.
