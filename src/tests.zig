@@ -247,8 +247,8 @@ test "lights and ambient light are stored for the frame and restored by the next
 
     batch.begin(320, 180);
     batch.setAmbient(.{ 0.2, 0.2, 0.3 });
-    batch.addLight(.{ .x = 40, .y = 30, .radius = 64, .color = .{ 1, 0.5, 0 }, .intensity = 2 });
-    batch.addShadowSegment(.{ .start = .{ 30, 20 }, .end = .{ 50, 20 } });
+    try std.testing.expect(batch.addLight(.{ .x = 40, .y = 30, .radius = 64, .color = .{ 1, 0.5, 0 }, .intensity = 2 }));
+    try std.testing.expect(batch.addShadowSegment(.{ .start = .{ 30, 20 }, .end = .{ 50, 20 } }));
     try std.testing.expectEqual(@as(u32, 1), batch.light_count);
     try std.testing.expectEqual(@as(u32, 1), batch.shadow_segment_count);
     try std.testing.expectEqual(@as(f32, 1), batch.lighting.info[0]);

@@ -4,7 +4,8 @@
 //! Engine code never names a game type. A game plugs in by passing a type with `init`, `update`,
 //! `draw`, and `deinit` to `run`. `init` runs once; then `update` and `draw` repeat until shutdown;
 //! after successful initialization, `deinit` runs once. The game owns resources it loads and must
-//! release them in `deinit` before the engine tears down the GPU and platform. If `init` fails,
+//! release them in `deinit` or `deinitWithContext` before the engine tears down the GPU and platform.
+//! If `init` fails,
 //! `deinit` does not run, so `init` must release what it opened before the failing step. Game `init`
 //! may return a recoverable error: `run` logs it, releases what the engine opened, and returns the
 //! error to its caller, so a failed start never looks like a clean exit. Truly fatal programmer
@@ -19,6 +20,8 @@ pub const default_debug_font_px = @import("application.zig").default_debug_font_
 pub const Renderer = @import("application.zig").Renderer;
 pub const Context = @import("context.zig").Context;
 pub const AssetError = @import("context.zig").AssetError;
+/// Maximum number of distinct names in the texture registry.
+pub const max_registered_textures = @import("context.zig").max_registered_textures;
 pub const Capabilities = @import("../capabilities.zig").Capabilities;
 pub const ShaderFormats = @import("../capabilities.zig").ShaderFormats;
 pub const TextureFormats = @import("../capabilities.zig").TextureFormats;
@@ -77,8 +80,12 @@ pub const Rect = @import("../renderer/sprite.zig").Rect;
 pub const SpriteBatch = @import("../renderer/sprite.zig").SpriteBatch;
 /// A point light for lit sprites, added with `SpriteBatch.addLight` in `draw`. See renderer/sprite.zig.
 pub const Light = @import("../renderer/sprite.zig").Light;
+/// Maximum point lights accepted by a sprite batch in one frame.
+pub const max_lights = @import("../renderer/sprite.zig").max_lights;
 /// A 2D line segment that blocks point lights added to a sprite batch.
 pub const ShadowSegment = @import("../renderer/sprite.zig").ShadowSegment;
+/// Maximum shadow segments accepted by a sprite batch in one frame.
+pub const max_shadow_segments = @import("../renderer/sprite.zig").max_shadow_segments;
 /// ECS-friendly point-light component data accumulated by SpriteBatch.
 pub const PointLightComponent = @import("../renderer/sprite.zig").PointLightComponent;
 /// ECS-friendly shadow-segment component data accumulated by SpriteBatch.

@@ -149,7 +149,13 @@ pub fn run(comptime Game: type, config: Config) !void {
         elog.err("game initialization failed: {s}", .{@errorName(err)});
         return err;
     };
-    defer game.deinit();
+    defer {
+        if (comptime @hasDecl(Game, "deinitWithContext")) {
+            game.deinitWithContext(ctx);
+        } else {
+            game.deinit();
+        }
+    }
 
     // The overlay's font goes into the session's font registry, which releases it at shutdown.
     // Release builds have no overlay, so they load no font for it.

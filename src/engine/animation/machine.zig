@@ -7,9 +7,9 @@
 //! Pure code with no SDL, so `zig build test` covers it.
 
 const std = @import("std");
-const animation = @import("animation.zig");
 const data = @import("data.zig");
 const hook_types = @import("hooks.zig");
+const timeline = @import("timeline.zig");
 
 /// Most parameters a machine declares.
 pub const max_params = 8;
@@ -370,9 +370,9 @@ pub const Machine = struct {
     state: u8,
     /// Index of the clip the current state plays.
     clip: u32,
-    play: animation.Timeline,
+    play: timeline.Timeline,
     /// The clip being crossfaded away from, while a blend runs.
-    previous: ?animation.Timeline = null,
+    previous: ?timeline.Timeline = null,
     /// State whose clip is fading out while `previous` is set.
     blend_from: []const u8 = "",
     blend_len: f32 = 0,
@@ -393,7 +393,7 @@ pub const Machine = struct {
             .play = undefined,
         };
         machine.clip = machine.chosenClip();
-        machine.play = animation.Timeline.init(&library.clips[machine.clip]);
+        machine.play = timeline.Timeline.init(&library.clips[machine.clip]);
         machine.settle(library);
         return machine;
     }
@@ -542,7 +542,7 @@ pub const Machine = struct {
         const leaving = self.play;
         self.state = transition.to;
         self.clip = self.chosenClip();
-        self.play = animation.Timeline.init(&library.clips[self.clip]);
+        self.play = timeline.Timeline.init(&library.clips[self.clip]);
         self.previous = null;
         self.blend_from = "";
         self.blend_len = 0;
@@ -589,7 +589,7 @@ pub const Machine = struct {
         const clip = self.chosenClip();
         if (clip == self.clip) return;
         self.clip = clip;
-        self.play = animation.Timeline.init(&library.clips[clip]);
+        self.play = timeline.Timeline.init(&library.clips[clip]);
     }
 
     /// The clip the current state plays now: its first variant whose conditions hold, or its first variant if none do.

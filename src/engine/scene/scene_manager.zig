@@ -22,9 +22,10 @@
 //! Two requests are refused with an error from `applyPending`: popping the root scene, and pushing past `max_depth`.
 //! Use `switchTo` to replace the root.
 //!
-//! A scene owns what its `init` opens and releases it in `deinit`. Assets loaded through the engine's asset
-//! loaders are kept until the run ends, because there is no unload yet (P1.5), so an asset a scene loads stays in
-//! memory after the scene is gone.
+//! A scene owns what its `init` opens and releases it in `deinit`. The manager does not track assets: scenes must
+//! release direct textures, atlases, and sounds themselves, invalidate font handles with `Context.unloadFont`, and
+//! release named texture handles. Named textures can be evicted with `unloadUnusedTextures`; other GPU resources
+//! remain until explicitly released or the session shuts down.
 
 const std = @import("std");
 const scene = @import("scene.zig");
@@ -39,7 +40,7 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
         const Vtable = struct {
             update: *const fn (ptr: *anyopaque, ctx: *Ctx, nav: *Navigator) void,
             draw: *const fn (ptr: *anyopaque, dc: *const DrawCtx) void,
-            destroy: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) void,
+            destroy: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, ctx: ?*Ctx) void,
             debug_text: *const fn (ptr: *anyopaque, out: *Text) void,
         };
 
@@ -59,8 +60,8 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
                 self.vtable.draw(self.ptr, dc);
             }
 
-            fn destroy(self: Instance) void {
-                self.vtable.destroy(self.ptr, self.allocator);
+            fn destroy(self: Instance, ctx: ?*Ctx) void {
+                self.vtable.destroy(self.ptr, self.allocator, ctx);
             }
 
             fn debugText(self: Instance, out: *Text) void {
@@ -141,9 +142,18 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
 
         /// Releases every open scene, top first, and drops any pending request. The manager is empty afterward.
         pub fn deinit(self: *Self) void {
+            self.destroyAll(null);
+        }
+
+        /// Releases the open scenes with access to the game context, for scenes that define `deinitWithContext`.
+        pub fn deinitWithContext(self: *Self, ctx: *Ctx) void {
+            self.destroyAll(ctx);
+        }
+
+        fn destroyAll(self: *Self, ctx: ?*Ctx) void {
             while (self.depth > 0) {
                 self.depth -= 1;
-                self.stack[self.depth].destroy();
+                self.stack[self.depth].destroy(ctx);
             }
             self.active_name = "none";
             self.navigator.pending = null;
@@ -211,7 +221,7 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
             switch (request) {
                 .switch_to => |opening| {
                     const next = try opening.factory(self.allocator, ctx);
-                    self.replaceTop(next);
+                    self.replaceTop(next, ctx);
                 },
                 .push => |opening| {
                     if (self.depth == max_depth) return error.SceneStackFull;
@@ -223,7 +233,7 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
                 .pop => {
                     if (self.depth <= 1) return error.CannotPopRoot;
                     self.depth -= 1;
-                    self.stack[self.depth].destroy();
+                    self.stack[self.depth].destroy(ctx);
                     self.noteActive();
                 },
             }
@@ -231,12 +241,12 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
 
         /// Puts `next` in place of the active scene, or as the root when the stack is empty. `next` has already
         /// opened, so the scene it replaces is released only after the new one is running.
-        fn replaceTop(self: *Self, next: Instance) void {
+        fn replaceTop(self: *Self, next: Instance, ctx: *Ctx) void {
             if (self.depth == 0) {
                 self.stack[0] = next;
                 self.depth = 1;
             } else {
-                self.stack[self.depth - 1].destroy();
+                self.stack[self.depth - 1].destroy(ctx);
                 self.stack[self.depth - 1] = next;
             }
             self.noteOpened(next);
@@ -289,9 +299,17 @@ pub fn Manager(comptime Ctx: type, comptime DrawCtx: type) type {
                     self.draw(dc);
                 }
 
-                fn callDestroy(ptr: *anyopaque, allocator: std.mem.Allocator) void {
+                fn callDestroy(ptr: *anyopaque, allocator: std.mem.Allocator, ctx: ?*Ctx) void {
                     const self: *T = @ptrCast(@alignCast(ptr));
-                    self.deinit();
+                    if (ctx) |context| {
+                        if (comptime @hasDecl(T, "deinitWithContext")) {
+                            self.deinitWithContext(context);
+                        } else {
+                            self.deinit();
+                        }
+                    } else {
+                        self.deinit();
+                    }
                     allocator.destroy(self);
                 }
 
@@ -705,6 +723,49 @@ test "deinit releases the pushed scenes from the top down, before the scene they
     manager.deinit();
     try std.testing.expectEqualStrings("B+G+G+G-G-B-", ctx.trace.text());
     try std.testing.expectEqual(@as(usize, 0), ctx.trace.live);
+}
+
+const ContextCleanupScene = struct {
+    pub fn init(ctx: *TestCtx) !ContextCleanupScene {
+        _ = ctx;
+        return .{};
+    }
+
+    pub fn update(self: *ContextCleanupScene, ctx: *TestCtx, nav: *M.Navigator) void {
+        _ = self;
+        _ = ctx;
+        _ = nav;
+    }
+
+    pub fn draw(self: *ContextCleanupScene, dc: *const TestDraw) void {
+        _ = self;
+        _ = dc;
+    }
+
+    pub fn deinit(self: *ContextCleanupScene) void {
+        _ = self;
+    }
+
+    pub fn deinitWithContext(self: *ContextCleanupScene, ctx: *TestCtx) void {
+        _ = self;
+        mark(&ctx.trace, 'C', '-');
+    }
+};
+
+test "context-aware scene cleanup runs when popped, replaced, and manager teardown" {
+    var ctx = TestCtx{};
+    var manager = Manager(TestCtx, TestDraw).init(std.testing.allocator);
+    manager.switchTo(ContextCleanupScene);
+    try manager.applyPending(&ctx);
+    manager.push(ContextCleanupScene);
+    try manager.applyPending(&ctx);
+    manager.pop();
+    try manager.applyPending(&ctx);
+    manager.switchTo(ContextCleanupScene);
+    try manager.applyPending(&ctx);
+    manager.deinitWithContext(&ctx);
+    try std.testing.expectEqualStrings("C-C-C-", ctx.trace.text());
+    try std.testing.expectEqual(@as(usize, 0), manager.info().depth);
 }
 
 test "the pending change is named for the diagnostics, for a switch, a push, and a pop" {

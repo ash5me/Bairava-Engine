@@ -27,7 +27,9 @@ sampling formats. RGBA8 is the engine's required uncompressed fallback.
   RGBA8 variants in that order. Missing, malformed, or unsupported variants
   fall through to the next variant, then decode the original image as RGBA8.
   If the original is also missing or invalid, texture loading returns an
-  `AssetError`; it does not report a successful fallback.
+  `AssetError`; it does not report a successful fallback. Compression support
+  comes from the active GPU. If renderer switching is enabled, compressed
+  variants are disabled until every renderer can use a compatible representation.
 - **Required GPU formats:** startup fails with `UnsupportedGpuCapabilities`
   before creating renderer resources if there is no usable embedded shader
   format or the active device cannot sample RGBA8. Games that reach `init` can

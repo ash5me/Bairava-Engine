@@ -44,6 +44,8 @@ The world form supports dense AoS or SoA rows containing the named component fie
 component is accumulated for the current frame. Slices can be supplied with
 `addPointLightComponents` and `addShadowSegmentComponents`.
 
-A batch supports up to 16 point lights and 16 shadow segments per frame. Exceeding either limit
-panics, matching the fixed GPU uniform capacity. `begin` resets ambient to full brightness and clears
-the lights and segments, so configure them for each frame. Unlit sprites are unaffected.
+A batch supports up to `engine.max_lights` point lights and `engine.max_shadow_segments` shadow
+segments per frame. `addLight` and `addShadowSegment` return `false` when full; the component-slice
+and world helpers return the number accepted, skipping entries after capacity. `begin` resets
+ambient to full brightness and clears the lights and segments, so configure them for each frame.
+Unlit sprites are unaffected.

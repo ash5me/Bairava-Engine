@@ -81,6 +81,8 @@ pub const DataClip = data.Clip;
 pub const machine = @import("machine.zig");
 pub const Machine = machine.Machine;
 pub const MachineDefinition = machine.Definition;
+/// Plays a validated variable-duration clip using fixed engine update steps.
+pub const Timeline = @import("timeline.zig").Timeline;
 
 /// Runtime callbacks for authored events and state-machine blend phases.
 pub const hooks = @import("hooks.zig");
@@ -90,49 +92,6 @@ pub const HookPhase = hooks.Phase;
 
 /// Skeletal animation: bones, sprite attachments on them, and keyed bone transforms. See docs/animation.md.
 pub const skeleton = @import("skeleton.zig");
-
-/// Plays a validated variable-duration clip using fixed engine update steps.
-pub const Timeline = struct {
-    clip: *const DataClip,
-    time: f32 = 0,
-
-    pub fn init(clip: *const DataClip) Timeline {
-        return .{ .clip = clip };
-    }
-
-    pub fn play(self: *Timeline, clip: *const DataClip) void {
-        if (self.clip == clip) return;
-        self.clip = clip;
-        self.time = 0;
-    }
-
-    pub fn update(self: *Timeline, dt: f32) void {
-        if (!std.math.isFinite(dt) or dt <= 0) return;
-        const duration = self.clip.duration();
-        if (self.clip.looping) {
-            self.time = @mod(self.time + dt, duration);
-        } else {
-            self.time = @min(self.time + dt, duration);
-        }
-    }
-
-    pub fn frameIndex(self: *const Timeline) usize {
-        var elapsed = self.time;
-        for (self.clip.frames, 0..) |frame_value, index| {
-            if (elapsed < frame_value.duration or index + 1 == self.clip.frames.len) return index;
-            elapsed -= frame_value.duration;
-        }
-        return 0;
-    }
-
-    pub fn frame(self: *const Timeline) *const Frame {
-        return &self.clip.frames[self.frameIndex()];
-    }
-
-    pub fn finished(self: *const Timeline) bool {
-        return !self.clip.looping and self.time >= self.clip.duration();
-    }
-};
 
 test "variable-duration timeline advances deterministically and holds the last non-looping frame" {
     const source = "animation 1\nclip once once\nframe 0 0 1 1 0.1\nframe 1 0 1 1 0.2\n";

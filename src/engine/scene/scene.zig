@@ -4,11 +4,14 @@
 //!     pub fn update(self: *Self, ctx: *Ctx, nav: *Navigator) void
 //!     pub fn draw(self: *Self, dc: *const DrawCtx) void
 //!     pub fn deinit(self: *Self) void
+//!     pub fn deinitWithContext(self: *Self, ctx: *Ctx) void // optional
 //!
 //! `Ctx` and `DrawCtx` are the engine's context types, and `nav` is the handle a scene uses to change the stack: `nav.switchTo(T)` replaces
 //! the scene, `nav.push(T)` opens a child above it, and `nav.pop()` closes it (see scene_manager.zig). `init` runs once, before the first update, and
 //! `deinit` runs once after a successful `init`, when the scene is popped, replaced, or the manager shuts
-//! down. A scene must not keep `ctx`, `dc`, or `nav` after the call that received them.
+//! down. If present, `deinitWithContext` replaces `deinit` when teardown has access to the context; it is
+//! useful for releasing resources such as font handles that need `Context.unloadFont`. A scene must not
+//! keep `ctx`, `dc`, or `nav` after the call that received them.
 
 /// Fails the build, naming the scene and the method, when `T` lacks one of the four methods or one
 /// of them takes the wrong number of parameters. The parameter types are checked where the scene

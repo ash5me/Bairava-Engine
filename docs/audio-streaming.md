@@ -15,6 +15,10 @@ const voice = try ctx.audio.playStreamed(&music, .{ .loop = true, .gain = 0.6, .
 gain, bus, loop, pan, and an optional position for a positional sound. Stop a voice with `stop`, and check it with
 `isPlaying`, as for any other voice.
 
+The audio system has `engine.audio.max_voices` voice slots. When all are occupied, `play` and
+`playStreamed` return `error.NoFreeVoice`; stop or wait for a voice rather than relying on a
+silent drop.
+
 Every voice uses its own gain multiplied by its bus gain and the master gain. The fixed buses are `.music`, `.sfx`,
 `.ambience`, and `.ui`, each defaulting to gain 1. Set one with `audio.setBusGain(.music, 0.5)`; this applies immediately
 to already-playing voices on that bus. Gains clamp to `[0, 1]`, and non-finite gains become zero. `PlayOptions.bus`

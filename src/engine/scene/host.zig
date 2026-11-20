@@ -18,6 +18,8 @@ pub fn Host(comptime Ctx: type, comptime DrawCtx: type, comptime Root: type) typ
         const Self = @This();
         const Mgr = manager.Manager(Ctx, DrawCtx);
 
+        pub const max_depth = Mgr.max_depth;
+
         scenes: Mgr,
 
         pub fn init(ctx: *Ctx) !Self {
@@ -51,6 +53,11 @@ pub fn Host(comptime Ctx: type, comptime DrawCtx: type, comptime Root: type) typ
 
         pub fn deinit(self: *Self) void {
             self.scenes.deinit();
+        }
+
+        /// Releases scenes through their optional `deinitWithContext` hook.
+        pub fn deinitWithContext(self: *Self, ctx: *Ctx) void {
+            self.scenes.deinitWithContext(ctx);
         }
     };
 }

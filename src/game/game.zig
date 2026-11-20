@@ -98,8 +98,10 @@ pub const Game = struct {
     flow_goal: ?engine.navigation.Cell = null,
     /// The allocator the enemy list came from, so `deinit` can free it.
     allocator: std.mem.Allocator,
-    /// Immediate-mode UI for the demo panel. It owns its font and its widget state.
+    /// Immediate-mode UI for the demo panel. It borrows the session font and owns its widget state.
     ui: engine.ui.Ui,
+    /// The session-owned font handle borrowed by `ui`.
+    ui_font: engine.ui.FontHandle,
     /// Demo panel state: how often the button was clicked, and the slider value.
     clicks: u32,
     volume: f32,
@@ -203,12 +205,15 @@ pub const Game = struct {
             log.err("required UI font '{s}' failed to load: {s}", .{ config.ui_font_path, @errorName(err) });
             return err;
         };
-        const ui = engine.ui.Ui.init(ctx.allocators.game, ctx.fonts, ui_font);
+        errdefer ctx.unloadFont(ui_font) catch |err| log.err("UI font cleanup after failed game initialization failed: {s}", .{@errorName(err)});
+        var ui = engine.ui.Ui.init(ctx.allocators.game, ctx.fonts, ui_font);
+        errdefer ui.deinit();
         const bindings = controls.load(ctx.settings_text);
-        const ambient_sound: ?engine.audio.Sound = ctx.loadSound(config.ambient_sound_path) catch |err| blk: {
+        var ambient_sound: ?engine.audio.Sound = ctx.loadSound(config.ambient_sound_path) catch |err| blk: {
             if (err != error.NoDevice) log.warn("ambient sound could not be loaded: {s}", .{@errorName(err)});
             break :blk null;
         };
+        errdefer if (ambient_sound) |*sound| sound.deinit();
 
         // Nothing below can fail, so these need no cleanup on the error paths above.
         var pathfinder = engine.navigation.Pathfinder.init(ctx.allocators.game) catch return error.OutOfMemory;
@@ -230,6 +235,7 @@ pub const Game = struct {
             .prefabs = registry,
             .entities = entities,
             .ui = ui,
+            .ui_font = ui_font,
             .clicks = 0,
             .volume = 0.5,
             .ui_visible = false,
@@ -289,6 +295,12 @@ pub const Game = struct {
         self.animations.deinit();
         self.atlas.deinit();
         self.ui.deinit();
+    }
+
+    pub fn deinitWithContext(self: *Game, ctx: *engine.Context) void {
+        const ui_font = self.ui_font;
+        self.deinit();
+        ctx.unloadFont(ui_font) catch |err| log.err("UI font cleanup failed: {s}", .{@errorName(err)});
     }
 
     /// Runs at the fixed update rate. `ctx.dt` is the length of the step. `nav` asks for a change of

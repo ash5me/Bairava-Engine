@@ -10,6 +10,8 @@ const platform = @import("../platform/platform.zig");
 const Texture = texture.Texture;
 const vertices_per_quad = render_types.vertices_per_quad;
 const grownCapacity = render_types.grownCapacity;
+pub const max_lights = render_types.max_lights;
+pub const max_shadow_segments = render_types.max_shadow_segments;
 
 /// Vertex layout for sprite quads. Positions are in normalized device coordinates. Color is RGBA:
 /// the tint in RGB, and the sprite's alpha in A.
@@ -230,49 +232,57 @@ pub const SpriteBatch = struct {
         self.lighting.ambient = .{ rgb[0], rgb[1], rgb[2], 0 };
     }
 
-    /// Adds a point light for this frame. A frame holds `render_types.max_lights` lights, and one more panics, since
-    /// the lights are fixed-size uniform data.
-    pub fn addLight(self: *SpriteBatch, light: Light) void {
-        if (self.light_count == render_types.max_lights) {
-            std.debug.panic("a frame holds at most {d} lights", .{render_types.max_lights});
-        }
+    /// Adds a point light for this frame. Returns false when the fixed uniform capacity is full.
+    pub fn addLight(self: *SpriteBatch, light: Light) bool {
+        if (self.light_count == render_types.max_lights) return false;
         const slot = self.light_count;
         self.lighting.position[slot] = .{ light.x, light.y, light.height, light.radius };
         self.lighting.color[slot] = .{ light.color[0], light.color[1], light.color[2], light.intensity };
         self.light_count += 1;
         self.lighting.info[0] = @floatFromInt(self.light_count);
+        return true;
     }
 
-    /// Adds every enabled point-light component. Components accumulate into the same fixed-size
-    /// frame data as addLight; the limit is enforced by addLight.
-    pub fn addPointLightComponents(self: *SpriteBatch, components: []const PointLightComponent) void {
+    /// Adds enabled components in order and returns the number accepted. Components after capacity is reached are skipped.
+    pub fn addPointLightComponents(self: *SpriteBatch, components: []const PointLightComponent) usize {
+        var added: usize = 0;
         for (components) |component| {
-            if (component.enabled) self.addLight(component.light());
+            if (component.enabled) {
+                if (!self.addLight(component.light())) break;
+                added += 1;
+            }
         }
+        return added;
     }
 
     /// Adds point-light components directly from live ECS rows. The row may use AoS or SoA storage
-    /// and must contain a field named `point_light`, or exactly one PointLightComponent field.
-    pub fn addPointLightWorld(self: *SpriteBatch, world: anytype) void {
+    /// and must contain a field named `point_light`, or exactly one PointLightComponent field. Returns the number added.
+    pub fn addPointLightWorld(self: *SpriteBatch, world: anytype) usize {
         var index: usize = 0;
-        while (index < world.count()) : (index += 1) {
+        var added: usize = 0;
+        var full = false;
+        while (index < world.count() and !full) : (index += 1) {
             const row = world.rows.get(index);
             inline for (std.meta.fields(@TypeOf(row))) |field| {
                 if (field.type == PointLightComponent) {
                     const component = @field(row, field.name);
-                    if (component.enabled) self.addLight(component.light());
+                    if (component.enabled) {
+                        if (self.addLight(component.light())) {
+                            added += 1;
+                        } else {
+                            full = true;
+                        }
+                    }
                 }
             }
         }
+        return added;
     }
 
     /// Adds a line segment that blocks point lights when the segment lies between the light and a
-    /// lit fragment. Ambient light is not blocked. A frame holds `render_types.max_shadow_segments`
-    /// segments; exceeding that limit panics.
-    pub fn addShadowSegment(self: *SpriteBatch, segment: ShadowSegment) void {
-        if (self.shadow_segment_count == render_types.max_shadow_segments) {
-            std.debug.panic("a frame holds at most {d} shadow segments", .{render_types.max_shadow_segments});
-        }
+    /// lit fragment. Ambient light is not blocked. Returns false when the fixed uniform capacity is full.
+    pub fn addShadowSegment(self: *SpriteBatch, segment: ShadowSegment) bool {
+        if (self.shadow_segment_count == render_types.max_shadow_segments) return false;
         const slot = self.shadow_segment_count;
         self.lighting.shadow_segment[slot] = .{
             segment.start[0],
@@ -282,27 +292,42 @@ pub const SpriteBatch = struct {
         };
         self.shadow_segment_count += 1;
         self.lighting.info[1] = @floatFromInt(self.shadow_segment_count);
+        return true;
     }
 
-    /// Adds every enabled shadow-segment component to this frame.
-    pub fn addShadowSegmentComponents(self: *SpriteBatch, components: []const ShadowSegmentComponent) void {
+    /// Adds enabled components in order and returns the number accepted. Components after capacity is reached are skipped.
+    pub fn addShadowSegmentComponents(self: *SpriteBatch, components: []const ShadowSegmentComponent) usize {
+        var added: usize = 0;
         for (components) |component| {
-            if (component.enabled) self.addShadowSegment(component.segment());
+            if (component.enabled) {
+                if (!self.addShadowSegment(component.segment())) break;
+                added += 1;
+            }
         }
+        return added;
     }
 
-    /// Adds shadow-segment components directly from live ECS rows. The row may use AoS or SoA.
-    pub fn addShadowSegmentWorld(self: *SpriteBatch, world: anytype) void {
+    /// Adds shadow-segment components directly from live ECS rows. The row may use AoS or SoA. Returns the number added.
+    pub fn addShadowSegmentWorld(self: *SpriteBatch, world: anytype) usize {
         var index: usize = 0;
-        while (index < world.count()) : (index += 1) {
+        var added: usize = 0;
+        var full = false;
+        while (index < world.count() and !full) : (index += 1) {
             const row = world.rows.get(index);
             inline for (std.meta.fields(@TypeOf(row))) |field| {
                 if (field.type == ShadowSegmentComponent) {
                     const component = @field(row, field.name);
-                    if (component.enabled) self.addShadowSegment(component.segment());
+                    if (component.enabled) {
+                        if (self.addShadowSegment(component.segment())) {
+                            added += 1;
+                        } else {
+                            full = true;
+                        }
+                    }
                 }
             }
         }
+        return added;
     }
 
     /// Queues one sprite. `src` is the texel rectangle to sample, and `dst` is the on-screen rectangle
@@ -658,4 +683,46 @@ test "sprite depth_y accepts only finite values" {
     try std.testing.expect(finiteDepthY(1.5));
     try std.testing.expect(!finiteDepthY(std.math.nan(f32)));
     try std.testing.expect(!finiteDepthY(std.math.inf(f32)));
+}
+
+test "CPU quad preparation sorts by z, depth, and insertion order" {
+    const unused_texture: Texture = undefined;
+    var quads = [_]Quad{
+        .{ .texture = &unused_texture, .normal = null, .corners = undefined, .z = 0, .depth_y = 10, .seq = 0 },
+        .{ .texture = &unused_texture, .normal = null, .corners = undefined, .z = 0, .depth_y = 5, .seq = 3 },
+        .{ .texture = &unused_texture, .normal = null, .corners = undefined, .z = -1, .depth_y = 100, .seq = 5 },
+        .{ .texture = &unused_texture, .normal = null, .corners = undefined, .z = 0, .depth_y = 5, .seq = 1 },
+    };
+
+    heapSort(&quads);
+
+    try std.testing.expectEqual(@as(i32, -1), quads[0].z);
+    try std.testing.expectEqual(@as(u32, 1), quads[1].seq);
+    try std.testing.expectEqual(@as(u32, 3), quads[2].seq);
+    try std.testing.expectEqual(@as(u32, 0), quads[3].seq);
+    for (1..quads.len) |index| {
+        try std.testing.expect(!quadBefore(quads[index], quads[index - 1]));
+    }
+}
+
+test "light and shadow capacities report overflow without panicking" {
+    var batch = SpriteBatch{
+        .gpu_state = undefined,
+        .allocator = std.testing.allocator,
+        .vertices = &.{},
+        .batches = &.{},
+    };
+    batch.begin(320, 180);
+
+    for (0..max_lights) |_| {
+        try std.testing.expect(batch.addLight(.{ .x = 0, .y = 0, .radius = 10 }));
+    }
+    try std.testing.expect(!batch.addLight(.{ .x = 1, .y = 1, .radius = 10 }));
+    try std.testing.expectEqual(@as(u32, max_lights), batch.light_count);
+
+    for (0..max_shadow_segments) |_| {
+        try std.testing.expect(batch.addShadowSegment(.{ .start = .{ 0, 0 }, .end = .{ 1, 1 } }));
+    }
+    try std.testing.expect(!batch.addShadowSegment(.{ .start = .{ 2, 2 }, .end = .{ 3, 3 } }));
+    try std.testing.expectEqual(@as(u32, max_shadow_segments), batch.shadow_segment_count);
 }

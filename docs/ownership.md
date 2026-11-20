@@ -16,11 +16,15 @@ The caller owns the parent allocator, `Config.allocator`, which defaults to the 
 | asset | `ctx.allocators.asset` | The whole run. Loaded textures, atlases, levels, fonts, and sounds use it. |
 | frame | `ctx.allocators.frame` | One loop iteration. It is reset before each frame, so don't keep pointers into it. |
 
-Asset memory is not returned to the system until the run ends. Texture handles (below) free the GPU
-memory of textures that nothing holds, but each texture's small host structure stays in the asset
-arena until the run ends. Textures and other assets loaded directly with `ctx.loadTexture`,
-`ctx.loadAtlas`, `ctx.loadFont`, or `ctx.loadSound` are never unloaded early, so a game should load
-those once and keep them.
+The asset arena's backing memory is returned only when the run ends, even when a resource's own
+`deinit` releases its GPU objects or other separately allocated state. Directly loaded resources are
+owned by the game and should be released when no longer needed; named texture handles provide a
+counted, cache-managed alternative for textures.
+
+The configured texture-cache budget covers named, cached textures and estimates four bytes per
+texel. The staging budget covers decoded payloads held by background texture requests. Direct
+texture/atlas loads, fonts and glyph pages, and sounds are not included in either budget; there is
+no aggregate budget across all asset types.
 
 ## Resources handed to the game
 
@@ -37,11 +41,11 @@ it is returned and must release it.
 | Streamed sound | `ctx.openStreamed` | Nothing to free. Each playing voice opens its own reader and closes it when the voice ends |
 | File bytes | `ctx.readFile(allocator, ...)` | the caller, with the same allocator |
 
-Fonts are the exception. `ctx.loadFont` returns a `FontHandle`, not ownership. The session's font store owns each
-font from the moment it is inserted, and releases it at shutdown, after the GPU is idle. `Ui.init` and `Canvas.create`
-borrow the font: `Ui.deinit` and `Canvas.deinit` free only their own wrapper memory and leave the font alive. If the
-insert fails, the store releases the new font before `loadFont` returns the error. The debug overlay's font is loaded
-the same way, so `Overlay.deinit` frees only its canvas.
+Fonts use store-owned handles. The session's font store owns each font from insertion until
+`ctx.unloadFont` invalidates its handle; the resource is released at the next GPU-idle collection so
+queued draws remain safe. `Ui.init` and `Canvas.create` borrow the font: their `deinit` methods free
+only wrapper memory. If insertion fails, the store releases the new font before the loader returns.
+The debug overlay's font is loaded the same way, so `Overlay.deinit` frees only its canvas.
 
 ## Texture handles
 
@@ -119,8 +123,8 @@ the failing step, using `errdefer` as `game/game.zig` does.
 
 ## Open items
 
-- Textures acquired by name can be unloaded early. Textures loaded directly, atlases, fonts, and sounds
-  cannot yet. Each would need its own store, built the same way as the texture store.
+- The asset arena retains freed blocks until shutdown. Resource `deinit` methods release GPU/device
+  state, but do not return arena-backed allocations individually.
 - Device-lost recovery is not implemented.
 - No test starts a real window or GPU device. Font ownership, and the order in which the font store is released
   against the GPU wait and the device teardown, are covered by `src/engine/text/font_store.zig` and

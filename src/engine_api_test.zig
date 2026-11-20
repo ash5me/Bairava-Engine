@@ -45,7 +45,7 @@ test "the named Bairava module exports its public engine API" {
 
 test "the public engine version is the current semantic API version" {
     try std.testing.expectEqual(@as(u16, 0), bairava.version.major);
-    try std.testing.expectEqual(@as(u16, 2), bairava.version.minor);
+    try std.testing.expectEqual(@as(u16, 3), bairava.version.minor);
     try std.testing.expectEqual(@as(u16, 0), bairava.version.patch);
 }
 

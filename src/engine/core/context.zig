@@ -210,8 +210,8 @@ pub const Context = struct {
     immediate_present_supported: bool = false,
     /// Textures registered by name and loaded on first use. The texture functions below use it.
     textures: *TextureStore,
-    /// Fonts loaded by `loadFont`. The session owns the store and releases it at shutdown. Game code holds the
-    /// handles, and draws and measures with them through `Canvas` and `Ui`.
+    /// Fonts loaded by the font loaders. The session owns the store; game code holds handles and may invalidate
+    /// them with `unloadFont`, which releases the resources after queued draws are safe.
     fonts: *font_store.FontStore,
     /// The allocator for memory that worker threads touch, such as decoded textures. It must be safe to use from
     /// several threads. The engine passes the page allocator, which is.
@@ -281,9 +281,10 @@ pub const Context = struct {
         self.zoom_target = 1.0;
     }
 
-    /// Loads an image and uploads it as a texture, on the calling thread. Missing and malformed assets are returned as
-    /// contextual asset errors; callers decide whether they are recoverable. Requested textures load in the background
-    /// instead (see core/texture_stream.zig), through the same staging step.
+    /// Loads an image and uploads it as a texture, on the calling thread. The caller owns the returned texture and
+    /// releases its GPU resources with `Texture.deinit`. Missing and malformed assets are returned as contextual
+    /// asset errors; callers decide whether they are recoverable. Requested textures load in the background instead
+    /// (see core/texture_stream.zig), through the same staging step.
     pub fn loadTexture(self: *const Context, relative: []const u8) AssetError!Texture {
         const zone = profile.zoneNamed(@src(), "load texture");
         defer zone.End();
@@ -298,10 +299,14 @@ pub const Context = struct {
 
     /// The compressed formats the device can sample, which staging uses to choose a variant. Read on the calling
     /// thread, because it asks the device.
-    pub fn stageFormats(_: *const Context) staging.Supported {
-        // RGBA8 is dual-backed by both renderers. Keep compression disabled until the SDL2D
-        // path can decode/compress into an SDL texture, so hot-switching never loses pixels.
-        return .{ .astc_4x4 = false, .bc3 = false, .bc1 = false };
+    pub fn stageFormats(self: *const Context) staging.Supported {
+        if (!canUseCompressedVariants(self.renderer, application.sdl2d_available)) return .{};
+        const device = contextGpuDevice(self);
+        return .{
+            .astc_4x4 = texture_renderer.supportsCompression(device, .astc_4x4),
+            .bc3 = texture_renderer.supportsCompression(device, .bc3),
+            .bc1 = texture_renderer.supportsCompression(device, .bc1),
+        };
     }
 
     /// Uploads staged pixels to the GPU. It must run on the calling thread, since it talks to the device. The GPU copies
@@ -518,7 +523,8 @@ pub const Context = struct {
         };
     }
 
-    /// Invalidates a font handle. Its texture resources remain alive until session shutdown so queued frame draws stay valid.
+    /// Invalidates a font handle. Its resources are released at the next GPU-idle collection, after queued frame draws
+    /// can no longer reference them.
     pub fn unloadFont(self: *const Context, font_handle: font_registry.FontHandle) font_store.UnloadError!void {
         return font_store.unload(self.fonts, font_handle);
     }
@@ -653,7 +659,8 @@ pub const Context = struct {
         };
     }
 
-    /// Loads a texture atlas and validates the index against the uploaded image.
+    /// Loads a texture atlas and validates the index against the uploaded image. The caller owns it and releases its
+    /// texture and index with `LoadedAtlas.deinit`.
     pub fn loadAtlas(self: *const Context, image_path: []const u8, index_path: []const u8) AssetError!LoadedAtlas {
         const text = self.readFile(self.allocators.asset, index_path) catch |err| {
             return switch (err) {
@@ -739,6 +746,16 @@ fn assetErrorFor(err: anyerror) AssetError {
 
 fn contextGpuDevice(ctx: *const Context) *platform.gpu.Device {
     return @ptrCast(ctx.gpu_state);
+}
+
+fn canUseCompressedVariants(renderer: application.Renderer, can_switch_renderer: bool) bool {
+    return renderer == .sdl_gpu and !can_switch_renderer;
+}
+
+test "texture staging uses GPU compression support only when renderer switching is unavailable" {
+    try std.testing.expect(canUseCompressedVariants(.sdl_gpu, false));
+    try std.testing.expect(!canUseCompressedVariants(.sdl_gpu, true));
+    try std.testing.expect(!canUseCompressedVariants(.sdl2d, false));
 }
 
 /// Logs every problem the validator finds in an atlas index, with its line. The parser reports only that the
