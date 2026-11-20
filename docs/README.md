@@ -27,6 +27,12 @@ Use the subsystem guides for current behavior. Plans describe proposed work or p
 
 ## API and project references
 
+- The supported game-facing API is the `bairava` module rooted at
+  `src/engine/bairava.zig`. `zig build docs` generates an allowlisted top-level
+  export reference at `zig-out/doc/bairava/index.md`. Its manifest covers the
+  package root's 87 exports, but compiler-derived signatures and member
+  contracts remain future work. See the
+  [API documentation plan](plans/Bairava-Engine-Complete-API-Documentation-Implementation-Plan-Updated.md).
 - [API compatibility](api-compatibility.md)
 - [Build profiles](build-profiles.md)
 - [Dependency policy](dependency-policy.md)

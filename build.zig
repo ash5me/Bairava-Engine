@@ -400,6 +400,22 @@ pub fn build(b: *std.Build) void {
     });
     configureEngineModule(b, engine_module, sdl, ztracy, options, target, tracy_enabled);
 
+    const api_inventory_module = b.createModule(.{
+        .root_source_file = b.path("tools/docs/public_api_inventory.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    const api_inventory = b.addExecutable(.{
+        .name = "bairava_public_api_inventory",
+        .root_module = api_inventory_module,
+    });
+    const run_api_inventory = b.addRunArtifact(api_inventory);
+    run_api_inventory.setCwd(b.path("."));
+    const api_inventory_markdown = run_api_inventory.captureStdOut(.{ .basename = "public-api.md" });
+    const install_api_inventory = b.addInstallFile(api_inventory_markdown, "doc/bairava/index.md");
+    const docs_step = b.step("docs", "Generate allowlisted Bairava public API reference entries");
+    docs_step.dependOn(&install_api_inventory.step);
+
     const exe = b.addExecutable(.{
         .name = "Semkootru",
         .root_module = b.createModule(.{
@@ -690,6 +706,14 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     run_tests.setCwd(b.path("."));
 
+    const docs_test_module = b.createModule(.{
+        .root_source_file = b.path("tools/docs/public_api_inventory.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    const docs_tests = b.addTest(.{ .root_module = docs_test_module });
+    const run_docs_tests = b.addRunArtifact(docs_tests);
+
     const api_test_module = b.createModule(.{
         .root_source_file = b.path("src/engine_api_test.zig"),
         .target = target,
@@ -701,6 +725,16 @@ pub fn build(b: *std.Build) void {
     const run_api_tests = b.addRunArtifact(api_tests);
     run_api_tests.setCwd(b.path("."));
 
+    const docs_api_validation_module = b.createModule(.{
+        .root_source_file = b.path("tools/docs/public_api_validation.zig"),
+        .target = target,
+        .optimize = .Debug,
+        .link_libc = true,
+    });
+    docs_api_validation_module.addImport("bairava", engine_module);
+    const docs_api_validation = b.addTest(.{ .root_module = docs_api_validation_module });
+    install_api_inventory.step.dependOn(&docs_api_validation.step);
+
     const run_text_ui_tests = addUiTestHarness(b, "test_text", "tests/ui/test_text.c", false);
     const run_imgui_tests = addUiTestHarness(b, "test_imgui", "tests/ui/test_imgui.c", true);
     const run_jobs_tests = addCUnitHarness(b, "test_jobs", "tests/jobs/test_jobs.c", "src/engine/jobs/jobs.c", "src/engine/jobs");
@@ -711,6 +745,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all unit, API, and UI tests");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_docs_tests.step);
     test_step.dependOn(&run_api_tests.step);
     test_step.dependOn(ui_test_step);
     test_step.dependOn(&asset_tool_tests.step);

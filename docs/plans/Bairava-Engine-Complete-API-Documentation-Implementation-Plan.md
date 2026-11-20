@@ -1,6 +1,6 @@
 # Bairava Engine — Complete API Documentation Implementation Plan
 
-**Status:** Proposed implementation plan  
+**Status:** Implementation started; public-root export inventory in progress
 **Scope:** Complete implementation, validation, hosting, and maintenance of Bairava's developer documentation  
 **Repository:** `ash5me/Bairava-Engine`  
 **Target documentation URL:** `https://ash5me.github.io/Bairava-Engine/` (proposed)  
@@ -19,15 +19,15 @@ Build and maintain a public documentation website for Bairava Engine that combin
 
 The finished site should let a game developer discover an API, understand its contracts, follow a guide, and compile a representative example without reading engine internals.
 
-This plan does not authorize or describe any code changes as already completed. It is an implementation sequence and acceptance plan.
+This plan describes the implementation sequence and acceptance criteria; its implementation notes record verified progress and remaining work.
 
 ## 2. Guiding decisions
 
 | Area | Decision |
 |---|---|
-| API extraction | Use Zig's built-in documentation generation (Autodoc / `-femit-docs`) if supported by the repository's pinned compiler and configured module |
+| API extraction | Prefer Zig Autodoc only if it can represent the public package boundary; otherwise use a narrow `std.zig.Ast` extractor on the package root, with the compiler pinned |
 | API boundary | Document the supported public package rooted at `src/engine/bairava.zig`; do not present internal modules as stable public API |
-| Build integration | Add a dedicated `zig build docs` step that uses the same configured engine module and dependencies as normal builds |
+| Build integration | Add a dedicated `zig build docs` step that reads the authoritative public package root and does not duplicate engine module configuration |
 | Handwritten content | Markdown guides maintained separately from generated API reference |
 | Examples | Prefer real sample-game patterns; compile examples in CI |
 | Hosting | GitHub Pages, serving static output |
@@ -38,6 +38,20 @@ This plan does not authorize or describe any code changes as already completed. 
 ### Important Autodoc constraint
 
 Zig's documentation generation behavior is compiler-version-dependent and may be experimental. The implementation must verify the exact behavior of the repository's pinned Zig compiler, especially for the package root's re-exports and imported modules. If the compiler cannot generate the required reference reliably, stop and make an explicit tooling decision before building the rest of the pipeline around it. Do not silently switch to an unrelated generator or publish incomplete output.
+
+### Implementation notes (2026-11-20)
+
+- The default branch is `main`; the pinned compiler is `0.16.0-dev.3142+5ccfeb926`. The game-facing import is `@import("bairava")`, rooted at `src/engine/bairava.zig`.
+- This repository has tags `v0.1.0` and `v0.2.0`; its package version is `0.3.0`. GitHub Pages is not configured, and no repository license file is present. The proposed URL and documentation licensing decision therefore remain unconfirmed.
+- The pinned compiler supports `-femit-docs`, and the build API exposes generated documentation. A browser review of the Autodoc probe showed that its search includes implementation declarations such as `core.engine.Config`, its navigation initially lands on `ai`, and its `sources.tar` contains 674 module source entries. This fails the public-boundary criterion, so Autodoc is not used for publication.
+- The approved direction is a small in-repository extractor using the pinned compiler's `std.zig.Ast`, restricted to declarations in `src/engine/bairava.zig`. `zig build docs` now emits an initial Markdown inventory of 87 root exports under `zig-out/doc/bairava/index.md`; it does not follow imports, so implementation declarations and source paths are not exposed. The inventory reports zero declarations with root-level doc comments. It intentionally does not yet resolve underlying types, namespace members, or API contracts, and is not the final reference.
+- Continue with the API inventory and contract audit, then expand the extractor against explicitly public declarations. Do not start site assembly, CI, or deployment until the generated reference satisfies the public-boundary and completeness criteria. Keep the engine compiler pinned.
+- Researching dedicated generators found no drop-in alternative for the pinned toolchain:
+  - [`baskingspot/docgen`](https://github.com/baskingspot/docgen) emits JSON or standalone HTML and follows relative imports, but its package requires Zig `0.17.0` and collects public declarations throughout the imported graph. It is not a public-export filter and has no demonstrated Windows/0.16 compatibility.
+  - [`braksator/ZigDoc`](https://github.com/braksator/ZigDoc) supports HTML/Markdown and namespace traversal, but also requires Zig `0.17.0`; its `--private off` setting hides non-`pub` declarations, not public declarations in internal modules.
+  - [`davidlee/zigmarkdoc`](https://github.com/davidlee/zigmarkdoc) supports Zig `0.15.2+`, but is single-file only, does not resolve imported types, and its repository has no declared license.
+  - [`andrewrk/autodoc`](https://github.com/andrewrk/autodoc) is archived and was upstreamed into Zig; [`tinyzimmer/zigdoc`](https://github.com/tinyzimmer/zigdoc) is a remote-module documentation server, not a public-export filtering extractor.
+  - The public-root extractor has been selected for this implementation; no docs-only compiler upgrade is approved.
 
 ## 3. Repository areas to review
 
@@ -206,17 +220,19 @@ This documentation project should not make unreviewed API-breaking changes. Any 
 
 ### 7.1 Verify compiler support
 
-- [ ] Check `zig build --help` and the pinned compiler's documentation-generation support.
-- [ ] Confirm the exact `-femit-docs` behavior for the pinned version.
-- [ ] Confirm how the build system exposes the configured module's documentation artifact.
-- [ ] Confirm whether documentation is generated for declarations re-exported by `bairava.zig`.
-- [ ] Confirm imported public modules and external dependencies resolve correctly.
+- [x] Check `zig build --help` and the pinned compiler's documentation-generation support.
+- [x] Confirm the exact `-femit-docs` behavior for the pinned version.
+- [x] Confirm how the build system exposes the configured module's documentation artifact.
+- [x] Confirm whether documentation is generated for declarations re-exported by `bairava.zig`.
+- [x] Confirm imported public modules and external dependencies resolve correctly.
 - [ ] Confirm the generated output is complete and can be opened as a static site.
-- [ ] Record any compiler-specific caveats in the implementation notes.
+- [x] Record any compiler-specific caveats in the implementation notes.
 
 ### 7.2 Implement the documentation build step
 
-Add a dedicated build step named `docs` to the existing build graph.
+Add a dedicated build step named `docs` to the existing build graph. The current
+step produces a root-export inventory; it is an intermediate milestone, not the
+complete API reference.
 
 Requirements:
 
