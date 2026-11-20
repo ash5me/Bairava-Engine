@@ -11,7 +11,7 @@ comptime {
 }
 ```
 
-The current version is **0.1.0**. Its definition is in [`src/engine/version.zig`](../src/engine/version.zig);
+The current version is **0.2.0**. Its definition is in [`src/engine/version.zig`](../src/engine/version.zig);
 keep it in sync with the package version in [`build.zig.zon`](../build.zig.zon).
 
 ## Compatibility rules

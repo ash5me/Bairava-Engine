@@ -255,7 +255,7 @@ The engine and sample are already suitable for:
 - UI, font, audio, streaming, diagnostics, and tooling work
 - Evaluating public API boundaries before integration into a larger game
 
-Before building a larger title, review the current API compatibility policy and migration status. Module interfaces and file formats may change while the engine is at version `0.1.0`.
+Before building a larger title, review the current API compatibility policy and migration status. Module interfaces and file formats may change while the engine is at version `0.2.0`.
 
 ## Conventions
 

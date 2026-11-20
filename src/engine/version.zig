@@ -8,4 +8,4 @@ pub const Version = struct {
 };
 
 /// Current engine API version. Keep this in sync with `build.zig.zon`'s package version.
-pub const version: Version = .{ .major = 0, .minor = 1, .patch = 0 };
+pub const version: Version = .{ .major = 0, .minor = 2, .patch = 0 };
