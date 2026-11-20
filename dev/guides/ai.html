@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Behavior trees · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/ai.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="behavior-trees">Behavior trees</h1>
+
+<p>The engine exposes <code class="language-plaintext highlighter-rouge">engine.ai</code>, a small allocation-free behavior-tree runtime for game-independent decisions. A tree
+is defined as a flat <code class="language-plaintext highlighter-rouge">[]const ai.Node</code>; composites refer to child nodes by <code class="language-plaintext highlighter-rouge">u16</code> index. <code class="language-plaintext highlighter-rouge">ai.Node.run(action)</code> creates
+an action, while <code class="language-plaintext highlighter-rouge">ai.Node.sequence(children)</code> and <code class="language-plaintext highlighter-rouge">ai.Node.selector(children)</code> create composites. Actions receive a
+caller-owned context as <code class="language-plaintext highlighter-rouge">*anyopaque</code> and return <code class="language-plaintext highlighter-rouge">ai.Status.success</code>, <code class="language-plaintext highlighter-rouge">.failure</code>, or <code class="language-plaintext highlighter-rouge">.running</code>.</p>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">const</span> <span class="n">children</span> <span class="o">=</span> <span class="p">[</span><span class="mi">_</span><span class="p">]</span><span class="kt">u16</span><span class="p">{</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span> <span class="p">};</span>
+<span class="k">const</span> <span class="n">nodes</span> <span class="o">=</span> <span class="p">[</span><span class="mi">_</span><span class="p">]</span><span class="n">ai</span><span class="p">.</span><span class="py">Node</span><span class="p">{</span>
+    <span class="n">ai</span><span class="p">.</span><span class="py">Node</span><span class="p">.</span><span class="nf">sequence</span><span class="p">(</span><span class="o">&amp;</span><span class="n">children</span><span class="p">),</span>
+    <span class="n">ai</span><span class="p">.</span><span class="py">Node</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span><span class="n">checkTarget</span><span class="p">),</span>
+    <span class="n">ai</span><span class="p">.</span><span class="py">Node</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span><span class="n">chaseTarget</span><span class="p">),</span>
+<span class="p">};</span>
+<span class="k">var</span> <span class="n">tree</span> <span class="o">=</span> <span class="k">try</span> <span class="n">ai</span><span class="p">.</span><span class="py">Tree</span><span class="p">.</span><span class="nf">init</span><span class="p">(</span><span class="n">allocator</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">nodes</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+<span class="k">defer</span> <span class="n">tree</span><span class="p">.</span><span class="nf">deinit</span><span class="p">();</span>
+
+<span class="k">const</span> <span class="n">result</span> <span class="o">=</span> <span class="n">tree</span><span class="p">.</span><span class="nf">tick</span><span class="p">(</span><span class="n">context</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>A sequence succeeds only when all children succeed, and fails on the first failure. A selector succeeds on the first
+success, and fails only when every child fails. Both composites stop on <code class="language-plaintext highlighter-rouge">.running</code> and resume at that child on the next
+tick. <code class="language-plaintext highlighter-rouge">reset</code> clears those cursors so evaluation starts over. The tree validates that all nodes are reachable from its
+root, child references are in range, and the graph is a tree rather than a cycle or shared-child graph. The node array,
+child-index slices, and anything captured by action callbacks must outlive the tree.</p>
+
+<p>The sample game’s enemy uses a small dedicated state machine; the generic behavior tree is
+available to games that need reusable sequence/selector composition. Navigation primitives and the <code class="language-plaintext highlighter-rouge">navigation.Agent</code>
+that combines route planning with movement are documented in <a href="navigation.html">navigation</a>.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

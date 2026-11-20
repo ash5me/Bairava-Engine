@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Developer command console · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/developer-console.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="developer-command-console">Developer command console</h1>
+
+<p>The console is available only when development tools are enabled. In Debug builds, press <strong>F2</strong> to
+open/close it. Text is collected through SDL text input; Enter submits, Backspace edits, and Escape
+closes it. The console uses fixed-size input/output buffers and does not evaluate expressions or
+access files, memory, or code.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Command</th>
+      <th>Purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">help</code></td>
+      <td>List registered commands</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scene</code></td>
+      <td>Show the scene hierarchy: open scenes from the root to the active one, the switch count, and any pending transition</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">entities</code></td>
+      <td>Show the published entity count</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">assets</code></td>
+      <td>Show texture cache counts and estimated bytes</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">performance</code></td>
+      <td>Show average, p95, and maximum frame time plus phase averages</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">performance PHASE</code></td>
+      <td>Inspect <code class="language-plaintext highlighter-rouge">frame</code>, <code class="language-plaintext highlighter-rouge">events</code>, <code class="language-plaintext highlighter-rouge">asset</code>, <code class="language-plaintext highlighter-rouge">update</code>, <code class="language-plaintext highlighter-rouge">audio</code>, <code class="language-plaintext highlighter-rouge">draw</code>, or <code class="language-plaintext highlighter-rouge">present</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">tile</code></td>
+      <td>Show the ground tile and collision metadata under the cursor</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">diagnostics on\|off\|toggle</code></td>
+      <td>Show or hide the diagnostics overlay</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">collision on\|off\|toggle</code></td>
+      <td>Toggle collision visualization</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">tiles on\|off\|toggle</code></td>
+      <td>Toggle tile-boundary visualization</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">layer NAME on\|off\|toggle</code></td>
+      <td>Show/hide <code class="language-plaintext highlighter-rouge">ground</code>, <code class="language-plaintext highlighter-rouge">decoration</code>, or <code class="language-plaintext highlighter-rouge">foreground</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Commands are explicitly registered in <code class="language-plaintext highlighter-rouge">engine/diagnostics/console.zig</code>. Arguments are checked
+strictly; unknown commands and invalid arguments return usage text. Commands read the published
+diagnostics snapshot or change only supported diagnostic visibility switches. The parser and
+registry are pure and covered by <code class="language-plaintext highlighter-rouge">zig build test</code>.</p>
+
+<p>Build with <code class="language-plaintext highlighter-rouge">zig build run -Ddev-tools=false</code> to omit the console and other development services.
+Release builds have development tools disabled by default.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

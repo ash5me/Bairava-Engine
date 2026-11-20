@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Text and fonts · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/text.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="text-and-fonts">Text and fonts</h1>
+
+<p>Game code uses one text surface: load a <code class="language-plaintext highlighter-rouge">FontHandle</code>, then measure, lay out, and draw through
+<code class="language-plaintext highlighter-rouge">Canvas.text</code>, <code class="language-plaintext highlighter-rouge">Canvas.textWidth</code>, <code class="language-plaintext highlighter-rouge">Canvas.layoutText</code>, and <code class="language-plaintext highlighter-rouge">Canvas.drawTextLayout</code>. The font provider
+and renderer-specific texture details stay inside the engine.</p>
+
+<p>There are three rendering kinds:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Kind</th>
+      <th>Source and loading</th>
+      <th>Sampling and rendering</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Static coverage</td>
+      <td>BFNT is baked offline; hand-authored BMFont bitmap descriptors are also accepted as a coverage provider. BFNT uses <code class="language-plaintext highlighter-rouge">Context.loadFont(path, pixel_height)</code>. Bitmap fonts use <code class="language-plaintext highlighter-rouge">Context.loadBitmapFont(path)</code> and the size recorded by the descriptor.</td>
+      <td>GPU uses R8 coverage; SDL3 2D uses the matching white-RGBA/alpha texture. Nearest filtering and whole-pixel placement preserve pixel edges.</td>
+    </tr>
+    <tr>
+      <td>Runtime coverage</td>
+      <td>TrueType <code class="language-plaintext highlighter-rouge">glyf</code> outlines loaded with <code class="language-plaintext highlighter-rouge">Context.loadOutlineFont(path, pixel_height)</code>. <code class="language-plaintext highlighter-rouge">pixel_height</code> fixes the face size. Glyphs are rasterized on demand into the session’s bounded coverage atlas.</td>
+      <td>GPU and SDL3 2D use the shared dynamic coverage pages, synchronized before drawing. Sampling is nearest.</td>
+    </tr>
+    <tr>
+      <td>MSDF</td>
+      <td>An offline MFNT v1 asset generated from a TrueType source; load with <code class="language-plaintext highlighter-rouge">Context.loadMsdfFont(path, pixel_height)</code>. The baked <code class="language-plaintext highlighter-rouge">pixel_height</code> must match. <code class="language-plaintext highlighter-rouge">pxRange</code> is stored in the descriptor; the current baker uses 4.</td>
+      <td>SDL_GPU uses the median-distance shader and a per-texture clamp-to-edge linear sampler. SDL3 2D uses the matching coverage sibling, not the RGB distance field.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Hand-authored bitmap fonts are a distinct import/metrics provider, but share the static coverage
+rendering path; they are not converted to MSDF. The existing <code class="language-plaintext highlighter-rouge">.bfnt</code> format remains supported through
+its compatibility adapter.</p>
+
+<h2 id="asset-pipeline">Asset pipeline</h2>
+
+<p>An ordinary BFNT manifest row bakes an atlas and metrics at one size:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ui_font_9px font assets/font.ttf ui_font_9px.bfnt - 9 32 224 mono
+</code></pre></div></div>
+
+<p>The final optional field selects <code class="language-plaintext highlighter-rouge">gray</code> or <code class="language-plaintext highlighter-rouge">mono</code> rasterization. BFNT v4 records a fallback codepoint;
+older BFNT v1/v2 files retain their documented compatibility defaults. BFNT v3, which carried the old
+signed-distance flag, is rejected.</p>
+
+<p>Hand-authored bitmap fonts use a <code class="language-plaintext highlighter-rouge">coverage</code> row to package each grayscale PNG page as tightly packed
+<code class="language-plaintext highlighter-rouge">.r8</code> bytes, plus a <code class="language-plaintext highlighter-rouge">bitmap_font</code> row for the AngelCode BMFont descriptor. The source descriptor names
+PNG basenames; the packaged descriptor names the matching <code class="language-plaintext highlighter-rouge">.r8</code> basenames. Pages use nearest sampling,
+authored rectangles and offsets, and integer placement/scaling. Bitmap mapping is one glyph per UTF-8
+codepoint with authored kerning and a descriptor fallback. It does not provide ligatures or complex-script
+shaping.</p>
+
+<p>An MSDF row uses the <code class="language-plaintext highlighter-rouge">msdf</code> mode and outputs a separate <code class="language-plaintext highlighter-rouge">.mfnt</code> asset. The offline asset builder runs
+msdfgen over supported outlines and emits both the RGBA MSDF atlas and an R8 coverage sibling. The atlas
+cap is 1024×1024 per font: 4 MiB MSDF plus 1 MiB coverage. Oversized bakes fail; glyphs are not dropped
+and the atlas does not grow.</p>
+
+<p>Use the same baked size when loading BFNT or MFNT. Runtime outline faces are initialized at their requested
+<code class="language-plaintext highlighter-rouge">pixel_height</code>; they are not silently resized later. A bitmap font’s size comes from its descriptor.
+<code class="language-plaintext highlighter-rouge">pxRange</code> is an MSDF distance-field parameter, not a font size or a scale multiplier.</p>
+
+<h2 id="shaping-fallback-and-limits">Shaping, fallback, and limits</h2>
+
+<p>Runtime outline and MSDF fonts use HarfBuzz shaping with explicit script, language, and direction. The
+compatibility defaults are <code class="language-plaintext highlighter-rouge">Latn</code>, <code class="language-plaintext highlighter-rouge">en</code>, and left-to-right. Horizontal LTR text is supported; paragraph
+bidi processing is not. Runtime outlines accept TrueType <code class="language-plaintext highlighter-rouge">glyf</code> outlines; CFF/CFF2 and TrueType
+collections are unsupported for that path.</p>
+
+<p>There is no font fallback chain. A missing runtime cmap entry or <code class="language-plaintext highlighter-rouge">.notdef</code> glyph resolves once, after
+shaping, to <code class="language-plaintext highlighter-rouge">?</code> in that same face; if the face has no <code class="language-plaintext highlighter-rouge">?</code>, no ink is drawn. BFNT and bitmap fonts use
+their recorded/descriptor fallback when available and otherwise draw nothing for the missing glyph.</p>
+
+<p>Coverage textures, including BFNT and bitmap pages, stay nearest-filtered. MSDF atlases alone get a
+clamp-to-edge linear sampler; changing that sampler does not change pixel-art or other textures.
+MSDF requires the GPU median shader for distance-field reconstruction. The SDL3 2D backend cannot run
+that shader and therefore draws the coverage sibling baked from the same source. It never displays the
+raw RGB distance field.</p>
+
+<p>The existing C BFNT code remains only as a compatibility adapter. It is not a second public text API,
+and no legacy BFNT consumer or asset format is removed by this migration.</p>
+
+<h2 id="resource-lifetime-and-diagnostics">Resource lifetime and diagnostics</h2>
+
+<p>CPU atlas bytes remain owned by BFNT, bitmap, MSDF, and runtime-coverage resources so their text GPU
+textures can be rebuilt after an idle-safe resource reset while the device is still valid. The engine
+does not currently expose a full SDL_GPU device-loss recovery/replacement path; retaining pixels alone
+does not imply that the whole renderer can survive device loss.</p>
+
+<p>Unloaded font handles become stale immediately. Their GPU resources remain alive while queued work may
+refer to them, and are collected at an idle-safe point. Runtime atlas uploads remain pending until the
+frame command buffer submits successfully; staging or submission failures are surfaced and retried.
+SDL’s coverage upload call has no per-copy result, so the engine cannot reliably detect an individual
+copy failure through that API.</p>
+
+<p>Run <code class="language-plaintext highlighter-rouge">zig build run-text-benchmark</code> for a deterministic bitmap/BFNT/Latin/Tamil/MSDF scene and
+text-specific shaping, cache, atlas, upload, draw-call, and frame counters. Its output supplements but
+does not replace display-backed visual acceptance.</p>
+
+<h2 id="validation-and-visual-acceptance">Validation and visual acceptance</h2>
+
+<p><code class="language-plaintext highlighter-rouge">zig build test</code> runs the engine, C UI, and asset-tool tests. <code class="language-plaintext highlighter-rouge">zig build test-ui</code> runs the C text and
+widget tests directly, and <code class="language-plaintext highlighter-rouge">zig build check-assets</code> validates manifests and packaged assets. The asset
+builder tests cover bitmap, BFNT, and MFNT generation, including malformed inputs and the MSDF size cap.</p>
+
+<p>Visual acceptance still requires reference captures for the mono bitmap font, gray BFNT, shaped Latin,
+shaped Tamil (vowel signs and conjuncts), and MSDF at native and enlarged scales. Compare coverage
+aliasing with MSDF smoothness, verify the median shader on SDL_GPU and the coverage sibling on SDL3 2D,
+and confirm an ordinary non-font texture remains nearest-filtered. These are display-backed checks;
+successful compilation or CPU tests alone do not close them.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

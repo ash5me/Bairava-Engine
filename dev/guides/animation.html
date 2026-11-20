@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Animation data · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/animation.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="animation-data">Animation data</h1>
+
+<p>The engine parses and advances animation clips without SDL. A clip is a row of frames with durations. The
+animation machine chooses which clip plays, from parameters the game sets each update. Frame rectangles,
+timing, and the choice of clip are data, so gameplay code only says what the entity is doing.</p>
+
+<h2 id="clip-format-version-1">Clip format, version 1</h2>
+
+<p>Each frame rectangle is relative to the source texture region and measured in texels. Durations are
+positive seconds.</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>animation 1
+clip idle_down loop
+frame 0 0 16 32 0.12
+clip walk_down loop
+frame 0 0 16 32 0.12
+frame 16 0 16 32 0.12
+clip hit once
+frame 32 0 16 32 0.08
+frame 48 0 16 32 0.14
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">clip</code> names may contain lowercase letters, digits, and underscores. Each clip must have at least
+one frame. <code class="language-plaintext highlighter-rouge">loop</code> wraps to its first frame; <code class="language-plaintext highlighter-rouge">once</code> holds the last frame. Every <code class="language-plaintext highlighter-rouge">frame</code> line gives
+<code class="language-plaintext highlighter-rouge">x y width height duration</code>; rectangles must be non-empty and fit entirely within the source region.
+Blank lines and <code class="language-plaintext highlighter-rouge">#</code> comments are ignored. Unsupported versions, duplicate clip names, malformed or
+non-positive frame durations, and out-of-bounds rectangles are rejected with parse errors.</p>
+
+<p><code class="language-plaintext highlighter-rouge">engine.animation.Library.parse</code> validates and owns the parsed definition; <code class="language-plaintext highlighter-rouge">find</code> returns stable
+clip references until <code class="language-plaintext highlighter-rouge">deinit</code>, and <code class="language-plaintext highlighter-rouge">indexOf</code> returns the clip’s index.</p>
+
+<h2 id="animation-machine-version-1">Animation machine, version 1</h2>
+
+<p>The machine is text too. It names parameters, states, the clips each state can play, transitions between
+states, and frame events. A parameter is an integer that the game sets. A <code class="language-plaintext highlighter-rouge">trigger</code> parameter is cleared
+when a transition that tests it fires, so it acts once.</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>machine 1
+param moving
+param facing
+param hurt trigger
+state idle
+clip idle_down when facing == 0
+clip idle_up when facing == 2
+state walk
+clip walk_down when facing == 0
+clip walk_up when facing == 2
+event walk 1 footstep
+state hit
+clip hit_down
+start idle
+transition idle -&gt; walk when moving == 1 blend 0.1 event started_walking
+transition walk -&gt; idle when moving == 0 blend 0.1
+transition * -&gt; hit when hurt
+</code></pre></div></div>
+
+<ul>
+  <li>A state plays its first clip variant whose condition holds. If none holds, it plays its first variant.
+A variant with no <code class="language-plaintext highlighter-rouge">when</code> always holds. A state holds up to four variants.</li>
+  <li>A condition is <code class="language-plaintext highlighter-rouge">param OP value</code>, where OP is <code class="language-plaintext highlighter-rouge">==</code>, <code class="language-plaintext highlighter-rouge">!=</code>, <code class="language-plaintext highlighter-rouge">&lt;</code>, <code class="language-plaintext highlighter-rouge">&lt;=</code>, <code class="language-plaintext highlighter-rouge">&gt;</code>, or <code class="language-plaintext highlighter-rouge">&gt;=</code>. A bare <code class="language-plaintext highlighter-rouge">param</code> means
+<code class="language-plaintext highlighter-rouge">param != 0</code>. Join conditions with <code class="language-plaintext highlighter-rouge">and</code>; a clause holds up to four.</li>
+  <li>A transition is <code class="language-plaintext highlighter-rouge">transition FROM -&gt; TO</code>, with optional <code class="language-plaintext highlighter-rouge">when</code>, <code class="language-plaintext highlighter-rouge">blend SECONDS</code>, and <code class="language-plaintext highlighter-rouge">event NAME</code>, in
+that order. <code class="language-plaintext highlighter-rouge">FROM</code> may be <code class="language-plaintext highlighter-rouge">*</code>, which matches any state. Transitions are tried in the order written, and
+at most one fires per update. A transition into the current state never fires.</li>
+  <li><code class="language-plaintext highlighter-rouge">blend</code> crossfades the clip being left over the given seconds. A transition with no blend switches at once.
+Variant changes inside a state never blend; they restart the clip.</li>
+  <li><code class="language-plaintext highlighter-rouge">event STATE FRAME NAME</code> emits NAME when playback reaches FRAME in that state. Frame events fire as
+playback passes a frame, so a clip that starts on a frame does not emit that frame’s event until it wraps
+or moves past it. An update that passes a whole loop of a short clip may emit fewer events than the frames
+it passed.</li>
+  <li>A state frame event or transition event may use a string name or a decimal integer ID. Integer IDs are
+stored in <code class="language-plaintext highlighter-rouge">FrameEvent.id</code> or the transition’s <code class="language-plaintext highlighter-rouge">event_id</code>; <code class="language-plaintext highlighter-rouge">pollEvent()</code> exposes both <code class="language-plaintext highlighter-rouge">name</code> and <code class="language-plaintext highlighter-rouge">id</code>.</li>
+  <li>The start state is the first state, unless a <code class="language-plaintext highlighter-rouge">start</code> line names another.</li>
+  <li><code class="language-plaintext highlighter-rouge">machine.stateName()</code>, <code class="language-plaintext highlighter-rouge">clipName()</code>, <code class="language-plaintext highlighter-rouge">clipTime()</code>, and <code class="language-plaintext highlighter-rouge">frameIndex()</code> report the current position.</li>
+  <li><code class="language-plaintext highlighter-rouge">machine.pose()</code> returns the frame to draw. While a blend runs it also returns the frame of the clip
+being left, and the weight of the current frame. Draw the old frame fully, then the new one at its weight.</li>
+  <li><code class="language-plaintext highlighter-rouge">machine.pollEvent()</code> returns queued events, oldest first. Sixteen events can wait; more are dropped
+and counted in <code class="language-plaintext highlighter-rouge">dropped</code>.</li>
+  <li><code class="language-plaintext highlighter-rouge">machine.restore(library, elapsed)</code> settles the state from the current parameters, seeks the clip, and
+blends nothing and queues no events. Games use it when loading a save.</li>
+</ul>
+
+<p><code class="language-plaintext highlighter-rouge">machine.hooks</code> is a fixed four-slot listener list. <code class="language-plaintext highlighter-rouge">subscribe(context, callback)</code> returns false when full; subscribing
+the same callback and context twice keeps one slot. <code class="language-plaintext highlighter-rouge">unsubscribe(context, callback)</code> removes a slot without changing
+the order of the rest. Hooks receive <code class="language-plaintext highlighter-rouge">HookNotice</code> values for authored events and <code class="language-plaintext highlighter-rouge">blend_started</code>, <code class="language-plaintext highlighter-rouge">blend_finished</code>,
+and <code class="language-plaintext highlighter-rouge">blend_interrupted</code> phases. They are separate from <code class="language-plaintext highlighter-rouge">pollEvent()</code>: authored event hooks still fire when the poll
+queue is full, and blend phases never enter that queue. A transition that interrupts a blend reports the interruption,
+then any new blend start, then its authored event. Restore and instant settling are silent. Callback name slices remain
+borrowed from the machine definition or clip library. Callbacks may use <code class="language-plaintext highlighter-rouge">set</code>, but must not call <code class="language-plaintext highlighter-rouge">update</code>, <code class="language-plaintext highlighter-rouge">restore</code>,
+<code class="language-plaintext highlighter-rouge">deinit</code>, <code class="language-plaintext highlighter-rouge">pollEvent</code>, <code class="language-plaintext highlighter-rouge">subscribe</code>, or <code class="language-plaintext highlighter-rouge">unsubscribe</code> on the machine.</p>
+
+<p><code class="language-plaintext highlighter-rouge">engine.animation.MachineDefinition.parse</code> checks the text against a library. Unknown clips, parameters,
+and states, malformed lines, and too many items are parse errors. The definition copies its text, so the
+library may be replaced without invalidating it, but the clip indices must still match that library.</p>
+
+<h2 id="the-warrior">The warrior</h2>
+
+<p>The sample warrior’s clips are in
+<a href="https://github.com/ash5me/Bairava-Engine/blob/main/assets/animations/warrior.anim"><code class="language-plaintext highlighter-rouge">assets/animations/warrior.anim</code></a>,
+and its machine is
+<a href="https://github.com/ash5me/Bairava-Engine/blob/main/assets/animations/warrior.machine"><code class="language-plaintext highlighter-rouge">assets/animations/warrior.machine</code></a>.
+The machine has
+<code class="language-plaintext highlighter-rouge">moving</code> and <code class="language-plaintext highlighter-rouge">facing</code> parameters, with facing 0 down, 1 right, 2 up, and 3 left, so it chooses the idle or walk
+clip for each direction. The game sets those two parameters each update and does not name clips. It checks the
+frame rectangles against the warrior atlas region at startup, and the machine checks its clip names when it loads.</p>
+
+<p><code class="language-plaintext highlighter-rouge">zig build test</code> covers parsing, rectangle bounds, looping metadata, variable frame durations, deterministic
+advancement, machine transitions, blending, variants, triggers, events, and restore.</p>
+
+<h2 id="skeleton-data-version-1">Skeleton data, version 1</h2>
+
+<p>A skeleton is a hierarchy of bones with sprites attached to them, and animations that key each bone’s position,
+rotation, and scale. Like clip data, it is text that starts with a version header. <code class="language-plaintext highlighter-rouge">engine.animation.skeleton.Data.parse</code>
+validates it against the size of its source region before any of it is used, and <code class="language-plaintext highlighter-rouge">deinit</code> releases the result.</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>skeleton 1
+bone root - 0 0 0 1
+bone torso root 0 -12 0 1
+bone arm torso 4 0 0 1
+attach torso 0 0 16 16 0 0 8 8
+attach arm 16 0 8 4 0 0 0 2
+anim swing loop 1
+event 0.25 footstep
+key arm rotate 0 0
+key arm rotate 0.5 0.5
+key arm rotate 1 0
+key torso translate 0 0 0
+key torso translate 0.5 0 -1
+key torso translate 1 0 0
+</code></pre></div></div>
+
+<p>Fields are separated by spaces or tabs. Blank lines and lines that start with <code class="language-plaintext highlighter-rouge">#</code> are ignored. Readers reject any other
+version.</p>
+
+<p><code class="language-plaintext highlighter-rouge">bone NAME PARENT X Y ROTATION SCALE</code> declares a bone. The first bone is the root, and its parent is <code class="language-plaintext highlighter-rouge">-</code>. Every other
+bone names an earlier bone as its parent. Position is relative to the parent, rotation is in radians and turns clockwise
+on screen, and scale is a uniform factor greater than zero. A skeleton holds at most 64 bones.</p>
+
+<p><code class="language-plaintext highlighter-rouge">attach BONE X Y W H OFFSET_X OFFSET_Y PIVOT_X PIVOT_Y</code> draws one sprite on a bone. X, Y, W, and H give its rectangle in
+texels, relative to the source region, and the rectangle must lie inside that region. The offset places the pivot in the
+bone’s space. The pivot is the point inside the sprite that sits on that spot, and the sprite turns around it, so it must
+lie inside the rectangle. Attachments draw in the order they are listed.</p>
+
+<p><code class="language-plaintext highlighter-rouge">anim NAME loop|once LENGTH</code> starts an animation whose length is in seconds. Every <code class="language-plaintext highlighter-rouge">bone</code> and <code class="language-plaintext highlighter-rouge">attach</code> line comes before
+the first <code class="language-plaintext highlighter-rouge">anim</code>.</p>
+
+<p><code class="language-plaintext highlighter-rouge">event TIME NAME_OR_ID</code> adds a marker to the current animation. Event times must be in increasing order and lie from zero
+through the animation length. String names use lowercase letters, digits, and underscores; a decimal integer is accepted
+as an event ID. <code class="language-plaintext highlighter-rouge">Player.pollEvent()</code> returns <code class="language-plaintext highlighter-rouge">Event { name, id }</code>: string events keep <code class="language-plaintext highlighter-rouge">id == null</code>, while integer-only
+events keep an empty name.</p>
+
+<p><code class="language-plaintext highlighter-rouge">key BONE rotate|scale TIME VALUE</code> and <code class="language-plaintext highlighter-rouge">key BONE translate TIME X Y</code> add keys. A rotate or scale key replaces the bone’s
+rotation or scale, and a translate key replaces its position. The keys of one property on one bone must be listed
+together, in increasing time order, and they must lie within the animation’s length. A bone and property that appears
+again after another track in the same animation is an error. A scale key must be greater than zero.</p>
+
+<p>Evaluation is in <code class="language-plaintext highlighter-rouge">engine.animation.skeleton.evaluate(&amp;data, animation, time, &amp;pose)</code>. It writes every bone’s world
+transform to a <code class="language-plaintext highlighter-rouge">Pose</code> without allocating. Keys interpolate linearly. A looping animation wraps its time, and between its
+last key and its first key it interpolates across the wrap. A one-shot holds its first key until that key’s time, and
+its last key after the end. A property with no keys keeps its rest value. A child is placed in its parent’s rotated and
+scaled space, and it inherits the parent’s rotation and scale.</p>
+
+<p><code class="language-plaintext highlighter-rouge">skeleton.Player</code> plays one animation. It holds a pointer to the data, the animation, and a time, and it offers <code class="language-plaintext highlighter-rouge">init</code>,
+<code class="language-plaintext highlighter-rouge">play</code>, <code class="language-plaintext highlighter-rouge">update(dt)</code>, <code class="language-plaintext highlighter-rouge">finished</code>, and <code class="language-plaintext highlighter-rouge">pose</code>. <code class="language-plaintext highlighter-rouge">pollEvent()</code> returns crossed event markers in playback order. Up to 16
+events wait in its queue; excess events are dropped and counted in <code class="language-plaintext highlighter-rouge">dropped</code>. A looping clip emits a marker again each
+time playback crosses it. <code class="language-plaintext highlighter-rouge">player.hooks</code> uses the same fixed four-slot subscription API and reports each crossed marker
+as an <code class="language-plaintext highlighter-rouge">event</code> notice, including markers dropped from the poll queue. Skeletal players do not emit blend phases.</p>
+
+<p>Root translation on bone 0 is extracted as motion. <code class="language-plaintext highlighter-rouge">rootMotionDelta()</code> returns the displacement from the most recent
+update, including loop wraps; apply it to the owning entity. Use <code class="language-plaintext highlighter-rouge">poseWithoutRootMotion()</code> when drawing that entity, so
+the root’s accumulated translation is not applied a second time. The player points into the data, so the data must
+outlive it.</p>
+
+<p><code class="language-plaintext highlighter-rouge">skeleton.BlendTree</code> blends a sorted set of <code class="language-plaintext highlighter-rouge">BlendNode { threshold, animation }</code> entries as a one-dimensional blend
+space. <code class="language-plaintext highlighter-rouge">BlendTree.init(&amp;data, &amp;nodes)</code> rejects empty trees, non-finite or unordered thresholds, invalid durations, and
+animations from another data set. <code class="language-plaintext highlighter-rouge">tree.evaluate(parameter, phase, &amp;pose)</code> clamps the parameter to the endpoint clips
+or interpolates between the adjacent clips; <code class="language-plaintext highlighter-rouge">phase</code> is normalized time from zero to one and each clip is sampled at the
+same phase. Bone positions and scales are linear blends, and rotations use the shortest angular path. This API is
+allocation-free; the caller owns the node array and advances the normalized phase.</p>
+
+<p><code class="language-plaintext highlighter-rouge">skeleton.place(bone, attachment)</code> returns one attachment’s rectangle, origin, and rotation in the pose’s pixels. The
+renderer’s <code class="language-plaintext highlighter-rouge">engine.skeleton_draw.drawPose(batch, texture, data, pose, sheet_x, sheet_y, x, y, tint, alpha)</code> queues every
+attachment through <code class="language-plaintext highlighter-rouge">SpriteBatch.drawSprite</code>. The pivot stays on its bone, and the sprite turns with the bone.</p>
+
+<p>Version 1 has these limits. Keys interpolate linearly, and scale is uniform. Blend trees are one-dimensional; the
+caller advances their normalized phase. Root motion is extracted from the first bone’s translation track. There is no
+inverse kinematics. Attachments have no tint, flip, or draw order of their own, so they draw in file order. The warrior
+and the sample game do not use skeletons yet.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

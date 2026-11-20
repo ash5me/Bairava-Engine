@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Input and action mapping · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/input.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="input-and-action-mapping">Input and action mapping</h1>
+
+<p>Poll input through the <code class="language-plaintext highlighter-rouge">Context</code> passed to <code class="language-plaintext highlighter-rouge">update</code>. Bind physical controls to a game-owned enum so
+gameplay responds to actions such as <code class="language-plaintext highlighter-rouge">jump</code> rather than to a particular key.</p>
+
+<h2 id="define-defaults">Define defaults</h2>
+
+<p>The compile-checked <a href="application-lifecycle.html">public API example</a> defines a typed action enum,
+default key bindings, and an action map without requiring a window or graphics device.</p>
+
+<p><code class="language-plaintext highlighter-rouge">ActionMap</code> accepts keyboard, mouse, gamepad button, and gamepad-axis bindings. An action can have
+up to four default bindings. Exceeding that limit is a programmer error; the settings reader reports
+and drops excess configured bindings.</p>
+
+<h2 id="read-input-during-update">Read input during update</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">held</code> stays true while any binding is down.</li>
+  <li><code class="language-plaintext highlighter-rouge">pressed</code> and <code class="language-plaintext highlighter-rouge">released</code> are one-update-step edges; do not expect an edge to persist into a later
+update.</li>
+  <li><code class="language-plaintext highlighter-rouge">value</code> returns a normalized strength, useful for analog sticks and triggers.</li>
+  <li>Read the state during <code class="language-plaintext highlighter-rouge">update</code>; drawing is not the input-consumption phase.</li>
+</ul>
+
+<p>The optional settings file can override defaults using <code class="language-plaintext highlighter-rouge">bairava.bindings</code>. Bindings are SDL-free
+public values, so the same action can work across keyboard and gamepad controls.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

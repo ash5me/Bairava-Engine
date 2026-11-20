@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Asset streaming · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/asset-streaming.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="asset-streaming">Asset streaming</h1>
+
+<p>The texture store supports prioritized preloading, background decode, bounded in-flight staging, and a GPU-memory
+budget. Textures needed immediately can still be acquired synchronously; preloading lets the runtime do CPU work ahead
+of demand.</p>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">try</span> <span class="n">ctx</span><span class="p">.</span><span class="nf">requestTexture</span><span class="p">(</span><span class="s">"forest"</span><span class="p">,</span> <span class="p">.</span><span class="py">high</span><span class="p">);</span>
+<span class="k">try</span> <span class="n">ctx</span><span class="p">.</span><span class="nf">requestTexture</span><span class="p">(</span><span class="s">"menu"</span><span class="p">,</span> <span class="p">.</span><span class="py">normal</span><span class="p">);</span>
+<span class="k">try</span> <span class="n">ctx</span><span class="p">.</span><span class="nf">requestTexture</span><span class="p">(</span><span class="s">"distant"</span><span class="p">,</span> <span class="p">.</span><span class="py">low</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>The runtime starts requested loads between frames. Requests are serviced high to low priority, with registration order
+breaking ties. Image files are read and decoded on worker threads into staging memory; GPU upload and installation
+happen on the main thread. At most four decode/upload jobs are in flight, and <code class="language-plaintext highlighter-rouge">Config.texture_loads_per_frame</code> caps
+uploads per frame. Set it to zero to disable background preloading. <code class="language-plaintext highlighter-rouge">Config.worker_threads</code> controls the shared worker
+pool; zero runs jobs synchronously on the main thread.</p>
+
+<p><code class="language-plaintext highlighter-rouge">Config.texture_staging_budget_bytes</code> bounds the sum of decoded/compressed payloads held by in-flight loads until
+upload. Its default is 128 MiB; zero removes the cap. A texture larger than the entire budget fails explicitly. If a
+texture fits the budget but not the currently available portion, its request is deferred and retried at its original
+priority after staged payloads are uploaded or discarded. <code class="language-plaintext highlighter-rouge">Streamer.stagedBytes()</code> and each pump’s <code class="language-plaintext highlighter-rouge">deferred</code> count
+expose current use and temporary pressure. The cap applies to retained payloads, not source-file read buffers or
+temporary decoder internals.</p>
+
+<p><code class="language-plaintext highlighter-rouge">Config.texture_budget_bytes</code> sets the resident texture-cache budget. Loaded textures are estimated at four bytes per texel.
+When a new texture exceeds the budget, the least-recently-used unreferenced textures are evicted first. A texture with a
+live handle is never evicted, so the budget can temporarily be exceeded while all candidates are in use. Call
+<code class="language-plaintext highlighter-rouge">ctx.releaseTexture</code> when a handle is no longer needed, then <code class="language-plaintext highlighter-rouge">ctx.unloadUnusedTextures</code> if immediate reclamation is
+desired. <code class="language-plaintext highlighter-rouge">ctx.textureStats()</code> reports resident bytes, loaded count, evictions, and budget pressure.</p>
+
+<p>The lower-level generic asset <code class="language-plaintext highlighter-rouge">Store(T)</code> also exposes <code class="language-plaintext highlighter-rouge">request</code>, <code class="language-plaintext highlighter-rouge">pump</code>, <code class="language-plaintext highlighter-rouge">setBudget</code>, <code class="language-plaintext highlighter-rouge">beginLoad</code>, <code class="language-plaintext highlighter-rouge">finishLoad</code>, and
+<code class="language-plaintext highlighter-rouge">failLoad</code>. Those operations let a store keep cache bookkeeping on its owning thread while a caller performs a
+thread-safe CPU load elsewhere. GPU resources must still be created and destroyed on the graphics-owning thread.
+Workers must use a thread-safe allocator and must not access the store, game state, GPU, or logger.</p>
+
+<p>The current asynchronous pipeline is for textures. Other asset types can use the generic store’s split-load interface
+when their loader and ownership rules support background work.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

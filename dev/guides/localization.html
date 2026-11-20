@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Localization · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/localization.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="localization">Localization</h1>
+
+<p>The public <code class="language-plaintext highlighter-rouge">bairava.localization</code> module provides locale identifiers and an in-memory translation
+catalog. Create a catalog with a required fallback locale, register other locales, add translations,
+and select the active locale:</p>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">var</span> <span class="n">translations</span> <span class="o">=</span> <span class="k">try</span> <span class="n">engine</span><span class="p">.</span><span class="py">localization</span><span class="p">.</span><span class="py">Catalog</span><span class="p">.</span><span class="nf">init</span><span class="p">(</span><span class="n">allocator</span><span class="p">,</span> <span class="s">"en"</span><span class="p">);</span>
+<span class="k">defer</span> <span class="n">translations</span><span class="p">.</span><span class="nf">deinit</span><span class="p">();</span>
+
+<span class="k">const</span> <span class="n">french</span> <span class="o">=</span> <span class="k">try</span> <span class="n">engine</span><span class="p">.</span><span class="py">localization</span><span class="p">.</span><span class="py">LocaleId</span><span class="p">.</span><span class="nf">init</span><span class="p">(</span><span class="s">"fr-CA"</span><span class="p">);</span>
+<span class="k">try</span> <span class="n">translations</span><span class="p">.</span><span class="nf">addLocale</span><span class="p">(</span><span class="n">french</span><span class="p">);</span>
+<span class="k">const</span> <span class="n">english</span> <span class="o">=</span> <span class="k">try</span> <span class="n">engine</span><span class="p">.</span><span class="py">localization</span><span class="p">.</span><span class="py">LocaleId</span><span class="p">.</span><span class="nf">init</span><span class="p">(</span><span class="s">"en"</span><span class="p">);</span>
+<span class="k">try</span> <span class="n">translations</span><span class="p">.</span><span class="nf">add</span><span class="p">(</span><span class="n">english</span><span class="p">,</span> <span class="s">"menu/start"</span><span class="p">,</span> <span class="s">"Start"</span><span class="p">);</span>
+<span class="k">try</span> <span class="n">translations</span><span class="p">.</span><span class="nf">add</span><span class="p">(</span><span class="n">french</span><span class="p">,</span> <span class="s">"menu/start"</span><span class="p">,</span> <span class="s">"Commencer"</span><span class="p">);</span>
+<span class="k">try</span> <span class="n">translations</span><span class="p">.</span><span class="nf">setLocale</span><span class="p">(</span><span class="n">french</span><span class="p">);</span>
+
+<span class="k">const</span> <span class="n">label</span> <span class="o">=</span> <span class="n">translations</span><span class="p">.</span><span class="nf">lookup</span><span class="p">(</span><span class="s">"menu/start"</span><span class="p">)</span> <span class="k">orelse</span> <span class="s">"menu/start"</span><span class="p">;</span>
+</code></pre></div></div>
+
+<p>Locale tags are case-insensitive ASCII alphanumeric subtags separated by single hyphens and are
+normalized to lowercase (<code class="language-plaintext highlighter-rouge">fr-CA</code> becomes <code class="language-plaintext highlighter-rouge">fr-ca</code>). The fallback locale is registered by <code class="language-plaintext highlighter-rouge">Catalog.init</code>;
+other locales must be registered before translations can be added or selected. Lookup checks the
+active locale first, then the fallback locale. If neither has a translation, <code class="language-plaintext highlighter-rouge">lookup</code> returns <code class="language-plaintext highlighter-rouge">null</code>.</p>
+
+<p>Translation keys follow the engine’s validated-name rules: lowercase names containing letters,
+digits, <code class="language-plaintext highlighter-rouge">_</code>, <code class="language-plaintext highlighter-rouge">-</code>, and <code class="language-plaintext highlighter-rouge">.</code>, with optional <code class="language-plaintext highlighter-rouge">/</code>-separated segments. Translation values are copied into
+the catalog’s owned storage. Repeated locale IDs and translation keys return <code class="language-plaintext highlighter-rouge">error.Duplicate</code>;
+lookups do not allocate.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

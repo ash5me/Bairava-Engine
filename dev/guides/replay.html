@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Deterministic input replay and state checkpoints · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/replay.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="deterministic-input-replay-and-state-checkpoints">Deterministic input replay and state checkpoints</h1>
+
+<p>The fixed-step loop gives every simulation update the same <code class="language-plaintext highlighter-rouge">dt</code>. <code class="language-plaintext highlighter-rouge">engine.replay.Log</code> records the input snapshot seen by
+each update and reapplies those snapshots without consulting platform input. The game owns the log and chooses where to
+record or play it:</p>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">var</span> <span class="n">recording</span> <span class="o">=</span> <span class="n">engine</span><span class="p">.</span><span class="py">replay</span><span class="p">.</span><span class="py">Log</span><span class="p">.</span><span class="nf">init</span><span class="p">(</span><span class="n">ctx</span><span class="p">.</span><span class="py">allocators</span><span class="p">.</span><span class="py">game</span><span class="p">);</span>
+<span class="k">defer</span> <span class="n">recording</span><span class="p">.</span><span class="nf">deinit</span><span class="p">();</span>
+
+<span class="c">// At the top of the game's fixed-step update:</span>
+<span class="k">try</span> <span class="n">recording</span><span class="p">.</span><span class="nf">recordInput</span><span class="p">(</span><span class="n">ctx</span><span class="p">.</span><span class="py">simulation_tick</span><span class="p">,</span> <span class="n">ctx</span><span class="p">.</span><span class="py">input</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>For playback, replace live input immediately before the update:</p>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">const</span> <span class="n">replay_tick</span> <span class="o">=</span> <span class="k">try</span> <span class="n">recording</span><span class="p">.</span><span class="nf">applyNextInput</span><span class="p">(</span><span class="n">ctx</span><span class="p">.</span><span class="py">input</span><span class="p">);</span>
+<span class="n">std</span><span class="p">.</span><span class="py">debug</span><span class="p">.</span><span class="nf">assert</span><span class="p">(</span><span class="n">replay_tick</span> <span class="o">==</span> <span class="n">ctx</span><span class="p">.</span><span class="py">simulation_tick</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">recordInput</code> requires consecutive ticks. <code class="language-plaintext highlighter-rouge">seek</code> positions the playback cursor at an exact recorded tick, and <code class="language-plaintext highlighter-rouge">rewind</code>
+restarts it. A replayed input includes held keys, key press/release edges, mouse state and position, gamepad identities,
+axes, held controls, and gamepad edges. Platform events are not replayed; gameplay should use the recorded input snapshot
+and deterministic simulation state rather than live device state.</p>
+
+<p>The engine cannot serialize arbitrary game state, so games provide their own stable snapshot representation:</p>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">const</span> <span class="n">state_bytes</span> <span class="o">=</span> <span class="k">try</span> <span class="n">game</span><span class="p">.</span><span class="nf">serialize</span><span class="p">(</span><span class="n">ctx</span><span class="p">.</span><span class="py">allocators</span><span class="p">.</span><span class="py">frame</span><span class="p">);</span>
+<span class="c">// After update tick N, record a checkpoint for the next update boundary N + 1.</span>
+<span class="mi">_</span> <span class="o">=</span> <span class="k">try</span> <span class="n">recording</span><span class="p">.</span><span class="nf">recordState</span><span class="p">(</span><span class="n">ctx</span><span class="p">.</span><span class="py">simulation_tick</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">state_bytes</span><span class="p">);</span>
+
+<span class="k">var</span> <span class="n">restored</span><span class="p">:</span> <span class="p">[</span><span class="mi">4096</span><span class="p">]</span><span class="kt">u8</span> <span class="o">=</span> <span class="k">undefined</span><span class="p">;</span>
+<span class="k">const</span> <span class="n">checkpoint</span> <span class="o">=</span> <span class="k">try</span> <span class="n">recording</span><span class="p">.</span><span class="nf">restoreStateAtOrBefore</span><span class="p">(</span><span class="n">target_tick</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">restored</span><span class="p">);</span>
+<span class="k">try</span> <span class="n">game</span><span class="p">.</span><span class="nf">deserialize</span><span class="p">(</span><span class="n">restored</span><span class="p">[</span><span class="mi">0</span><span class="o">..</span><span class="n">checkpoint</span><span class="p">.</span><span class="py">byte_count</span><span class="p">]);</span>
+<span class="k">try</span> <span class="n">recording</span><span class="p">.</span><span class="nf">seek</span><span class="p">(</span><span class="n">checkpoint</span><span class="p">.</span><span class="py">tick</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>After restoring, advance by repeatedly applying <code class="language-plaintext highlighter-rouge">applyNextInput</code> and running one fixed update, until the desired tick.</p>
+
+<p><code class="language-plaintext highlighter-rouge">Context.simulation_tick</code> is a zero-based fixed-update index. <code class="language-plaintext highlighter-rouge">recordInput</code> records the snapshot visible during that
+update. A checkpoint’s tick denotes the next update boundary to run; record the initial state at tick zero and record
+the state after update N at tick N + 1. Checkpoints are copied into the log and carry a checksum. The nearest checkpoint
+at or before a target tick can be restored; <code class="language-plaintext highlighter-rouge">restoreStateAtOrBefore</code> checks the checksum and output capacity. Snapshots
+must be recorded in increasing tick order. Use the same game version, initial content, fixed update rate, and
+deterministic random seeds for a meaningful replay. The log is currently an in-memory runtime facility; persistence and
+cross-version compatibility are the game’s responsibility.</p>
+
+<p>Replays do not make nondeterministic game code deterministic by themselves. Simulation must avoid wall-clock reads,
+unordered iteration, and unseeded randomness, and must define how external events are handled.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

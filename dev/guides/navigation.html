@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Navigation · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/navigation.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="navigation">Navigation</h1>
+
+<p>Navigation lets AI units find routes through a level. It has two parts. The engine provides the walkable grid, the
+route search, and a follower that walks a box along a route through the tile map’s collision. The sample game uses
+those parts to wander, chase the player, and walk home.</p>
+
+<p>The engine modules name no game type. The public namespace is exported through <code class="language-plaintext highlighter-rouge">engine.navigation</code>; its navigation module collects the grid, pathfinder,
+follower, agent, and flow-field APIs. The enemy state machine and game-specific movement remain in the sample game.</p>
+
+<h2 id="the-walkable-grid">The walkable grid</h2>
+
+<p><code class="language-plaintext highlighter-rouge">navigation.Grid</code> wraps a <code class="language-plaintext highlighter-rouge">TileMap</code>. A cell is walkable when the map does not block it. A solid tile on any layer
+blocks its cell, and the edge of the map counts as a wall. A grid keeps a pointer to its map, so make one where it
+is used, and don’t store it in a struct that is later moved.</p>
+
+<p>One-way tile cells remain walkable and do not block line of sight. A* rejects only a southward step
+into a one-way cell; northward and sideways entry remain available.</p>
+
+<p><code class="language-plaintext highlighter-rouge">cellOf</code> gives the cell that holds a point in pixels, and <code class="language-plaintext highlighter-rouge">cellCenter</code> gives the center of a cell. <code class="language-plaintext highlighter-rouge">Grid.lineOfSight</code>
+answers whether a straight line between two points crosses only walkable cells. It checks every cell the line
+crosses, in order, so it cannot step past a thin wall at a corner.</p>
+
+<p><code class="language-plaintext highlighter-rouge">Grid.perceive(from, to, sight)</code> filters finite points by an optional pixel range and facing cone before calling the
+same line-of-sight walk. The default <code class="language-plaintext highlighter-rouge">Sight</code> is unlimited and omnidirectional, so it behaves like <code class="language-plaintext highlighter-rouge">lineOfSight</code> for
+finite points. One-way tiles remain transparent to sight because only solid cells block the walk. The engine takes
+a direction vector rather than a game-facing enum; callers map their own facing to world-space x/y.</p>
+
+<h2 id="routes">Routes</h2>
+
+<p><code class="language-plaintext highlighter-rouge">navigation.Pathfinder</code> runs A* over the grid, and returns the cheapest route as a list of cells, from start to goal.</p>
+
+<ul>
+  <li>A route may enter a cell from any of its eight neighbors. A straight step costs 10, and a diagonal step costs 14.</li>
+  <li>A diagonal step is allowed only when both cells beside it are walkable. A route never squeezes between two wall
+corners.</li>
+  <li>The start may be inside a wall, since a unit can be pushed there. The goal must be walkable.</li>
+  <li><code class="language-plaintext highlighter-rouge">find</code> writes the route into a buffer the caller provides. A failed search writes nothing, so the caller’s old route
+stays in place. The errors are <code class="language-plaintext highlighter-rouge">OutOfBounds</code>, <code class="language-plaintext highlighter-rouge">GoalBlocked</code>, <code class="language-plaintext highlighter-rouge">NoPath</code>, and <code class="language-plaintext highlighter-rouge">PathTooLong</code>.</li>
+  <li>The pathfinder keeps its arrays between searches, and only grows them when a bigger map is searched.</li>
+</ul>
+
+<p>A search can visit every cell of the map, so its worst case grows with the map. Enemies keep the cost low: a chasing
+unit can instead share a flow field with all other units chasing the same cell.</p>
+
+<h2 id="shared-goal-flow-fields">Shared-goal flow fields</h2>
+
+<p><code class="language-plaintext highlighter-rouge">navigation.FlowField</code> runs Dijkstra backward from one or more walkable goal cells. It stores a cost-to-goal for each
+reachable cell and, after the costs settle, one legal neighbor with a lower cost. <code class="language-plaintext highlighter-rouge">nextCell(grid, cell)</code> samples that
+direction without running another search. One-way entry and diagonal corner rules use the same step legality and
+10/14 costs as A*.</p>
+
+<p>Build the field when its shared goal changes. <code class="language-plaintext highlighter-rouge">buildGoals</code> can seed several destinations; a failed build caused by
+an empty, blocked, or out-of-bounds goal leaves the previous field intact. Unreachable cells and goal cells return
+no next cell. The field has no route-length limit, and A* remains available for unique destinations.</p>
+
+<p><code class="language-plaintext highlighter-rouge">Follower.stepToward</code> moves a box toward one pixel-space waypoint using the same tile collision, 2 px arrival snap,
+and 0.35 second stuck handling as route following. This is the intended movement step for a unit sampling a flow
+field; it does not allocate or retain a cell route.</p>
+
+<h2 id="navigation-agent">Navigation agent</h2>
+
+<p><code class="language-plaintext highlighter-rouge">navigation.Agent</code> composes a reusable A* pathfinder and route follower for one moving unit. Initialize it with an
+allocator, call <code class="language-plaintext highlighter-rouge">plan(grid, start, goal)</code>, then pass the map, the unit’s collision box, speed, and fixed update delta to
+<code class="language-plaintext highlighter-rouge">step</code>. <code class="language-plaintext highlighter-rouge">goal</code>, <code class="language-plaintext highlighter-rouge">hasPath</code>, <code class="language-plaintext highlighter-rouge">atGoal</code>, and <code class="language-plaintext highlighter-rouge">nextWaypoint</code> expose the current route state. <code class="language-plaintext highlighter-rouge">clear</code> drops both the route and
+its remembered goal. The agent owns its pathfinder, so call <code class="language-plaintext highlighter-rouge">deinit</code> when it is no longer needed.</p>
+
+<p>Planning is transactional: if a new goal is blocked, unreachable, outside the grid, too far for the route buffer, or
+allocation fails, the current route remains available and <code class="language-plaintext highlighter-rouge">plan</code> returns the error. The caller chooses when to replan
+for moving targets or changed world state. The map and grid remain caller-owned; the map must outlive each <code class="language-plaintext highlighter-rouge">step</code>.</p>
+
+<h2 id="following-a-route">Following a route</h2>
+
+<p><code class="language-plaintext highlighter-rouge">navigation.Follower</code> holds a route of up to <code class="language-plaintext highlighter-rouge">max_path</code> (128) cells. Its <code class="language-plaintext highlighter-rouge">step</code> moves a box toward the next waypoint,
+by at most <code class="language-plaintext highlighter-rouge">speed * dt</code> pixels. The box uses the same collision as the player, so it slides along walls and stops
+where a solid tile blocks it.</p>
+
+<p>When the box comes within 2 pixels of an open waypoint, it snaps onto that cell’s center. Steering diagonally can
+leave the box a fraction of a pixel off the grid, and that fraction can put its edge over a wall row, which then
+blocks the next straight move. Snapping keeps the box on the grid. A box centered on an open cell never overlaps a
+wall.</p>
+
+<p>If the box makes no progress for 0.35 seconds while it still has a route, the follower drops the route. The owner
+decides what to do next, and a chasing enemy replans on its next repath.</p>
+
+<h2 id="enemies">Enemies</h2>
+
+<p>The sample game’s enemy brain uses four states and the game code plans and walks the enemy.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>State</th>
+      <th>Entered when</th>
+      <th>What it does</th>
+      <th>Leaves when</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>idle</td>
+      <td>at spawn, or after a rest</td>
+      <td>stands still for a random 1.5 to 3.0 seconds</td>
+      <td>sees the player: chase. Wait over: wander</td>
+    </tr>
+    <tr>
+      <td>wander</td>
+      <td>the idle wait ends</td>
+      <td>routes to a random walkable cell within 4 cells of home</td>
+      <td>sees the player: chase. Route done: idle</td>
+    </tr>
+    <tr>
+      <td>chase</td>
+      <td>sees the player, from any state</td>
+      <td>samples the shared field toward the player’s cell at 44 pixels per second</td>
+      <td>no sight for 2.0 seconds: return home</td>
+    </tr>
+    <tr>
+      <td>return_home</td>
+      <td>lost sight of the player</td>
+      <td>routes back to home, at 20 pixels per second</td>
+      <td>sees the player: chase. Arrived: idle</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>An enemy sees the player when the player’s feet are within 88 pixels of its own feet, and a clear line joins them.
+Walls block sight. Enemies don’t see each other, and they don’t attack yet.</p>
+
+<p>Each enemy is drawn with the warrior’s walk and idle clips, tinted red. Its brain is seeded from its position in the
+level’s list, so every run of a level makes the same random choices.</p>
+
+<p>Enemies are placed with <code class="language-plaintext highlighter-rouge">enemy &lt;col&gt; &lt;row&gt;</code> lines in the level’s metadata file. The cell is the enemy’s home. See
+<a href="prefabs.html">prefabs</a> for the file format.</p>
+
+<h2 id="changing-the-numbers">Changing the numbers</h2>
+
+<p>The sample’s speeds, sight range, wander radius, repath interval, idle wait, and lose-sight time are game choices.
+The navigation system’s route step costs, arrival distance, and stuck timeout are engine behavior.</p>
+
+<h2 id="debugging">Debugging</h2>
+
+<ul>
+  <li>F4 turns on the debug geometry. Each enemy’s feet are outlined in red, and the cells left on its route are drawn as
+blue points.</li>
+  <li>In development builds, the debug overlay (F3) lists the enemy count and how many are chasing.</li>
+</ul>
+
+<h2 id="tests">Tests</h2>
+
+<p><code class="language-plaintext highlighter-rouge">zig build test</code> runs the grid, pathfinder, flow field, follower, navigation agent, and behavior brain tests. The
+repository’s sample game is also compiled as part of the normal build.</p>
+
+<h2 id="limits">Limits</h2>
+
+<ul>
+  <li>Enemies do not fight, and the player takes no damage.</li>
+  <li>Enemies are not saved. Loading a save leaves them on their home cells, as the level placed them.</li>
+  <li>An A* route holds at most 128 cells. A longer one is refused with <code class="language-plaintext highlighter-rouge">PathTooLong</code>; flow-field steering has no route
+length limit.</li>
+  <li>Enemies do not avoid each other or the player, so they can overlap.</li>
+  <li>The grid is built from the static tiles of the level. A route does not change when a tile changes.</li>
+  <li>Routes are not smoothed. A route can zigzag between diagonal and straight steps.</li>
+</ul>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

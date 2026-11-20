@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Prefabs · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/prefabs.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="prefabs">Prefabs</h1>
+
+<p>Prefabs are named entity templates. The game’s prefab file defines them, and the level metadata places them
+by name. Each placement spawns one entity in the game’s ECS world, and the entity draws its prefab’s tile.</p>
+
+<h2 id="the-prefab-file">The prefab file</h2>
+
+<p><code class="language-plaintext highlighter-rouge">assets/prefabs.txt</code> holds one statement per line. <code class="language-plaintext highlighter-rouge">#</code> starts a comment, and blank lines are ignored.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>prefab marker
+tile 39
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">prefab &lt;name&gt;</code> starts a template. A name uses lowercase letters, digits, and <code class="language-plaintext highlighter-rouge">_</code>, and is at most 32 bytes.</li>
+  <li><code class="language-plaintext highlighter-rouge">tile &lt;id&gt;</code> names the tile the template draws: an index into the level’s tileset, counted left to right and
+then down, the same as the tile layers. Each template needs exactly one <code class="language-plaintext highlighter-rouge">tile</code> line.</li>
+</ul>
+
+<p>Any other line is an error. The file holds at most 64 templates.</p>
+
+<h2 id="level-metadata">Level metadata</h2>
+
+<p><code class="language-plaintext highlighter-rouge">assets/maps/level1.spawn</code> holds the level’s game metadata. It has one <code class="language-plaintext highlighter-rouge">spawn</code> line, and any number of <code class="language-plaintext highlighter-rouge">place</code> and
+<code class="language-plaintext highlighter-rouge">enemy</code> lines:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spawn 20 12
+place marker 3 3
+place marker 36 3
+enemy 12 7
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">spawn &lt;col&gt; &lt;row&gt;</code> is the cell where the player starts. It is required, and it appears once.</li>
+  <li><code class="language-plaintext highlighter-rouge">place &lt;prefab&gt; &lt;col&gt; &lt;row&gt;</code> spawns one entity from the named template on that cell. A level holds at most 4096
+placements.</li>
+  <li><code class="language-plaintext highlighter-rouge">enemy &lt;col&gt; &lt;row&gt;</code> starts one enemy on that cell, and the cell is its home. Enemies wander near it, chase the player
+when they can see it, and walk home after losing it. A level holds at most 64 enemies. See
+<a href="navigation.html">navigation</a>.</li>
+</ul>
+
+<p>The file keeps its <code class="language-plaintext highlighter-rouge">.spawn</code> name for now, although it also holds placements and enemies.</p>
+
+<h2 id="checks">Checks</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">zig build check-assets</code> parses the prefab file, and checks the level metadata against the map’s size and the
+prefab names. The metadata must depend on the <code class="language-plaintext highlighter-rouge">game_prefabs</code> asset in <code class="language-plaintext highlighter-rouge">assets/asset_manifest.txt</code>.</li>
+  <li>At startup the game checks that every prefab’s tile exists in the tileset, and it stops if one does not. An
+atlas reload that would break a prefab’s tile is rejected, and the current atlas stays in use.</li>
+  <li>Unknown prefab names, cells outside the map, and malformed lines are all errors.</li>
+</ul>
+
+<h2 id="limits">Limits</h2>
+
+<ul>
+  <li>The only component is <code class="language-plaintext highlighter-rouge">tile</code>. A placed entity draws its tile and blocks nothing, so the player walks through it.</li>
+  <li>Placed entities and enemies are not saved. Loading the level spawns them again from the metadata.</li>
+  <li>The prefab file and the level metadata are read at startup only. Edits take effect after a restart.</li>
+  <li>The example <code class="language-plaintext highlighter-rouge">marker</code> tile is a placeholder. It was chosen for contrast with the ground, not for its art.</li>
+</ul>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

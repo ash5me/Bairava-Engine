@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Rendering sprites and cameras · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/rendering.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="rendering-sprites-and-cameras">Rendering sprites and cameras</h1>
+
+<p>Rendering is submitted from the game’s <code class="language-plaintext highlighter-rouge">draw</code> callback through the frame’s <code class="language-plaintext highlighter-rouge">DrawContext.batch</code>.
+The renderer owns the frame target and submission lifecycle; game code does not initialize or flush
+the batch directly.</p>
+
+<h2 id="world-and-screen-coordinates">World and screen coordinates</h2>
+
+<p>The camera and sprite rectangles use pixel-valued world coordinates. <code class="language-plaintext highlighter-rouge">DrawContext.cam</code> converts
+world positions into the current view. Use its conversion methods when placing a sprite in world
+space; screen-space UI can instead use the view layout.</p>
+
+<p>The configured native view is a reference size, not a crop that changes with window aspect ratio.
+The view is fitted into the window using the configured scale mode. Query the layout rather than
+assuming that window points and world pixels are interchangeable, especially for mouse input.</p>
+
+<h2 id="submission-and-order">Submission and order</h2>
+
+<ul>
+  <li>Load a texture during initialization or update, then submit it during <code class="language-plaintext highlighter-rouge">draw</code>.</li>
+  <li><code class="language-plaintext highlighter-rouge">drawSprite</code> takes a source rectangle in texture texels and a destination rectangle in view pixels.</li>
+  <li>Use <code class="language-plaintext highlighter-rouge">SpriteOptions.z</code> for depth ordering and preserve meaningful submission order for equal depth.</li>
+  <li>Keep the <code class="language-plaintext highlighter-rouge">DrawContext</code> and references to its frame-scoped data inside the callback.</li>
+  <li>Keep GPU operations on the engine thread.</li>
+</ul>
+
+<p>The public <a href="https://github.com/ash5me/Bairava-Engine/tree/main/sample">sample game</a> shows camera
+conversion, sprite submission, tinting, and parallax. It is compiled by the normal build.</p>
+
+<h2 id="backend-limits">Backend limits</h2>
+
+<p>SDL_GPU is the feature-complete renderer. The SDL3 2D renderer option is reserved and resolves to
+SDL_GPU until the alternate path is implemented. Renderer capability queries are runtime
+information; do not infer support from a requested configuration alone.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

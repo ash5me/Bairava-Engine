@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>2D lighting · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/lighting.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="2d-lighting">2D lighting</h1>
+
+<p>The sprite batch supports ambient and point lighting for lit sprites. A sprite uses a normal map
+through <code class="language-plaintext highlighter-rouge">Options.normal</code>, or the flat, viewer-facing normal with <code class="language-plaintext highlighter-rouge">Options.lit = true</code>. Each frame,
+set the ambient RGB and add point lights and optional shadow segments to the batch before queuing the
+lit sprites:</p>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">dc</span><span class="p">.</span><span class="py">batch</span><span class="p">.</span><span class="nf">setAmbient</span><span class="p">(</span><span class="o">.</span><span class="p">{</span> <span class="mf">0.12</span><span class="p">,</span> <span class="mf">0.14</span><span class="p">,</span> <span class="mf">0.2</span> <span class="p">});</span>
+<span class="n">dc</span><span class="p">.</span><span class="py">batch</span><span class="p">.</span><span class="nf">addLight</span><span class="p">(</span><span class="o">.</span><span class="p">{</span>
+    <span class="p">.</span><span class="py">x</span> <span class="o">=</span> <span class="n">light_x</span><span class="p">,</span>
+    <span class="p">.</span><span class="py">y</span> <span class="o">=</span> <span class="n">light_y</span><span class="p">,</span>
+    <span class="p">.</span><span class="py">height</span> <span class="o">=</span> <span class="mi">24</span><span class="p">,</span>
+    <span class="p">.</span><span class="py">radius</span> <span class="o">=</span> <span class="mi">120</span><span class="p">,</span>
+    <span class="p">.</span><span class="py">color</span> <span class="o">=</span> <span class="o">.</span><span class="p">{</span> <span class="mi">1</span><span class="p">,</span> <span class="mf">0.75</span><span class="p">,</span> <span class="mf">0.4</span> <span class="p">},</span>
+    <span class="p">.</span><span class="py">intensity</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+<span class="p">});</span>
+<span class="n">dc</span><span class="p">.</span><span class="py">batch</span><span class="p">.</span><span class="nf">addShadowSegment</span><span class="p">(</span><span class="o">.</span><span class="p">{</span>
+    <span class="p">.</span><span class="py">start</span> <span class="o">=</span> <span class="o">.</span><span class="p">{</span> <span class="n">wall_left</span><span class="p">,</span> <span class="n">wall_y</span> <span class="p">},</span>
+    <span class="p">.</span><span class="py">end</span> <span class="o">=</span> <span class="o">.</span><span class="p">{</span> <span class="n">wall_right</span><span class="p">,</span> <span class="n">wall_y</span> <span class="p">},</span>
+<span class="p">});</span>
+<span class="n">dc</span><span class="p">.</span><span class="py">batch</span><span class="p">.</span><span class="nf">drawSprite</span><span class="p">(</span><span class="n">albedo</span><span class="p">,</span> <span class="n">source</span><span class="p">,</span> <span class="n">destination</span><span class="p">,</span> <span class="o">.</span><span class="p">{</span> <span class="p">.</span><span class="py">normal</span> <span class="o">=</span> <span class="n">normal_map</span> <span class="p">});</span>
+</code></pre></div></div>
+
+<p>Light and shadow coordinates are in view pixels, matching sprite positions after camera projection.
+<code class="language-plaintext highlighter-rouge">addShadowSegment</code> defines a 2D line segment: for each lit fragment, it blocks a point light when
+the segment lies between the fragment and the light. The light’s contribution is omitted behind the
+segment; ambient illumination remains. This produces hard 2D shadows. Segments are supplied per
+frame and are not inferred from tile or sprite geometry.</p>
+
+<p>Normal maps are selected with <code class="language-plaintext highlighter-rouge">Options.normal</code>; <code class="language-plaintext highlighter-rouge">.lit = true</code> uses the batch-owned flat viewer-facing
+normal for a sprite without a normal map. Normal maps must match the albedo texture dimensions. Sprite
+flip and rotation also transform the normal map basis in the lit shader.</p>
+
+<p>The public ECS-friendly types <code class="language-plaintext highlighter-rouge">PointLightComponent</code> and <code class="language-plaintext highlighter-rouge">ShadowSegmentComponent</code> can be accumulated
+directly by the batch:</p>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">dc</span><span class="p">.</span><span class="py">batch</span><span class="p">.</span><span class="nf">addPointLightWorld</span><span class="p">(</span><span class="n">world</span><span class="p">);</span>
+<span class="n">dc</span><span class="p">.</span><span class="py">batch</span><span class="p">.</span><span class="nf">addShadowSegmentWorld</span><span class="p">(</span><span class="n">world</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>The world form supports dense AoS or SoA rows containing the named component fields. Each enabled
+component is accumulated for the current frame. Slices can be supplied with
+<code class="language-plaintext highlighter-rouge">addPointLightComponents</code> and <code class="language-plaintext highlighter-rouge">addShadowSegmentComponents</code>.</p>
+
+<p>A batch supports up to <code class="language-plaintext highlighter-rouge">engine.max_lights</code> point lights and <code class="language-plaintext highlighter-rouge">engine.max_shadow_segments</code> shadow
+segments per frame. <code class="language-plaintext highlighter-rouge">addLight</code> and <code class="language-plaintext highlighter-rouge">addShadowSegment</code> return <code class="language-plaintext highlighter-rouge">false</code> when full; the component-slice
+and world helpers return the number accepted, skipping entries after capacity. <code class="language-plaintext highlighter-rouge">begin</code> resets
+ambient to full brightness and clears the lights and segments, so configure them for each frame.
+Unlit sprites are unaffected.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

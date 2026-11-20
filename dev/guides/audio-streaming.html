@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Streamed audio · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/audio-streaming.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="streamed-audio">Streamed audio</h1>
+
+<p>Long sounds, such as music and ambience, can play from disk without being read into memory. Short effects still load
+whole with <code class="language-plaintext highlighter-rouge">Context.loadSound</code>, because they start at once and can be positioned without any file access during play.</p>
+
+<h2 id="using-it">Using it</h2>
+
+<div class="language-zig highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">var</span> <span class="n">music</span> <span class="o">=</span> <span class="k">try</span> <span class="n">ctx</span><span class="p">.</span><span class="nf">openStreamed</span><span class="p">(</span><span class="s">"music/theme.wav"</span><span class="p">);</span>   <span class="c">// reads only the header</span>
+<span class="k">const</span> <span class="n">voice</span> <span class="o">=</span> <span class="k">try</span> <span class="n">ctx</span><span class="p">.</span><span class="py">audio</span><span class="p">.</span><span class="nf">playStreamed</span><span class="p">(</span><span class="o">&amp;</span><span class="n">music</span><span class="p">,</span> <span class="o">.</span><span class="p">{</span> <span class="p">.</span><span class="py">loop</span> <span class="o">=</span> <span class="kc">true</span><span class="p">,</span> <span class="p">.</span><span class="py">gain</span> <span class="o">=</span> <span class="mf">0.6</span><span class="p">,</span> <span class="p">.</span><span class="py">bus</span> <span class="o">=</span> <span class="p">.</span><span class="py">music</span> <span class="p">});</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">openStreamed</code> takes the same relative path as <code class="language-plaintext highlighter-rouge">loadSound</code>, and it prefers the build-encoded IMA sidecar
+(<code class="language-plaintext highlighter-rouge">music/theme.wav.ima</code>) when one exists, as <code class="language-plaintext highlighter-rouge">loadSound</code> does. <code class="language-plaintext highlighter-rouge">playStreamed</code> takes the same <code class="language-plaintext highlighter-rouge">PlayOptions</code> as <code class="language-plaintext highlighter-rouge">play</code>:
+gain, bus, loop, pan, and an optional position for a positional sound. Stop a voice with <code class="language-plaintext highlighter-rouge">stop</code>, and check it with
+<code class="language-plaintext highlighter-rouge">isPlaying</code>, as for any other voice.</p>
+
+<p>The audio system has <code class="language-plaintext highlighter-rouge">engine.audio.max_voices</code> voice slots. When all are occupied, <code class="language-plaintext highlighter-rouge">play</code> and
+<code class="language-plaintext highlighter-rouge">playStreamed</code> return <code class="language-plaintext highlighter-rouge">error.NoFreeVoice</code>; stop or wait for a voice rather than relying on a
+silent drop.</p>
+
+<p>Every voice uses its own gain multiplied by its bus gain and the master gain. The fixed buses are <code class="language-plaintext highlighter-rouge">.music</code>, <code class="language-plaintext highlighter-rouge">.sfx</code>,
+<code class="language-plaintext highlighter-rouge">.ambience</code>, and <code class="language-plaintext highlighter-rouge">.ui</code>, each defaulting to gain 1. Set one with <code class="language-plaintext highlighter-rouge">audio.setBusGain(.music, 0.5)</code>; this applies immediately
+to already-playing voices on that bus. Gains clamp to <code class="language-plaintext highlighter-rouge">[0, 1]</code>, and non-finite gains become zero. <code class="language-plaintext highlighter-rouge">PlayOptions.bus</code>
+defaults to <code class="language-plaintext highlighter-rouge">.sfx</code>; choose <code class="language-plaintext highlighter-rouge">.music</code> for a music stream or <code class="language-plaintext highlighter-rouge">.ambience</code> for an ambience loop. The master gain remains the
+overall volume control.</p>
+
+<p>A <code class="language-plaintext highlighter-rouge">StreamedSound</code> holds only the path and the format. It owns no file and needs no <code class="language-plaintext highlighter-rouge">deinit</code>. Each playing voice opens
+its own reader, which closes when the voice ends or is stopped. The same <code class="language-plaintext highlighter-rouge">StreamedSound</code> can play several times at once.</p>
+
+<h2 id="what-is-held-in-memory">What is held in memory</h2>
+
+<p>A loaded sound queues its whole length. A streamed voice that is not positional keeps one second of converted sound
+queued instead, so a hitch in the game loop of up to a second does not reach the output. A positional streamed voice
+keeps the same short lookahead as a positional loaded sound, a tenth of a second, so moving it is heard promptly. Each
+read fills at most 4096 bytes, and an IMA read decodes at most 1024 frames, into one buffer that all voices share.</p>
+
+<h2 id="formats">Formats</h2>
+
+<ul>
+  <li><strong>WAV:</strong> PCM at 8, 16, or 32 bits, and IEEE float at 32 bits. Extensible WAV is accepted when its sub-format is one of
+these. 24-bit and other formats are refused with <code class="language-plaintext highlighter-rouge">UnsupportedFormat</code>, and <code class="language-plaintext highlighter-rouge">loadSound</code> still plays them. A data chunk
+longer than the file is clipped to the bytes present.</li>
+  <li><strong>BRAD IMA ADPCM</strong> (the build’s <code class="language-plaintext highlighter-rouge">.ima</code> sidecar): mono or stereo. The sidecar stores each channel as a whole block, so a
+chunk reads a run of nibbles from each block at its own offset. The decoder is checked sample for sample against the
+whole-file decoder in <code class="language-plaintext highlighter-rouge">audio/ima.zig</code>.</li>
+</ul>
+
+<p>Sound converts from its own rate and channel count to the device’s format through an SDL stream that keeps its
+resampling state between chunks, so a sound cut into chunks sounds the same as one converted whole.</p>
+
+<h2 id="looping">Looping</h2>
+
+<p>A looping streamed voice starts its sound again at the end. Its converter keeps running across the join, so the loop has
+no gap at the seam. A voice that cannot read its sound any further stops looping and finishes once its queued sound has
+played out, so a read error never leaves a silent voice running forever.</p>
+
+<h2 id="files-and-the-platform">Files and the platform</h2>
+
+<p><code class="language-plaintext highlighter-rouge">platform/sdl/files.zig</code> provides <code class="language-plaintext highlighter-rouge">open</code>, <code class="language-plaintext highlighter-rouge">close</code>, <code class="language-plaintext highlighter-rouge">size</code>, and <code class="language-plaintext highlighter-rouge">readAt</code> for reads at chosen offsets. <code class="language-plaintext highlighter-rouge">platform/sdl/audio.zig</code>
+provides <code class="language-plaintext highlighter-rouge">createConverter</code> and <code class="language-plaintext highlighter-rouge">getStreamData</code>. Both sit behind <code class="language-plaintext highlighter-rouge">platform.zig</code>, so <code class="language-plaintext highlighter-rouge">audio/streaming.zig</code> and
+<code class="language-plaintext highlighter-rouge">audio/audio.zig</code> keep their SDL-free boundary. <code class="language-plaintext highlighter-rouge">audio/streaming.zig</code> reads only through a <code class="language-plaintext highlighter-rouge">Source</code> (a context, a read
+function, and a size), so its tests run with no device and no file system.</p>
+
+<h2 id="not-covered-yet">Not covered yet</h2>
+
+<ul>
+  <li>Streaming from a file that changes while a voice plays. The reader trusts the size it read when the voice started.</li>
+  <li>Music that is decoded ahead on a worker thread. Each chunk is decoded on the main thread, which is cheap for these
+formats.</li>
+</ul>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

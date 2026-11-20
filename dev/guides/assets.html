@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Assets and resource ownership · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/assets.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="assets-and-resource-ownership">Assets and resource ownership</h1>
+
+<p>Asset paths passed to <code class="language-plaintext highlighter-rouge">Context</code> are relative to the executable’s packaged asset directory. Use
+<code class="language-plaintext highlighter-rouge">loadTexture</code>, <code class="language-plaintext highlighter-rouge">loadAtlas</code>, and the corresponding typed loaders for packaged resources; recover from
+their returned errors instead of assuming files exist.</p>
+
+<h2 id="textures">Textures</h2>
+
+<p><code class="language-plaintext highlighter-rouge">loadTexture</code> returns an owned texture value. Deinitialize it before the run ends, normally from the
+owning scene’s teardown. For name-registered textures, <code class="language-plaintext highlighter-rouge">acquireTexture</code> returns a counted handle:
+balance each successful acquire or retain with <code class="language-plaintext highlighter-rouge">releaseTexture</code>. A released or unloaded handle is
+invalid and may produce <code class="language-plaintext highlighter-rouge">HandleError</code>.</p>
+
+<p>The resource cache can unload idle entries to honor its configured budget. A handle is not a promise
+that a GPU allocation can never be evicted; request or resolve the resource through its documented
+context operations.</p>
+
+<h2 id="build-time-asset-validation">Build-time asset validation</h2>
+
+<p>Use the asset manifest and the asset validation guides to check packaged files before runtime.
+<code class="language-plaintext highlighter-rouge">zig build check-assets</code> validates repository asset metadata and generated atlas indexes. Asset
+source files and packaged files have different roles; only files included by the manifest are
+available to the running game.</p>
+
+<h2 id="threading">Threading</h2>
+
+<p>Background workers can decode staged data, but GPU upload and renderer operations remain on the
+engine thread. Any allocator used by worker-visible work must be safe for the configured worker
+count. Set <code class="language-plaintext highlighter-rouge">worker_threads</code> to zero when deterministic main-thread work is more important than
+parallel decoding.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

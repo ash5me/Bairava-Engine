@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Logging and diagnostic error reporting · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/logging.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="logging-and-diagnostic-error-reporting">Logging and diagnostic error reporting</h1>
+
+<p>Status: P2.3.</p>
+
+<h2 id="levels">Levels</h2>
+
+<p>From least to most severe: <code class="language-plaintext highlighter-rouge">trace</code>, <code class="language-plaintext highlighter-rouge">debug</code>, <code class="language-plaintext highlighter-rouge">info</code>, <code class="language-plaintext highlighter-rouge">warn</code>, <code class="language-plaintext highlighter-rouge">error</code>. A message below the minimum level
+is dropped before it is formatted. The minimum starts at <code class="language-plaintext highlighter-rouge">debug</code> in Debug builds and at <code class="language-plaintext highlighter-rouge">info</code> in the
+other modes.</p>
+
+<h2 id="choosing-the-level-in-the-settings-file">Choosing the level in the settings file</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>log_level = debug
+</code></pre></div></div>
+
+<p>Accepted values are <code class="language-plaintext highlighter-rouge">trace</code>, <code class="language-plaintext highlighter-rouge">debug</code>, <code class="language-plaintext highlighter-rouge">info</code>, <code class="language-plaintext highlighter-rouge">warn</code> (or <code class="language-plaintext highlighter-rouge">warning</code>), and <code class="language-plaintext highlighter-rouge">error</code>, in any case. A value
+that is not a level name is logged and the default is kept. The setting is read at startup, before the
+window opens, so startup messages honor it. Release builds use the same setting, so a shipped build can
+log more when a tester sets it.</p>
+
+<h2 id="writing-messages">Writing messages</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>const log = engine.log.scoped("game");
+log.trace("per-step detail", .{});
+log.info("level loaded: {s}", .{name});
+</code></pre></div></div>
+
+<p>Each line carries a scope, which names the subsystem. Use the scope of the module that owns the work.</p>
+
+<h2 id="failures">Failures</h2>
+
+<p>Every failure says three things: the operation, the resource it was working on, and the error.</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">engine.log.recovered(scope, operation, resource, err, instead)</code> logs a warning, for a failure the
+caller continues past. The last argument says what happens instead. Example: a missing debug font
+logs that the overlay is off.</li>
+  <li><code class="language-plaintext highlighter-rouge">engine.log.fatal(scope, operation, resource, err)</code> logs an error, for a failure that stops the
+operation. The caller then returns the error.</li>
+</ul>
+
+<p>Neither helper replaces the error. The caller still returns the typed Zig error it received, so
+callers can still match on it.</p>
+
+<h2 id="startup-failures">Startup failures</h2>
+
+<p><code class="language-plaintext highlighter-rouge">Session.start</code> records the step it is on. If a step fails, the run logs one summary line naming the
+subsystem and the operation:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>startup failed in the window subsystem while creating the window: WindowCreateFailed; anything opened before it was released
+</code></pre></div></div>
+
+<p>Startup failures are fatal: the run returns the error, and the caller decides the exit status. Cleanup
+still happens in reverse order through <code class="language-plaintext highlighter-rouge">errdefer</code>, as <code class="language-plaintext highlighter-rouge">docs/ownership.md</code> describes. The unit tests
+cover the stage names and the summary text. Testing the teardown itself needs a window and a GPU device,
+so it is covered by review.</p>
+
+<h2 id="recoverable-and-fatal-in-short">Recoverable and fatal, in short</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Situation</th>
+      <th>Level</th>
+      <th>Stops the run?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Missing optional file (a sidecar, a font for the overlay)</td>
+      <td>debug or warn, via <code class="language-plaintext highlighter-rouge">recovered</code></td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>Asset that fails to load, where the game can fall back</td>
+      <td>warn, via <code class="language-plaintext highlighter-rouge">recovered</code></td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>Save that fails to write</td>
+      <td>error, via <code class="language-plaintext highlighter-rouge">fatal</code></td>
+      <td>No, the game keeps running</td>
+    </tr>
+    <tr>
+      <td>Engine startup step fails</td>
+      <td>error, the summary line</td>
+      <td>Yes</td>
+    </tr>
+    <tr>
+      <td>Broken invariant</td>
+      <td>assertion panic (Debug, ReleaseSafe)</td>
+      <td>Yes</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="log-file">Log file</h2>
+
+<p>The log file (<code class="language-plaintext highlighter-rouge">Semkootru.log</code>, beside the executable) takes the same levels as the terminal. Every
+line is flushed as it is written, so the file is complete even after a crash. Each run replaces the
+previous file.</p>
+
+<p>The C sink maps <code class="language-plaintext highlighter-rouge">trace</code> to <code class="language-plaintext highlighter-rouge">LOG_TRACE</code> in log.c, and it clamps any level outside 0 to 4.</p>
+
+<h2 id="crash-reports">Crash reports</h2>
+
+<p>A panic writes a crash report beside the executable, as <code class="language-plaintext highlighter-rouge">Semkootru.crash.txt</code>, before Zig prints the stack
+trace. The report holds the panic message, the frame number, the scene name, the mouse position in window
+points, and the held keys. Each run removes the report left by the run before it, at startup, so a report
+always belongs to the run that wrote it. The stack trace goes to the terminal only.</p>
+
+<p>The frame loop records the frame, scene, and input once per frame with a few stores. That happens in every
+build, so a release crash has the same context as a debug one.</p>
+
+<p>The game sets the report file name with <code class="language-plaintext highlighter-rouge">crash_file</code> in its config. Null writes no report, and the log
+still records the panic.</p>
+
+<h2 id="not-done">Not done</h2>
+
+<ul>
+  <li>No log rotation, and no logs kept from earlier runs. Both are listed as open items in the README.</li>
+  <li>No third-party logging framework.</li>
+</ul>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

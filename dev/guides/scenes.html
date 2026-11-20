@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Scenes and transitions · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/scenes.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="scenes-and-transitions">Scenes and transitions</h1>
+
+<p>Use <code class="language-plaintext highlighter-rouge">SceneHost(RootScene)</code> to run a scene stack with <code class="language-plaintext highlighter-rouge">bairava.run</code>. A scene owns its state and
+resources; the navigator is borrowed only during <code class="language-plaintext highlighter-rouge">update</code>.</p>
+
+<p>A scene supplies:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">init(ctx) !Self</code> to construct it.</li>
+  <li><code class="language-plaintext highlighter-rouge">update(self, ctx, nav)</code> to update and request a transition.</li>
+  <li><code class="language-plaintext highlighter-rouge">draw(self, dc)</code> to submit frame drawing.</li>
+  <li><code class="language-plaintext highlighter-rouge">deinit(self)</code> or the context-aware teardown hook when resource release needs the context.</li>
+</ul>
+
+<p><code class="language-plaintext highlighter-rouge">switchTo</code>, <code class="language-plaintext highlighter-rouge">push</code>, and <code class="language-plaintext highlighter-rouge">pop</code> are applied after the current scene’s update returns. A newly requested
+scene is not updated in the middle of the caller’s update. If initialization of a transition fails,
+the open scenes remain active and the error is logged.</p>
+
+<p>Do not retain <code class="language-plaintext highlighter-rouge">ctx</code>, <code class="language-plaintext highlighter-rouge">dc</code>, or <code class="language-plaintext highlighter-rouge">nav</code> past the callback. A successful scene initialization is paired
+with teardown when it is replaced, popped, or the host shuts down. The repository’s
+<a href="https://github.com/ash5me/Bairava-Engine/tree/main/sample">public-API scene sample</a> is compiled by
+the normal build and demonstrates the complete lifecycle.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

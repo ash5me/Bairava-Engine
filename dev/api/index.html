@@ -1,0 +1,1213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Public API · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/api/">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="bairava-public-api">Bairava public API</h1>
+
+<p>This reference is generated from an explicit allowlist of canonical names exported by <code class="language-plaintext highlighter-rouge">@import("bairava")</code>.
+Only allowlisted entries are published; implementation target paths are validated but never displayed.
+The current public API is experimental and not production-ready.</p>
+
+<p>87 allowlisted exports. All entries inherit the project’s experimental API status. Callable export types are emitted from compiler reflection; contract notes are authored and reviewed in the manifest.</p>
+
+<h2 id="bairavaconfig"><code class="language-plaintext highlighter-rouge">bairava.Config</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Application configuration, window, renderer, and runtime settings.</p>
+
+<p><strong>Contract:</strong> The parent allocator must outlive the entire run. Settings-file window values override the corresponding startup values. Config.validate returns a specific error before any platform resource is opened.</p>
+
+<ul>
+  <li><strong>Config.allocator (allocators):</strong> Parent allocator for engine, game, asset, and frame allocations; it must remain valid through the full run. If worker_threads is nonzero, it must be thread-safe.</li>
+  <li><strong>Config.window_w, window_h (fields):</strong> Initial native window dimensions in pixels; each must be from 64 through 8192.</li>
+  <li><strong>Config.native_w, native_h (fields):</strong> Reference view dimensions in pixels. Both must be positive; at zoom 1, the limiting window axis matches this view and the other axis may show more world.</li>
+  <li><strong>Config.clear_rgb (fields):</strong> Background RGB channels, each finite and in the inclusive range 0..1.</li>
+  <li><strong>Config.update_hz (fields):</strong> Fixed simulation updates per second; must be greater than zero.</li>
+  <li><strong>Config.zoom_min, zoom_max (fields):</strong> Finite positive zoom bounds that include 1: zoom_min must be at most 1 and zoom_max at least 1.</li>
+  <li><strong>Config.zoom_rate (fields):</strong> Finite, non-negative zoom easing rate per second; zero snaps to the target.</li>
+  <li><strong>Config.post_effects (fields):</strong> Ordered post-processing chain, limited by max_post_effects; an empty slice disables post-processing.</li>
+  <li><strong>Config.texture_budget_bytes (fields):</strong> Approximate cache budget at four bytes per texel. Idle resources are evicted least-recently-used; zero means unlimited.</li>
+  <li><strong>Config.texture_staging_budget_bytes (fields):</strong> Maximum staged texture payload bytes while waiting for upload. Zero removes the cap; a payload exceeding the whole budget fails.</li>
+  <li><strong>Config.worker_threads (fields):</strong> Worker count from 0 through max_worker_threads. Zero runs background work on the main thread.</li>
+  <li><strong>Config.validate (methods):</strong> Checks startup configuration before platform resources are created; it has no side effects.</li>
+  <li><strong>Config.validationMessage (methods):</strong> Returns a stable human-readable explanation for a ValidationError; use the error value for programmatic handling.</li>
+  <li><strong>Config.validate (returns):</strong> Returns void on success, otherwise one of ValidationError. The returned error can be rendered with validationMessage.</li>
+  <li><strong>Config.ValidationError (errors):</strong> EmptyTitle and EmptySettingsFile identify empty required strings; InvalidWindowSize and InvalidNativeViewSize identify non-positive/out-of-range dimensions; InvalidClearColor, InvalidUpdateRate, TooManyWorkerThreads, InvalidZoomBounds, InvalidZoomRate, InvalidDebugFont, TooManyPostEffects, and InvalidPostParams identify the corresponding invalid field constraints.</li>
+  <li><strong>Config.max_worker_threads (capacities):</strong> Hard upper bound of 32 background workers; validate returns TooManyWorkerThreads above it.</li>
+  <li><strong>Config.post_effects (capacities):</strong> The post-effect chain is limited to max_post_effects; validate returns TooManyPostEffects when exceeded.</li>
+</ul>
+
+<h2 id="bairavadefault_debug_font_path"><code class="language-plaintext highlighter-rouge">bairava.default_debug_font_path</code></h2>
+
+<p><strong>Kind:</strong> constant<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Default asset path used for the engine’s debug font.</p>
+
+<h2 id="bairavadefault_debug_font_px"><code class="language-plaintext highlighter-rouge">bairava.default_debug_font_px</code></h2>
+
+<p><strong>Kind:</strong> constant<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Default pixel height used for the engine’s debug font.</p>
+
+<h2 id="bairavacontext"><code class="language-plaintext highlighter-rouge">bairava.Context</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Game-facing access to input, assets, rendering, audio, and other engine services.</p>
+
+<p><strong>Contract:</strong> Passed to init and update; its frame-scoped dt and input state are valid for that update. Resources loaded by the game must be released before shutdown. GPU work is performed on the engine thread.</p>
+
+<ul>
+  <li><strong>Context.mouseWorld (methods):</strong> Maps the current input mouse position through the last presented view layout and current camera to world pixels; call during update.</li>
+  <li><strong>Context.pollEvent (methods):</strong> Consumes the next translated event for this update, returning null when the queue is empty. Events are returned by value.</li>
+  <li><strong>Context.loadTexture (methods):</strong> Loads and uploads immediately on the calling thread. The caller owns the returned Texture and must call deinit before run ends; file/decode errors are returned.</li>
+  <li><strong>Context.acquireTexture, retainTexture, releaseTexture (handles):</strong> Named textures use counted handles: balance each successful acquire or retain with one release. releaseTexture clears the passed handle; resolution after unload/release reports a handle error.</li>
+  <li><strong>Context.readFile (allocators):</strong> Reads a packaged file using the caller-supplied allocator; the caller owns the returned bytes and frees them with that allocator.</li>
+  <li><strong>Context.uploadStaged (methods):</strong> Uploads staged pixels to the GPU on the engine thread. Staged CPU data may be freed as soon as the call returns.</li>
+  <li><strong>Context.max_registered_textures (capacities):</strong> At most max_registered_textures distinct names may be registered; registerTexture returns an error when the limit is reached.</li>
+</ul>
+
+<h2 id="bairavaasseterror"><code class="language-plaintext highlighter-rouge">bairava.AssetError</code></h2>
+
+<p><strong>Kind:</strong> error set<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Errors returned by game-facing asset loading operations.</p>
+
+<h2 id="bairavamax_registered_textures"><code class="language-plaintext highlighter-rouge">bairava.max_registered_textures</code></h2>
+
+<p><strong>Kind:</strong> constant<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Maximum number of distinct names in the texture registry.</p>
+
+<h2 id="bairavacapabilities"><code class="language-plaintext highlighter-rouge">bairava.Capabilities</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Capabilities reported by the selected renderer backend.</p>
+
+<h2 id="bairavashaderformats"><code class="language-plaintext highlighter-rouge">bairava.ShaderFormats</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Shader formats available to the selected renderer backend.</p>
+
+<h2 id="bairavatextureformats"><code class="language-plaintext highlighter-rouge">bairava.TextureFormats</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Texture formats supported by the selected renderer backend.</p>
+
+<h2 id="bairavapresentationcapabilities"><code class="language-plaintext highlighter-rouge">bairava.PresentationCapabilities</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Presentation and surface capabilities exposed by the renderer.</p>
+
+<h2 id="bairavaevent"><code class="language-plaintext highlighter-rouge">bairava.Event</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Platform events translated into the engine’s SDL-independent event model.</p>
+
+<h2 id="bairavascancode"><code class="language-plaintext highlighter-rouge">bairava.Scancode</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Keyboard scancode used by the platform input model.</p>
+
+<h2 id="bairavagamepadid"><code class="language-plaintext highlighter-rouge">bairava.GamepadId</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Identifier for a connected gamepad.</p>
+
+<h2 id="bairavatextinput"><code class="language-plaintext highlighter-rouge">bairava.TextInput</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Text-input event data delivered to game code.</p>
+
+<h2 id="bairavadrawcontext"><code class="language-plaintext highlighter-rouge">bairava.DrawContext</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Frame-scoped rendering context supplied to game draw callbacks.</p>
+
+<p><strong>Contract:</strong> Valid only during draw. Submit drawing through its batch; do not retain the context or its frame-owned data.</p>
+
+<ul>
+  <li><strong>DrawContext.batch (handles):</strong> Borrowed frame batch. Queue work only during draw; the engine owns GPU upload and submission.</li>
+  <li><strong>DrawContext.cam (handles):</strong> Borrowed camera for this draw. World coordinates must be converted to view pixels before APIs that accept view-space coordinates.</li>
+  <li><strong>DrawContext.view_w, view_h (fields):</strong> Current view dimensions in pixels; coordinate-space inputs to drawing are in this view.</li>
+  <li><strong>DrawContext.alpha (fields):</strong> Interpolation factor from previous update (0) to latest update (1), intended for render-only interpolation.</li>
+  <li><strong>DrawContext.dt (fields):</strong> Elapsed seconds since the previous presented frame, capped by the frame loop; use for frame-rate-independent presentation smoothing.</li>
+</ul>
+
+<h2 id="bairavaallocators"><code class="language-plaintext highlighter-rouge">bairava.Allocators</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Allocator set available to game code through the engine context.</p>
+
+<h2 id="bairavarun"><code class="language-plaintext highlighter-rouge">bairava.run</code></h2>
+
+<p><strong>Kind:</strong> function<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Runs a game through initialization, fixed-step updates, drawing, and shutdown.</p>
+
+<p><strong>Contract:</strong> The game type supplies init, update, and draw, plus optional teardown. init errors are returned and do not call game teardown; resources created before an init error must be released by init. A successful init is paired with teardown before platform resources are destroyed. update uses a fixed timestep; draw runs once per presented frame.</p>
+
+<ul>
+  <li><strong>run.Game.init (callbacks):</strong> Called once on the engine thread after platform/runtime setup. An init error is returned by run and does not call game teardown; init must release any resources it acquired before failing.</li>
+  <li><strong>run.Game.update (callbacks):</strong> Called zero or more times per rendered frame at the fixed update_hz rate. The Context and its input/dt are borrowed for that call.</li>
+  <li><strong>run.Game.draw (callbacks):</strong> Called on the engine thread for each presented frame, after updates. DrawContext and frame-owned references must not escape the callback.</li>
+  <li><strong>run.Game.deinit (callbacks):</strong> Optional teardown called exactly once after successful init, before platform and GPU resources are destroyed.</li>
+  <li><strong>run.Config.allocator (allocators):</strong> The allocator supplied in Config must outlive the complete run call.</li>
+</ul>
+
+<h2 id="bairavaversion"><code class="language-plaintext highlighter-rouge">bairava.version</code></h2>
+
+<p><strong>Kind:</strong> constant<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Semantic version of the public Bairava engine API.</p>
+
+<h2 id="bairavascalemode"><code class="language-plaintext highlighter-rouge">bairava.ScaleMode</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Policy for fitting the logical view into the native window.</p>
+
+<h2 id="bairavarenderer"><code class="language-plaintext highlighter-rouge">bairava.Renderer</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Renderer backend selection in application configuration.</p>
+
+<h2 id="bairavaeffect"><code class="language-plaintext highlighter-rouge">bairava.Effect</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Post-processing effect that can be enabled in application configuration.</p>
+
+<h2 id="bairavapostparams"><code class="language-plaintext highlighter-rouge">bairava.PostParams</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Strength parameters consumed by the post-processing effects.</p>
+
+<h2 id="bairavadefault_post_params"><code class="language-plaintext highlighter-rouge">bairava.default_post_params</code></h2>
+
+<p><strong>Kind:</strong> constant<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Default strengths for the available post-processing effects.</p>
+
+<h2 id="bairavatexturepriority"><code class="language-plaintext highlighter-rouge">bairava.TexturePriority</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Priority used when requesting texture preloading.</p>
+
+<h2 id="bairavainput"><code class="language-plaintext highlighter-rouge">bairava.Input</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Current keyboard, mouse, and gamepad input state.</p>
+
+<h2 id="bairavakey"><code class="language-plaintext highlighter-rouge">bairava.Key</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Keyboard key values used by input bindings.</p>
+
+<h2 id="bairavabinding"><code class="language-plaintext highlighter-rouge">bairava.Binding</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Physical control that can be assigned to a game action.</p>
+
+<h2 id="bairavaactionmap"><code class="language-plaintext highlighter-rouge">bairava.ActionMap</code></h2>
+
+<p><strong>Kind:</strong> type factory<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Maps game-defined actions to configurable physical input bindings.</p>
+
+<h2 id="bairavaactionbuffer"><code class="language-plaintext highlighter-rouge">bairava.ActionBuffer</code></h2>
+
+<p><strong>Kind:</strong> type factory<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Simulation-owned press windows for selected input actions.</p>
+
+<h2 id="bairavaactiondefaults"><code class="language-plaintext highlighter-rouge">bairava.ActionDefaults</code></h2>
+
+<p><strong>Kind:</strong> type factory<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Default binding table for a game’s action enum.</p>
+
+<h2 id="bairavabindings"><code class="language-plaintext highlighter-rouge">bairava.bindings</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Functions for loading action bindings from the settings file.</p>
+
+<h2 id="bairavamousebutton"><code class="language-plaintext highlighter-rouge">bairava.MouseButton</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Mouse button values used by input bindings.</p>
+
+<h2 id="bairavagamepadbutton"><code class="language-plaintext highlighter-rouge">bairava.GamepadButton</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Standard gamepad button values used by input bindings.</p>
+
+<h2 id="bairavagamepadaxis"><code class="language-plaintext highlighter-rouge">bairava.GamepadAxis</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Gamepad axis values used by input bindings.</p>
+
+<h2 id="bairavacamera"><code class="language-plaintext highlighter-rouge">bairava.camera</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Camera coordinate conversion and camera-related renderer helpers.</p>
+
+<h2 id="bairavacamera-1"><code class="language-plaintext highlighter-rouge">bairava.Camera</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> 2D camera state and world-to-screen coordinate conversion.</p>
+
+<h2 id="bairavashake"><code class="language-plaintext highlighter-rouge">bairava.Shake</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Deterministic game-owned draw-time camera shake.</p>
+
+<h2 id="bairavahit_flash"><code class="language-plaintext highlighter-rouge">bairava.hit_flash</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Sprite overlay and hit-flash timer helpers.</p>
+
+<h2 id="bairavahitflash"><code class="language-plaintext highlighter-rouge">bairava.HitFlash</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Timer and state for a sprite hit-flash overlay.</p>
+
+<h2 id="bairavarect"><code class="language-plaintext highlighter-rouge">bairava.Rect</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Floating-point rectangle used by sprite rendering APIs.</p>
+
+<h2 id="bairavaspritebatch"><code class="language-plaintext highlighter-rouge">bairava.SpriteBatch</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Frame-local sprite and lighting submissions for the renderer.</p>
+
+<p><strong>Contract:</strong> Use only from the draw callback. Submission order and z values control layering; the renderer owns upload and flush. The batch is not an independently initialized or drawable backend object.</p>
+
+<ul>
+  <li><strong>SpriteBatch.begin (methods):</strong> Starts the frame and clears queued sprites, lights, shadows, and counters. The runtime calls it before game draw.</li>
+  <li><strong>SpriteBatch.addLight (methods):</strong> Adds one view-space point light; returns false without modifying the batch when max_lights is reached.</li>
+  <li><strong>SpriteBatch.addShadowSegment (methods):</strong> Adds one view-space occluder; returns false without modifying the batch when max_shadow_segments is reached.</li>
+  <li><strong>SpriteBatch.addPointLightComponents, addShadowSegmentComponents (methods):</strong> Adds enabled values in input order and stops at capacity; the returned count is the number accepted.</li>
+  <li><strong>SpriteBatch.deinit (methods):</strong> Releases backend and batch-owned GPU/CPU resources. The engine normally owns this lifecycle; game code should not deinitialize DrawContext.batch.</li>
+  <li><strong>SpriteBatch.max_lights, max_shadow_segments (capacities):</strong> Fixed per-frame light and shadow capacities. Add methods report overflow through false or a partial accepted count.</li>
+  <li><strong>SpriteBatch.gpu_state, flat_normal, white (handles):</strong> Backend and helper textures are batch-owned; do not retain or release their pointers independently.</li>
+</ul>
+
+<h2 id="bairavalight"><code class="language-plaintext highlighter-rouge">bairava.Light</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Point light submitted to a sprite batch.</p>
+
+<h2 id="bairavamax_lights"><code class="language-plaintext highlighter-rouge">bairava.max_lights</code></h2>
+
+<p><strong>Kind:</strong> constant<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Maximum point lights accepted by a sprite batch in one frame.</p>
+
+<h2 id="bairavashadowsegment"><code class="language-plaintext highlighter-rouge">bairava.ShadowSegment</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Line segment that blocks point lights added to a sprite batch.</p>
+
+<h2 id="bairavamax_shadow_segments"><code class="language-plaintext highlighter-rouge">bairava.max_shadow_segments</code></h2>
+
+<p><strong>Kind:</strong> constant<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Maximum shadow segments accepted by a sprite batch in one frame.</p>
+
+<h2 id="bairavapointlightcomponent"><code class="language-plaintext highlighter-rouge">bairava.PointLightComponent</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> ECS-friendly point-light data accumulated by a sprite batch.</p>
+
+<h2 id="bairavashadowsegmentcomponent"><code class="language-plaintext highlighter-rouge">bairava.ShadowSegmentComponent</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> ECS-friendly shadow-segment data accumulated by a sprite batch.</p>
+
+<h2 id="bairavatexture"><code class="language-plaintext highlighter-rouge">bairava.Texture</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> GPU texture resource used by rendering operations.</p>
+
+<p><strong>Contract:</strong> A loaded texture is game-owned and must be deinitialized before the run ends. Asset loading can fail; GPU-backed operations remain on the engine thread.</p>
+
+<ul>
+  <li><strong>Texture.width, height (fields):</strong> Texture dimensions in texels.</li>
+  <li><strong>Texture.deinit (methods):</strong> Destroys GPU resources and invalidates the Texture value. Call exactly once while its owning engine runtime is alive.</li>
+  <li><strong>Texture.isReady (methods):</strong> Reports whether an asynchronous upload has completed; textures without an upload fence are immediately ready.</li>
+  <li><strong>Texture.isReady (returns):</strong> Returns true when the texture is safe to sample; it does not wait for an upload to finish.</li>
+  <li><strong>Texture.gpu_state (handles):</strong> Opaque backend-owned state. It is not a game-facing handle and must not be copied for independent ownership.</li>
+</ul>
+
+<h2 id="bairavaloadedatlas"><code class="language-plaintext highlighter-rouge">bairava.LoadedAtlas</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Loaded texture atlas and lookup information for its named regions.</p>
+
+<ul>
+  <li><strong>LoadedAtlas.texture, index (fields):</strong> Owned GPU texture and CPU atlas index. The LoadedAtlas owner must deinitialize both together.</li>
+  <li><strong>LoadedAtlas.region (methods):</strong> Returns a borrowed atlas region by name. A missing name is a programmer error and panics; validate names during content loading if they are not guaranteed.</li>
+  <li><strong>LoadedAtlas.region (returns):</strong> The returned rectangle borrows the atlas index and is valid only while that index remains alive.</li>
+  <li><strong>LoadedAtlas.deinit (methods):</strong> Releases the texture and atlas index; call once before the engine runtime ends.</li>
+</ul>
+
+<h2 id="bairavatexturehandle"><code class="language-plaintext highlighter-rouge">bairava.TextureHandle</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Counted handle to a texture registered with the engine context.</p>
+
+<p><strong>Contract:</strong> Each successful acquire/retain must be balanced by release. A released handle is invalid; operations that resolve stale handles return HandleError.</p>
+
+<ul>
+  <li><strong>TextureHandle.acquireTexture, retainTexture, releaseTexture (handles):</strong> Each successful acquire or retain adds one reference; pair every reference with releaseTexture. Releasing clears the passed handle. Lookup can fail with InvalidHandle or StaleHandle.</li>
+  <li><strong>TextureHandle.textureOf, retainTexture, releaseTexture (errors):</strong> InvalidHandle means the handle was never issued or was released; StaleHandle means its texture was unloaded. Reacquire by registered name after either error.</li>
+</ul>
+
+<h2 id="bairavahandleerror"><code class="language-plaintext highlighter-rouge">bairava.HandleError</code></h2>
+
+<p><strong>Kind:</strong> error set<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Errors for invalid, released, or unloaded resource handles.</p>
+
+<h2 id="bairavaview"><code class="language-plaintext highlighter-rouge">bairava.view</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> View fitting and coordinate mapping between window, view, and world.</p>
+
+<h2 id="bairavamath"><code class="language-plaintext highlighter-rouge">bairava.math</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Vector, matrix, and related mathematical operations.</p>
+
+<h2 id="bairavatransform"><code class="language-plaintext highlighter-rouge">bairava.transform</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Local transforms and parent-child world-matrix composition.</p>
+
+<h2 id="bairavastrings"><code class="language-plaintext highlighter-rouge">bairava.strings</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Validated fixed-capacity strings for names and paths.</p>
+
+<h2 id="bairavahash_map"><code class="language-plaintext highlighter-rouge">bairava.hash_map</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Hash map implementation keyed by validated names.</p>
+
+<h2 id="bairavaassets"><code class="language-plaintext highlighter-rouge">bairava.assets</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Asset names, identifiers, and validated paths.</p>
+
+<h2 id="bairavavalidate"><code class="language-plaintext highlighter-rouge">bairava.validate</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Asset manifest, sprite list, and atlas-index validation.</p>
+
+<h2 id="bairavahot_reload"><code class="language-plaintext highlighter-rouge">bairava.hot_reload</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Development-time hot-reload change notifications.</p>
+
+<h2 id="bairavaatlas"><code class="language-plaintext highlighter-rouge">bairava.atlas</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Texture atlas index and named sprite rectangles.</p>
+
+<h2 id="bairavavector"><code class="language-plaintext highlighter-rouge">bairava.vector</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Custom struct vectors in array-of-structs or structure-of-arrays layouts.</p>
+
+<h2 id="bairavaphysics"><code class="language-plaintext highlighter-rouge">bairava.physics</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Physics, collision shapes, and spatial query APIs.</p>
+
+<h2 id="bairavaentity"><code class="language-plaintext highlighter-rouge">bairava.entity</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Entity-component storage and iteration APIs.</p>
+
+<h2 id="bairavatilemap"><code class="language-plaintext highlighter-rouge">bairava.tilemap</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Tile-map data and operations.</p>
+
+<h2 id="bairavatilemap_draw"><code class="language-plaintext highlighter-rouge">bairava.tilemap_draw</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Camera-windowed tile-map rendering helpers.</p>
+
+<h2 id="bairavaparallax"><code class="language-plaintext highlighter-rouge">bairava.parallax</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Parallax background drawing helpers.</p>
+
+<h2 id="bairavanavigation"><code class="language-plaintext highlighter-rouge">bairava.navigation</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Grid-based navigation and pathfinding APIs.</p>
+
+<h2 id="bairavaai"><code class="language-plaintext highlighter-rouge">bairava.ai</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> AI behavior and decision helpers.</p>
+
+<h2 id="bairavareplay"><code class="language-plaintext highlighter-rouge">bairava.replay</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Deterministic input replay and save-related APIs.</p>
+
+<h2 id="bairavaskeleton_draw"><code class="language-plaintext highlighter-rouge">bairava.skeleton_draw</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Skeletal pose and attachment rendering helpers.</p>
+
+<h2 id="bairavaanimation"><code class="language-plaintext highlighter-rouge">bairava.animation</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Skeletal and sprite animation data and playback APIs.</p>
+
+<h2 id="bairavaaudio"><code class="language-plaintext highlighter-rouge">bairava.audio</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Sound playback, streaming, mixing, and audio resource APIs.</p>
+
+<h2 id="bairavasettings"><code class="language-plaintext highlighter-rouge">bairava.settings</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Game settings-file parsing and input binding configuration.</p>
+
+<h2 id="bairavalocalization"><code class="language-plaintext highlighter-rouge">bairava.localization</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Localized string catalogs and locale identifiers.</p>
+
+<h2 id="bairavaparticles"><code class="language-plaintext highlighter-rouge">bairava.particles</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Bounded particle simulation and drawing.</p>
+
+<h2 id="bairavaui"><code class="language-plaintext highlighter-rouge">bairava.ui</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Immediate-mode widgets, text layout, and UI APIs.</p>
+
+<h2 id="bairavadiagnostics"><code class="language-plaintext highlighter-rouge">bairava.diagnostics</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Engine diagnostic counters and reporting.</p>
+
+<h2 id="bairavaconsole"><code class="language-plaintext highlighter-rouge">bairava.console</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> In-game developer console APIs.</p>
+
+<h2 id="bairavadebug_geometry"><code class="language-plaintext highlighter-rouge">bairava.debug_geometry</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Debug drawing geometry helpers.</p>
+
+<h2 id="bairavalog"><code class="language-plaintext highlighter-rouge">bairava.log</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Engine and game logging APIs.</p>
+
+<h2 id="bairavascript"><code class="language-plaintext highlighter-rouge">bairava.script</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Embedded scripting runtime interfaces.</p>
+
+<h2 id="bairavajobs"><code class="language-plaintext highlighter-rouge">bairava.jobs</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Background job and task scheduling APIs.</p>
+
+<h2 id="bairavacrash"><code class="language-plaintext highlighter-rouge">bairava.crash</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Crash reporting and crash-context helpers.</p>
+
+<h2 id="bairavaprofile"><code class="language-plaintext highlighter-rouge">bairava.profile</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Engine profiling scopes and counters.</p>
+
+<h2 id="bairavascene"><code class="language-plaintext highlighter-rouge">bairava.scene</code></h2>
+
+<p><strong>Kind:</strong> namespace<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Scene lifecycle and scene interface definitions.</p>
+
+<h2 id="bairavascenehost"><code class="language-plaintext highlighter-rouge">bairava.SceneHost</code></h2>
+
+<p><strong>Kind:</strong> type factory<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Generic scene-host type specialized for a game root type.</p>
+
+<p><strong>Contract:</strong> Instantiate with the root scene type and pass the resulting type to bairava.run. Scene callbacks are driven by the host; transitions are applied after update at a safe point.</p>
+
+<ul>
+  <li><strong>SceneHost.Root.init (callbacks):</strong> Constructs a scene from a borrowed Context. The host owns the returned scene value; an init error leaves the existing scene stack active.</li>
+  <li><strong>SceneHost.Root.update (callbacks):</strong> Runs only for the active scene; receives a borrowed Context and SceneNavigator. Requests are deferred until the update safe point.</li>
+  <li><strong>SceneHost.Root.draw (callbacks):</strong> Draws open scenes bottom-to-top; DrawContext is borrowed for the callback.</li>
+  <li><strong>SceneHost.Root.deinit / Root.deinitWithContext (callbacks):</strong> Optional teardown runs once when a scene is popped, replaced, or the host shuts down. Use deinitWithContext when resource release needs Context.</li>
+</ul>
+
+<h2 id="bairavascenenavigator"><code class="language-plaintext highlighter-rouge">bairava.SceneNavigator</code></h2>
+
+<p><strong>Kind:</strong> type<br />
+<strong>Stability:</strong> experimental<br />
+<strong>Summary:</strong> Navigation handle for requesting scene transitions.</p>
+
+<p><strong>Contract:</strong> Borrowed for the active scene’s update callback. A request is recorded and applied after updates at the next safe point; a later request replaces an earlier pending request.</p>
+
+<ul>
+  <li><strong>SceneNavigator.switchTo (methods):</strong> Requests replacement of the active scene while keeping scenes below it open. The new scene is initialized before the replaced scene is released.</li>
+  <li><strong>SceneNavigator.push (methods):</strong> Requests a new scene above the active scene, suspending but continuing to draw the prior scene. Applying beyond max_depth fails and leaves the stack unchanged.</li>
+  <li><strong>SceneNavigator.pop (methods):</strong> Requests closing the active scene so the one below resumes. Popping the root is rejected when the request is applied; use switchTo to replace it.</li>
+  <li><strong>SceneNavigator.max_depth (capacities):</strong> The scene stack holds at most eight scenes; an over-capacity push is refused when pending transitions are applied.</li>
+  <li><strong>SceneNavigator.SceneNavigator (handles):</strong> Borrowed during the active scene’s update callback; do not retain it after update returns.</li>
+</ul>
+
+<p>304 of 360 type/member contract areas are marked needs_review. This is a visible coverage report, not a claim that the API is fully documented.</p>
+
+<h2 id="member-level-contract-checklist">Member-level contract checklist</h2>
+
+<p><code class="language-plaintext highlighter-rouge">needs_review</code> means the member-level audit or documentation is incomplete; <code class="language-plaintext highlighter-rouge">documented</code> means the applicable contracts are recorded above; <code class="language-plaintext highlighter-rouge">not_applicable</code> means the category does not apply to the type.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Public type</th>
+      <th>Fields</th>
+      <th>Methods</th>
+      <th>Parameters</th>
+      <th>Returns</th>
+      <th>Errors</th>
+      <th>Allocators</th>
+      <th>Handles</th>
+      <th>Callbacks</th>
+      <th>Capacities</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Config</code></td>
+      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Context</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Capabilities</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.ShaderFormats</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.TextureFormats</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.PresentationCapabilities</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Event</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Scancode</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.GamepadId</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.TextInput</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.DrawContext</code></td>
+      <td>needs_review</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Allocators</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.ScaleMode</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Renderer</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Effect</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.PostParams</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.TexturePriority</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Input</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Key</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Binding</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.ActionMap</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.ActionBuffer</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.ActionDefaults</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.MouseButton</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.GamepadButton</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.GamepadAxis</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Camera</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Shake</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.HitFlash</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Rect</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.SpriteBatch</code></td>
+      <td>needs_review</td>
+      <td>documented</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>documented</td>
+      <td>needs_review</td>
+      <td>documented</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Light</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.ShadowSegment</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.PointLightComponent</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.ShadowSegmentComponent</code></td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.Texture</code></td>
+      <td>needs_review</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.LoadedAtlas</code></td>
+      <td>documented</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.TextureHandle</code></td>
+      <td>needs_review</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.SceneHost</code></td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>not_applicable</td>
+      <td>needs_review</td>
+      <td>needs_review</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>needs_review</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">bairava.SceneNavigator</code></td>
+      <td>needs_review</td>
+      <td>documented</td>
+      <td>needs_review</td>
+      <td>not_applicable</td>
+      <td>needs_review</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+      <td>not_applicable</td>
+      <td>documented</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="compiler-derived-callable-types">Compiler-derived callable types</h2>
+
+<p>Types below are derived from the configured <code class="language-plaintext highlighter-rouge">bairava</code> module. Parameter names are omitted by Zig type reflection; generic type parameters appear as <code class="language-plaintext highlighter-rouge">type</code>, and inferred generic parameters as <code class="language-plaintext highlighter-rouge">anytype</code>.</p>
+
+<h3 id="bairavarun-1"><code class="language-plaintext highlighter-rouge">bairava.run</code></h3>
+
+<p><code class="language-plaintext highlighter-rouge">fn (type, bairava.Config) anyerror!void</code></p>
+
+<h3 id="bairavaactionmap-1"><code class="language-plaintext highlighter-rouge">bairava.ActionMap</code></h3>
+
+<p><code class="language-plaintext highlighter-rouge">fn (type) type</code></p>
+
+<h3 id="bairavaactionbuffer-1"><code class="language-plaintext highlighter-rouge">bairava.ActionBuffer</code></h3>
+
+<p><code class="language-plaintext highlighter-rouge">fn (type) type</code></p>
+
+<h3 id="bairavaactiondefaults-1"><code class="language-plaintext highlighter-rouge">bairava.ActionDefaults</code></h3>
+
+<p><code class="language-plaintext highlighter-rouge">fn (type) type</code></p>
+
+<h3 id="bairavascenehost-1"><code class="language-plaintext highlighter-rouge">bairava.SceneHost</code></h3>
+
+<p><code class="language-plaintext highlighter-rouge">fn (type) type</code></p>
+
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>

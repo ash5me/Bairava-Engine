@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="/Bairava-Engine/dev">
+    <title>Build profiles · Bairava Engine Documentation</title>
+    <meta name="description" content="Guides and public API reference for the Bairava 2D game engine.">
+    <link rel="canonical" href="https://ash5me.github.io/Bairava-Engine/dev/guides/build-profiles.html">
+    <link rel="stylesheet" href="/Bairava-Engine/dev/assets/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/Bairava-Engine/dev/">Bairava Engine</a>
+      <nav aria-label="Primary">
+        
+        <a href="/Bairava-Engine/dev/">Home</a>
+        
+        <a href="/Bairava-Engine/dev/api/">API reference</a>
+        
+        <a href="/Bairava-Engine/dev/guides/getting-started.html">Getting started</a>
+        
+        <a href="/Bairava-Engine/dev/guides/application-lifecycle.html">Application lifecycle</a>
+        
+        <a href="/Bairava-Engine/dev/guides/rendering.html">Rendering sprites and cameras</a>
+        
+        <a href="/Bairava-Engine/dev/guides/input.html">Input and action mapping</a>
+        
+        <a href="/Bairava-Engine/dev/guides/assets.html">Assets and resource ownership</a>
+        
+        <a href="/Bairava-Engine/dev/guides/scenes.html">Scenes and transitions</a>
+        
+      </nav>
+    </header>
+    <main id="content" class="content">
+      <h1 id="build-profiles">Build profiles</h1>
+
+<p>Use <code class="language-plaintext highlighter-rouge">-Dprofile=&lt;name&gt;</code> to select a named preset. <code class="language-plaintext highlighter-rouge">development</code> is the default.
+The profile sets the default optimization mode and the defaults for development
+tools and GPU validation; explicit options can override those defaults.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Profile</th>
+      <th>Optimization</th>
+      <th>Development tools</th>
+      <th>GPU validation</th>
+      <th>Intended use</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">development</code></td>
+      <td><code class="language-plaintext highlighter-rouge">Debug</code></td>
+      <td>On</td>
+      <td>Off</td>
+      <td>Normal local work: overlay, diagnostics, console, and hot reload</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">debug</code></td>
+      <td><code class="language-plaintext highlighter-rouge">Debug</code></td>
+      <td>Off</td>
+      <td>On</td>
+      <td>Minimal runtime with Debug checks and SDL GPU validation</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">release</code></td>
+      <td><code class="language-plaintext highlighter-rouge">ReleaseFast</code></td>
+      <td>Off</td>
+      <td>Off</td>
+      <td>Packaged player builds</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Assertions and the default log threshold follow Zig’s optimization mode, not the
+profile name. <code class="language-plaintext highlighter-rouge">Debug</code> and <code class="language-plaintext highlighter-rouge">ReleaseSafe</code> check assertions and default to debug
+logs; <code class="language-plaintext highlighter-rouge">ReleaseFast</code> and <code class="language-plaintext highlighter-rouge">ReleaseSmall</code> compile assertions out and default to
+info logs. The settings file can still override the runtime log threshold.</p>
+
+<h2 id="examples">Examples</h2>
+
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">zig</span><span class="w"> </span><span class="nx">build</span><span class="w"> </span><span class="nx">run</span><span class="w">
+</span><span class="n">zig</span><span class="w"> </span><span class="nx">build</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nt">-Dprofile</span><span class="o">=</span><span class="n">debug</span><span class="w">
+</span><span class="nx">zig</span><span class="w"> </span><span class="nx">build</span><span class="w"> </span><span class="nt">-Dprofile</span><span class="o">=</span><span class="n">release</span><span class="w">
+</span><span class="nx">zig</span><span class="w"> </span><span class="nx">build</span><span class="w"> </span><span class="nt">-Dprofile</span><span class="o">=</span><span class="n">release</span><span class="w"> </span><span class="nt">-Doptimize</span><span class="o">=</span><span class="n">ReleaseSafe</span><span class="w">
+</span><span class="nx">zig</span><span class="w"> </span><span class="nx">build</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nt">-Dprofile</span><span class="o">=</span><span class="n">development</span><span class="w"> </span><span class="nt">-Ddev-tools</span><span class="o">=</span><span class="n">false</span><span class="w"> </span><span class="nt">-Dgpu-debug</span><span class="o">=</span><span class="n">true</span><span class="w">
+</span><span class="nx">zig</span><span class="w"> </span><span class="nx">build</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nt">-Dprofile</span><span class="o">=</span><span class="n">development</span><span class="w"> </span><span class="nt">-Dtracy</span><span class="o">=</span><span class="n">true</span><span class="w">
+</span><span class="nx">zig</span><span class="w"> </span><span class="nx">build</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nt">-Dprofile</span><span class="o">=</span><span class="n">release</span><span class="w"> </span><span class="nt">-Ddxil</span><span class="o">=</span><span class="n">true</span><span class="w">
+</span><span class="nx">zig</span><span class="w"> </span><span class="nx">build</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nt">-Dprofile</span><span class="o">=</span><span class="n">release</span><span class="w"> </span><span class="nt">-Dmetal</span><span class="o">=</span><span class="n">true</span><span class="w">
+</span><span class="nx">powershell</span><span class="w"> </span><span class="nt">-ExecutionPolicy</span><span class="w"> </span><span class="nx">Bypass</span><span class="w"> </span><span class="nt">-File</span><span class="w"> </span><span class="o">.</span><span class="nx">\scripts\package-release.ps1</span><span class="w">
+</span></code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">-Doptimize</code>, <code class="language-plaintext highlighter-rouge">-Ddev-tools</code>, and <code class="language-plaintext highlighter-rouge">-Dgpu-debug</code> override the corresponding
+profile defaults. Bare <code class="language-plaintext highlighter-rouge">--release</code> selects <code class="language-plaintext highlighter-rouge">ReleaseFast</code>; an explicit
+<code class="language-plaintext highlighter-rouge">-Doptimize</code> takes precedence. Tracy, DXIL, and Metal remain opt-in, orthogonal
+build features. <code class="language-plaintext highlighter-rouge">-Ddxil=true</code> and <code class="language-plaintext highlighter-rouge">-Dmetal=true</code> embed additional shader
+targets; they do not force the runtime to select that backend.</p>
+
+<p>The release script builds with the <code class="language-plaintext highlighter-rouge">release</code> profile unless <code class="language-plaintext highlighter-rouge">-Profile</code> selects
+another preset. With <code class="language-plaintext highlighter-rouge">-SkipBuild</code>, the script packages existing files and
+records the selected profile as supplied by the caller; it cannot verify how
+those files were compiled.</p>
+
+    </main>
+    <footer>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 16e2f78c99732325648c847883c5d2835114a120. Experimental software; APIs and documentation may change.</p>
+      <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
+    </footer>
+    <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
+  </body>
+</html>
