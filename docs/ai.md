@@ -24,6 +24,6 @@ tick. `reset` clears those cursors so evaluation starts over. The tree validates
 root, child references are in range, and the graph is a tree rather than a cycle or shared-child graph. The node array,
 child-index slices, and anything captured by action callbacks must outlive the tree.
 
-The sample game's enemy uses a small dedicated state machine in `src/game/enemy_ai.zig`; the generic behavior tree is
+The sample game's enemy uses a small dedicated state machine; the generic behavior tree is
 available to games that need reusable sequence/selector composition. Navigation primitives and the `navigation.Agent`
 that combines route planning with movement are documented in [navigation](navigation.md).

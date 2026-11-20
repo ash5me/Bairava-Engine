@@ -1,13 +1,11 @@
 # Navigation
 
 Navigation lets AI units find routes through a level. It has two parts. The engine provides the walkable grid, the
-route search, and a follower that walks a box along a route through the tile map's collision. The game provides the
-enemies, which use those parts to wander, chase the player, and walk home. The engine code is in
-`src/engine/navigation/`. The enemy code is in `src/game/enemy.zig` and `src/game/enemy_ai.zig`.
+route search, and a follower that walks a box along a route through the tile map's collision. The sample game uses
+those parts to wander, chase the player, and walk home.
 
-The engine modules name no game type. The public namespace is exported through `engine.navigation` and implemented
-under `src/engine/navigation/`, with `navigation.zig` collecting the grid, pathfinder, follower, agent, and flow-field
-APIs. The enemy state machine and game-specific movement remain under `src/game/`.
+The engine modules name no game type. The public namespace is exported through `engine.navigation`; its navigation module collects the grid, pathfinder,
+follower, agent, and flow-field APIs. The enemy state machine and game-specific movement remain in the sample game.
 
 ## The walkable grid
 
@@ -84,7 +82,7 @@ decides what to do next, and a chasing enemy replans on its next repath.
 
 ## Enemies
 
-Each enemy is in one of four states. The brain in `enemy_ai.zig` picks the state, and `enemy.zig` plans and walks.
+The sample game's enemy brain uses four states and the game code plans and walks the enemy.
 
 | State | Entered when | What it does | Leaves when |
 |---|---|---|---|
@@ -104,10 +102,8 @@ Enemies are placed with `enemy <col> <row>` lines in the level's metadata file. 
 
 ## Changing the numbers
 
-- `src/game/enemy.zig`: speeds, sight range, wander radius, and the repath interval.
-- `src/game/enemy_ai.zig`: the idle wait range and the lose-sight time.
-- `src/engine/navigation/follow.zig`: the arrival distance and the stuck time.
-- `src/engine/navigation/pathfind.zig`: the step costs.
+The sample's speeds, sight range, wander radius, repath interval, idle wait, and lose-sight time are game choices.
+The navigation system's route step costs, arrival distance, and stuck timeout are engine behavior.
 
 ## Debugging
 
@@ -117,8 +113,8 @@ Enemies are placed with `enemy <col> <row>` lines in the level's metadata file. 
 
 ## Tests
 
-`zig build test` runs the grid, pathfinder, flow field, follower, navigation agent, and behavior brain tests. The enemy glue in
-`enemy.zig` imports the engine, so the tests do not cover it. The game is the check for that part.
+`zig build test` runs the grid, pathfinder, flow field, follower, navigation agent, and behavior brain tests. The
+repository's sample game is also compiled as part of the normal build.
 
 ## Limits
 

@@ -22,11 +22,16 @@ The finished site should let a game developer discover an API, understand its co
 
 This plan defines the complete implementation sequence. The checkpoint below records verified work; unchecked tasks remain outstanding.
 
-### Current implementation checkpoint — November 20, 2026
+### Current implementation checkpoint
 
 - Confirmed the pinned compiler is Zig `0.16.0-dev.3142+5ccfeb926` and the game-facing import is `@import("bairava")`, rooted at `src/engine/bairava.zig`.
-- Replaced the auto-listed root inventory with a typed Zig manifest allowlisting all 87 package-root exports. The AST exporter validates full root coverage, canonical-name uniqueness, and direct alias targets; a compile-time test resolves every entry through the configured engine module.
-- `zig build docs` currently emits one Markdown API page. Kind labels are manifest classifications; stability, compiler-derived signatures, member contracts, guides, site assembly, CI, hosting, and release versioning are still outstanding.
+- The typed manifest allowlists all 87 package-root exports. The AST exporter validates root coverage, canonical-name uniqueness, and direct alias targets; a compile-time test resolves each entry through the configured engine module.
+- `zig build docs` generates the public-only Markdown inventory and assembles a curated Jekyll source tree with 23 guides, navigation, search data, a landing page, 404 page, and engine/Zig/source-commit metadata. All 87 allowlisted entries are labeled experimental. Callable signatures are derived from compiler reflection; the manifest supplies summaries and selected authored contracts. The lifecycle guide embeds a compile-checked public API example.
+- The manifest now carries member-contract items and a nine-area checklist for fields, methods, parameters, returns, errors, allocators, handles, callbacks, and capacities. The exporter validates checklist claims and renders outstanding `needs_review` areas. Initial member-level contracts cover `Config`, `Context`, `DrawContext`, `SpriteBatch`, texture resources/handles, scene callbacks, and navigation; this is a first tranche, not complete coverage.
+- `zig build test` runs the example, public export/signature/member-checklist checks, and 15 documentation-site tests. CI generates and renders the site on Linux, then checks required pages, internal links/anchors, search targets, and implementation-detail leakage in rendered output. Local Ruby/Bundler/Jekyll reproduction is still a separate validation task.
+- Original documentation prose is licensed CC BY 4.0, and a pull-request checklist covers API and documentation changes. GitHub Pages deployment is configured in CI but not verified: the Pages API returns 404 and no deployment has run. After repository setup, manually verify Pages uses GitHub Actions, permissions, a `main` deployment at `/dev/`, a test release snapshot, and that a later deployment preserves its URL.
+- Existing release tags predate the current docs builder and are not backfilled. New release tags must use `vMAJOR.MINOR.PATCH`, match the package/API version, and include the documentation tooling.
+- API coverage is not yet complete at the member-contract level: type fields, method semantics, and many ownership/error/threading details still need review and documentation. The local site builder and CI workflow are implemented, but actual GitHub Pages configuration and deployment remain external blockers. Do not treat this implementation as completion of the full plan.
 
 ## 2. Decisions and constraints
 
@@ -370,6 +375,20 @@ Define a small normalized IR independent of the chosen extraction adapter. Each 
 
 The IR should not contain unapproved declarations. Use this same IR to generate HTML, navigation, and search data so the different outputs cannot drift apart.
 
+#### Member-level contract checklist
+
+The manifest distinguishes authored member contracts from coverage status. For each public type and type factory, review these areas:
+
+- Fields: meaning, units, valid values, defaults, and mutation rules.
+- Methods: purpose, preconditions, side effects, and required call order.
+- Parameters and returns: meaning, ownership, lifetime, ranges, and coordinate spaces.
+- Errors: triggering conditions and recovery guidance.
+- Allocators, handles, and pointers: supplier, thread-safety, validity, invalidation, and release rules.
+- Callbacks: timing, thread, borrowed arguments, and reentrancy expectations.
+- Capacities: limit and overflow reporting behavior.
+
+Use `documented` only when the relevant member contracts are represented in the manifest, `not_applicable` only after review, and `needs_review` when coverage is missing or partial. The generated checklist is a visible gap report; it does not imply completion merely because the exporter builds.
+
 ### 7.6 Exporter tests
 
 Required tests:
@@ -386,6 +405,8 @@ Required tests:
 - [ ] Internal declarations do not appear in search data, navigation, or page metadata.
 - [ ] No source archive or full internal source listing is copied into the public artifact.
 - [ ] The generated page set is deterministic for the same source, toolchain, and manifest.
+- [ ] Every public type's member checklist has no unresolved `needs_review` areas before declaring API documentation complete.
+- [x] Checklist claims are validated against authored member-contract entries, and unresolved areas are included in the generated API reference.
 
 Add a test that scans the complete final output directory, not just the visible home page.
 
@@ -691,10 +712,21 @@ Do not deploy public documentation from untrusted pull-request contexts.
 - [ ] Enable GitHub Pages for the repository.
 - [ ] Configure Pages to use GitHub Actions as the deployment source.
 - [ ] Verify repository Actions permissions.
-- [ ] Configure the workflow's Pages build/deploy permissions.
-- [ ] Confirm repository visibility is compatible with intended Pages availability.
-- [ ] Decide whether to use the proposed `ash5me.github.io/Bairava-Engine/` URL or a custom domain.
+- [x] Configure the workflow's Pages build/deploy permissions.
+- [x] Confirm repository visibility is compatible with intended Pages availability.
+- [x] Decide whether to use the proposed `ash5me.github.io/Bairava-Engine/` URL or a custom domain.
 - [ ] If using a custom domain, configure DNS and HTTPS separately.
+
+### Manual deployment verification gate
+
+Hosting is **configured but not verified** until all of these are checked:
+
+- [ ] Enable GitHub Pages in repository Settings.
+- [ ] Select GitHub Actions as the Pages deployment source.
+- [ ] Confirm workflow Pages permissions and repository Actions settings.
+- [ ] Run a deployment from `main` and verify the `/dev/` URL over HTTPS.
+- [ ] Publish a test release snapshot and verify its versioned URL.
+- [ ] Run a later deployment and verify the earlier release URL remains unchanged.
 
 ### Deployment model
 
@@ -940,22 +972,22 @@ These milestones are a recommended grouping, not calendar estimates.
 
 The documentation project is complete when all of the following are true:
 
-- [ ] `zig build docs` generates the public API reference using the repository's pinned Zig 0.16 toolchain.
+- [x] `zig build docs` generates the public API reference using the repository's pinned Zig 0.16 toolchain.
 - [ ] The reference accurately represents the supported public `bairava` package.
-- [ ] The public API manifest is explicit, reviewed, and checked against real declarations.
-- [ ] Canonical public names are used; internal implementation paths are not published as alternate public entries.
-- [ ] Internal source listings, source archives, internal navigation, and internal search entries are absent.
+- [x] The public API manifest is explicit, reviewed, and checked against real declarations.
+- [x] Canonical public names are used; internal implementation paths are not published as alternate public entries.
+- [x] Internal source listings, source archives, internal navigation, and internal search entries are absent.
 - [ ] Public declarations have useful descriptions and important contracts are explained.
-- [ ] Internal implementation is not presented as stable game-facing API.
-- [ ] Getting-started and core guides cover the normal game-development workflow.
-- [ ] Advertised compilable examples are built in CI.
-- [ ] Documentation validation runs on pull requests.
+- [x] Internal implementation is not presented as stable game-facing API.
+- [x] Getting-started and core guides cover the normal game-development workflow.
+- [x] Advertised compilable examples are built in CI.
+- [x] Documentation validation runs on pull requests.
 - [ ] `main` automatically publishes development documentation.
 - [ ] Release tags publish immutable, matching documentation snapshots.
 - [ ] `latest` points to the newest stable release.
 - [ ] GitHub Pages serves the site over HTTPS with working nested links.
-- [ ] The repository has a repeatable documentation contribution and release checklist.
-- [ ] No separate Zig 0.17 documentation toolchain is required.
+- [x] The repository has a repeatable documentation contribution and release checklist.
+- [x] No separate Zig 0.17 documentation toolchain is required.
 
 ## 19. Explicit non-goals
 

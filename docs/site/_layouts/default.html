@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="site-baseurl" content="{{ site.baseurl }}">
+    <title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
+    <meta name="description" content="{{ site.description }}">
+    <link rel="canonical" href="{{ page.url | absolute_url }}">
+    <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="{{ '/' | relative_url }}">Bairava Engine</a>
+      <nav aria-label="Primary">
+        {% for item in site.data.navigation %}
+        <a href="{{ item.url | relative_url }}">{{ item.title }}</a>
+        {% endfor %}
+      </nav>
+    </header>
+    <main id="content" class="content">
+      {{ content }}
+    </main>
+    <footer>
+      <p>Engine {{ site.data.site.engine_version }} · Zig {{ site.data.site.zig_version }} · Source {{ site.data.site.source_commit }}. Experimental software; APIs and documentation may change.</p>
+      <p><a href="{{ '/license/' | relative_url }}">Documentation license</a></p>
+    </footer>
+    <script src="{{ '/assets/search.js' | relative_url }}" defer></script>
+  </body>
+</html>

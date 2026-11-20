@@ -1,0 +1,6 @@
+title: Bairava Engine Documentation
+description: Guides and public API reference for the Bairava 2D game engine.
+url: https://ash5me.github.io
+baseurl: /Bairava-Engine
+markdown: kramdown
+permalink: pretty

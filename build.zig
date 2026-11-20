@@ -409,12 +409,53 @@ pub fn build(b: *std.Build) void {
         .name = "bairava_public_api_inventory",
         .root_module = api_inventory_module,
     });
+    api_inventory_module.addImport("bairava", engine_module);
     const run_api_inventory = b.addRunArtifact(api_inventory);
     run_api_inventory.setCwd(b.path("."));
     const api_inventory_markdown = run_api_inventory.captureStdOut(.{ .basename = "public-api.md" });
-    const install_api_inventory = b.addInstallFile(api_inventory_markdown, "doc/bairava/index.md");
-    const docs_step = b.step("docs", "Generate allowlisted Bairava public API reference entries");
-    docs_step.dependOn(&install_api_inventory.step);
+    const install_api_inventory = b.addInstallFile(api_inventory_markdown, "doc/bairava/_api_source.md");
+    const docs_step = b.step("docs", "Generate the curated Bairava documentation site");
+    const docs_site = b.addSystemCommand(&.{ "python", "scripts/docs/build_site.py" });
+    docs_site.setCwd(b.path("."));
+    docs_site.step.dependOn(&install_api_inventory.step);
+    for ([_][]const u8{
+        "scripts/docs/build_site.py",
+        "scripts/docs/prepare_publication.py",
+        "scripts/docs/test_build_site.py",
+        "examples/api_basics.zig",
+        "docs/getting-started.md",
+        "docs/application-lifecycle.md",
+        "docs/assets.md",
+        "docs/input.md",
+        "docs/rendering.md",
+        "docs/scenes.md",
+        "docs/LICENSE.md",
+        "docs/ai.md",
+        "docs/animation.md",
+        "docs/asset-streaming.md",
+        "docs/audio-streaming.md",
+        "docs/build-profiles.md",
+        "docs/developer-console.md",
+        "docs/lighting.md",
+        "docs/localization.md",
+        "docs/logging.md",
+        "docs/navigation.md",
+        "docs/particles.md",
+        "docs/physics.md",
+        "docs/prefabs.md",
+        "docs/profiling.md",
+        "docs/replay.md",
+        "docs/text.md",
+        "docs/platform-capabilities.md",
+        "docs/site/_config.yml",
+        "build.zig.zon",
+        "src/engine/version.zig",
+        "docs/site/_layouts/default.html",
+        "docs/site/assets/site.css",
+        "docs/site/assets/search.js",
+        "docs/site/404.md",
+    }) |path| docs_site.addFileInput(b.path(path));
+    docs_step.dependOn(&docs_site.step);
 
     const exe = b.addExecutable(.{
         .name = "Semkootru",
@@ -725,6 +766,17 @@ pub fn build(b: *std.Build) void {
     const run_api_tests = b.addRunArtifact(api_tests);
     run_api_tests.setCwd(b.path("."));
 
+    const docs_example_module = b.createModule(.{
+        .root_source_file = b.path("examples/api_basics.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    docs_example_module.addImport("bairava", engine_module);
+    const docs_example_tests = b.addTest(.{ .root_module = docs_example_module });
+    const run_docs_example_tests = b.addRunArtifact(docs_example_tests);
+    run_docs_example_tests.setCwd(b.path("."));
+
     const docs_api_validation_module = b.createModule(.{
         .root_source_file = b.path("tools/docs/public_api_validation.zig"),
         .target = target,
@@ -733,6 +785,7 @@ pub fn build(b: *std.Build) void {
     });
     docs_api_validation_module.addImport("bairava", engine_module);
     const docs_api_validation = b.addTest(.{ .root_module = docs_api_validation_module });
+    const run_docs_api_validation = b.addRunArtifact(docs_api_validation);
     install_api_inventory.step.dependOn(&docs_api_validation.step);
 
     const run_text_ui_tests = addUiTestHarness(b, "test_text", "tests/ui/test_text.c", false);
@@ -747,8 +800,23 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_docs_tests.step);
     test_step.dependOn(&run_api_tests.step);
+    test_step.dependOn(&run_docs_example_tests.step);
+    test_step.dependOn(&run_docs_api_validation.step);
     test_step.dependOn(ui_test_step);
     test_step.dependOn(&asset_tool_tests.step);
     test_step.dependOn(&run_jobs_tests.step);
     test_step.dependOn(&run_script_tests.step);
+    const docs_site_tests = b.addSystemCommand(&.{ "python", "scripts/docs/test_build_site.py" });
+    docs_site_tests.setCwd(b.path("."));
+    docs_site_tests.addFileInput(b.path("scripts/docs/build_site.py"));
+    docs_site_tests.addFileInput(b.path("scripts/docs/prepare_publication.py"));
+    docs_site_tests.addFileInput(b.path("scripts/docs/test_build_site.py"));
+    docs_site_tests.addFileInput(b.path("examples/api_basics.zig"));
+    docs_site_tests.addFileInput(b.path("docs/application-lifecycle.md"));
+    docs_site_tests.addFileInput(b.path("docs/input.md"));
+    docs_site_tests.addFileInput(b.path("docs/assets.md"));
+    docs_site_tests.addFileInput(b.path("docs/rendering.md"));
+    docs_site_tests.addFileInput(b.path("docs/scenes.md"));
+    docs_site_tests.addFileInput(b.path("docs/getting-started.md"));
+    test_step.dependOn(&docs_site_tests.step);
 }
