@@ -9,6 +9,7 @@
 const std = @import("std");
 const animation = @import("animation.zig");
 const data = @import("data.zig");
+const hook_types = @import("hooks.zig");
 
 /// Most parameters a machine declares.
 pub const max_params = 8;
@@ -372,8 +373,11 @@ pub const Machine = struct {
     play: animation.Timeline,
     /// The clip being crossfaded away from, while a blend runs.
     previous: ?animation.Timeline = null,
+    /// State whose clip is fading out while `previous` is set.
+    blend_from: []const u8 = "",
     blend_len: f32 = 0,
     blend_time: f32 = 0,
+    hooks: hook_types.Hooks = .{},
     queue: [event_queue_len]Event = undefined,
     queued: usize = 0,
     /// Events dropped because the queue was full.
@@ -445,7 +449,22 @@ pub const Machine = struct {
         if (self.previous) |*old| old.update(dt);
         if (self.previous != null) {
             self.blend_time += dt;
-            if (self.blend_time >= self.blend_len) self.previous = null;
+            if (self.blend_time >= self.blend_len) {
+                const blend = self.blend_len;
+                const from_state = self.blend_from;
+                const to_state = self.stateName();
+                const clip = self.clipName();
+                self.previous = null;
+                self.blend_from = "";
+                self.hooks.emit(.{
+                    .phase = .blend_finished,
+                    .from_state = from_state,
+                    .to_state = to_state,
+                    .clip = clip,
+                    .blend = blend,
+                    .weight = 1,
+                });
+            }
         }
         self.collectFrameEvents(before, after, looping and after < before);
     }
@@ -475,6 +494,7 @@ pub const Machine = struct {
     pub fn restore(self: *Machine, library: *const data.Library, elapsed: f32) void {
         self.settle(library);
         self.previous = null;
+        self.blend_from = "";
         self.blend_len = 0;
         self.blend_time = 0;
         const length = self.play.clip.duration();
@@ -507,20 +527,60 @@ pub const Machine = struct {
         for (transition.when.slice()) |condition| {
             if (self.def.params[condition.param].trigger) self.values[condition.param] = 0;
         }
+        const from_state = self.stateName();
+        const to_state = self.def.states[transition.to].name;
+        if (!instant and self.previous != null) {
+            self.hooks.emit(.{
+                .phase = .blend_interrupted,
+                .from_state = self.blend_from,
+                .to_state = from_state,
+                .clip = self.clipName(),
+                .blend = self.blend_len,
+                .weight = std.math.clamp(self.blend_time / self.blend_len, 0, 1),
+            });
+        }
         const leaving = self.play;
         self.state = transition.to;
         self.clip = self.chosenClip();
         self.play = animation.Timeline.init(&library.clips[self.clip]);
         self.previous = null;
+        self.blend_from = "";
         self.blend_len = 0;
         self.blend_time = 0;
         if (!instant) {
             if (transition.blend > 0) {
                 self.previous = leaving;
+                self.blend_from = from_state;
                 self.blend_len = transition.blend;
+                self.hooks.emit(.{
+                    .phase = .blend_started,
+                    .from_state = from_state,
+                    .to_state = to_state,
+                    .clip = self.clipName(),
+                    .blend = transition.blend,
+                    .weight = 0,
+                });
             }
-            if (transition.event) |name| self.push(name);
-            if (transition.event_id) |id| self.pushId(id);
+            if (transition.event) |name| {
+                self.push(name);
+                self.hooks.emit(.{
+                    .phase = .event,
+                    .name = name,
+                    .from_state = from_state,
+                    .to_state = to_state,
+                    .clip = self.clipName(),
+                });
+            }
+            if (transition.event_id) |id| {
+                self.pushId(id);
+                self.hooks.emit(.{
+                    .phase = .event,
+                    .id = id,
+                    .from_state = from_state,
+                    .to_state = to_state,
+                    .clip = self.clipName(),
+                });
+            }
         }
     }
 
@@ -556,7 +616,25 @@ pub const Machine = struct {
             const frame: usize = event.frame;
             const passed = if (wrapped) (frame > before or frame <= after) else (frame > before and frame <= after);
             if (passed) {
-                if (event.id) |id| self.pushId(id) else self.push(event.name);
+                if (event.id) |id| {
+                    self.pushId(id);
+                    self.hooks.emit(.{
+                        .phase = .event,
+                        .id = id,
+                        .from_state = self.stateName(),
+                        .to_state = self.stateName(),
+                        .clip = self.clipName(),
+                    });
+                } else {
+                    self.push(event.name);
+                    self.hooks.emit(.{
+                        .phase = .event,
+                        .name = event.name,
+                        .from_state = self.stateName(),
+                        .to_state = self.stateName(),
+                        .clip = self.clipName(),
+                    });
+                }
             }
         }
     }
@@ -612,6 +690,17 @@ const test_machine =
     \\transition walk -> idle when moving == 0 blend 0.2
     \\transition * -> hit when hurt
 ;
+
+const HookLog = struct {
+    notices: [64]hook_types.Notice = undefined,
+    count: usize = 0,
+
+    fn record(context: ?*anyopaque, notice: hook_types.Notice) void {
+        const self: *@This() = @ptrCast(@alignCast(context.?));
+        self.notices[self.count] = notice;
+        self.count += 1;
+    }
+};
 
 test "a transition fires when its condition holds, and blends out of the clip it leaves" {
     var library = try data.Library.parse(std.testing.allocator, test_clips, 4, 4);
@@ -695,6 +784,107 @@ test "transition events and frame events are polled in the order they happen" {
     try std.testing.expect(machine.pollEvent() == null);
 }
 
+test "machine hooks report blend lifecycle and authored events without changing the poll queue" {
+    var library = try data.Library.parse(std.testing.allocator, test_clips, 4, 4);
+    defer library.deinit();
+    var machine = Machine.init(try Definition.parse(std.testing.allocator, test_machine, &library), &library);
+    defer machine.deinit();
+    var log = HookLog{};
+    try std.testing.expect(machine.hooks.subscribe(&log, HookLog.record));
+
+    machine.set(machine.paramId("moving").?, 1);
+    machine.update(0, &library);
+    try std.testing.expectEqual(@as(usize, 2), log.count);
+    try std.testing.expectEqual(hook_types.Phase.blend_started, log.notices[0].phase);
+    try std.testing.expectEqualStrings("idle", log.notices[0].from_state);
+    try std.testing.expectEqualStrings("walk", log.notices[0].to_state);
+    try std.testing.expectEqual(@as(f32, 0), log.notices[0].weight);
+    try std.testing.expectEqual(hook_types.Phase.event, log.notices[1].phase);
+    try std.testing.expectEqualStrings("started", log.notices[1].name);
+    const transition_event = machine.pollEvent() orelse return error.TestExpectedEvent;
+    try std.testing.expectEqualStrings("started", transition_event.name);
+
+    machine.update(0.1, &library);
+    try std.testing.expectEqual(@as(usize, 3), log.count);
+    try std.testing.expectEqualStrings("step", log.notices[2].name);
+    const frame_event = machine.pollEvent() orelse return error.TestExpectedEvent;
+    try std.testing.expectEqualStrings("step", frame_event.name);
+    try std.testing.expect(machine.pollEvent() == null);
+
+    machine.update(0.2, &library);
+    try std.testing.expectEqual(@as(usize, 4), log.count);
+    try std.testing.expectEqual(hook_types.Phase.blend_finished, log.notices[3].phase);
+    try std.testing.expectEqual(@as(f32, 1), log.notices[3].weight);
+    try std.testing.expect(machine.pose().previous == null);
+    try std.testing.expect(machine.pollEvent() == null);
+}
+
+test "a transition interrupts an active blend before starting the next one" {
+    var library = try data.Library.parse(std.testing.allocator, test_clips, 4, 4);
+    defer library.deinit();
+    var machine = Machine.init(try Definition.parse(std.testing.allocator, test_machine, &library), &library);
+    defer machine.deinit();
+    var log = HookLog{};
+    try std.testing.expect(machine.hooks.subscribe(&log, HookLog.record));
+
+    const moving = machine.paramId("moving").?;
+    machine.set(moving, 1);
+    machine.update(0, &library);
+    machine.update(0.05, &library);
+    machine.set(moving, 0);
+    machine.update(0, &library);
+
+    try std.testing.expectEqual(@as(usize, 4), log.count);
+    try std.testing.expectEqual(hook_types.Phase.blend_interrupted, log.notices[2].phase);
+    try std.testing.expectEqualStrings("idle", log.notices[2].from_state);
+    try std.testing.expectEqualStrings("walk", log.notices[2].to_state);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.25), log.notices[2].weight, 1e-5);
+    try std.testing.expectEqual(hook_types.Phase.blend_started, log.notices[3].phase);
+}
+
+test "a zero-duration transition emits no blend phases" {
+    var library = try data.Library.parse(std.testing.allocator, test_clips, 4, 4);
+    defer library.deinit();
+    const definition =
+        \\machine 1
+        \\param moving
+        \\state idle
+        \\clip idle
+        \\state walk
+        \\clip walk
+        \\transition idle -> walk when moving == 1
+    ;
+    var machine = Machine.init(try Definition.parse(std.testing.allocator, definition, &library), &library);
+    defer machine.deinit();
+    var log = HookLog{};
+    try std.testing.expect(machine.hooks.subscribe(&log, HookLog.record));
+    machine.set(machine.paramId("moving").?, 1);
+    machine.update(0, &library);
+    try std.testing.expectEqual(@as(usize, 0), log.count);
+    try std.testing.expect(machine.pose().previous == null);
+}
+
+test "frame event hooks are delivered even when the authored-event queue is full" {
+    var library = try data.Library.parse(std.testing.allocator, test_clips, 4, 4);
+    defer library.deinit();
+    const definition =
+        \\machine 1
+        \\state idle
+        \\clip idle
+        \\event idle 1 tick
+    ;
+    var machine = Machine.init(try Definition.parse(std.testing.allocator, definition, &library), &library);
+    defer machine.deinit();
+    var log = HookLog{};
+    try std.testing.expect(machine.hooks.subscribe(&log, HookLog.record));
+
+    var index: usize = 0;
+    while (index < (event_queue_len + 4) * 2) : (index += 1) machine.update(0.1, &library);
+    try std.testing.expectEqual(@as(usize, event_queue_len + 4), log.count);
+    try std.testing.expectEqual(@as(u32, 4), machine.dropped);
+    try std.testing.expectEqual(@as(usize, event_queue_len), machine.queued);
+}
+
 test "a trigger parameter fires its transition once, and is cleared when it does" {
     var library = try data.Library.parse(std.testing.allocator, test_clips, 4, 4);
     defer library.deinit();
@@ -716,13 +906,20 @@ test "restore settles the state from the saved parameters, seeks the clip, and q
     defer library.deinit();
     var machine = Machine.init(try Definition.parse(std.testing.allocator, test_machine, &library), &library);
     defer machine.deinit();
+    var log = HookLog{};
+    try std.testing.expect(machine.hooks.subscribe(&log, HookLog.record));
 
     machine.set(machine.paramId("moving").?, 1);
+    machine.update(0, &library);
+    try std.testing.expect(machine.pose().previous != null);
+    _ = machine.pollEvent() orelse return error.TestExpectedEvent;
+    log.count = 0;
     machine.restore(&library, 0.15);
     try std.testing.expectEqualStrings("walk", machine.stateName());
     try std.testing.expectApproxEqAbs(@as(f32, 0.15), machine.clipTime(), 1e-5);
     try std.testing.expectEqual(@as(usize, 1), machine.frameIndex());
     try std.testing.expect(machine.pose().previous == null);
+    try std.testing.expectEqual(@as(usize, 0), log.count);
     try std.testing.expect(machine.pollEvent() == null);
 }
 

@@ -80,6 +80,15 @@ transition * -> hit when hurt
 - `machine.restore(library, elapsed)` settles the state from the current parameters, seeks the clip, and
   blends nothing and queues no events. Games use it when loading a save.
 
+`machine.hooks` is a fixed four-slot listener list. `subscribe(context, callback)` returns false when full; subscribing
+the same callback and context twice keeps one slot. `unsubscribe(context, callback)` removes a slot without changing
+the order of the rest. Hooks receive `HookNotice` values for authored events and `blend_started`, `blend_finished`,
+and `blend_interrupted` phases. They are separate from `pollEvent()`: authored event hooks still fire when the poll
+queue is full, and blend phases never enter that queue. A transition that interrupts a blend reports the interruption,
+then any new blend start, then its authored event. Restore and instant settling are silent. Callback name slices remain
+borrowed from the machine definition or clip library. Callbacks may use `set`, but must not call `update`, `restore`,
+`deinit`, `pollEvent`, `subscribe`, or `unsubscribe` on the machine.
+
 `engine.animation.MachineDefinition.parse` checks the text against a library. Unknown clips, parameters,
 and states, malformed lines, and too many items are parse errors. The definition copies its text, so the
 library may be replaced without invalidating it, but the clip indices must still match that library.
@@ -152,7 +161,8 @@ scaled space, and it inherits the parent's rotation and scale.
 `skeleton.Player` plays one animation. It holds a pointer to the data, the animation, and a time, and it offers `init`,
 `play`, `update(dt)`, `finished`, and `pose`. `pollEvent()` returns crossed event markers in playback order. Up to 16
 events wait in its queue; excess events are dropped and counted in `dropped`. A looping clip emits a marker again each
-time playback crosses it.
+time playback crosses it. `player.hooks` uses the same fixed four-slot subscription API and reports each crossed marker
+as an `event` notice, including markers dropped from the poll queue. Skeletal players do not emit blend phases.
 
 Root translation on bone 0 is extracted as motion. `rootMotionDelta()` returns the displacement from the most recent
 update, including loop wraps; apply it to the owning entity. Use `poseWithoutRootMotion()` when drawing that entity, so

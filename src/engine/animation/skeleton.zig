@@ -7,6 +7,7 @@
 //! parent. A child inherits its parent's rotation and scale. For these transforms that composes exactly.
 
 const std = @import("std");
+const hook_types = @import("hooks.zig");
 
 /// The most bones one skeleton may hold. A pose is a fixed-size array of this many transforms, so evaluating one needs
 /// no allocation.
@@ -593,6 +594,17 @@ const EventOccurrence = struct {
     id: ?u32 = null,
 };
 
+const HookLog = struct {
+    notices: [512]hook_types.Notice = undefined,
+    count: usize = 0,
+
+    fn record(context: ?*anyopaque, notice: hook_types.Notice) void {
+        const self: *@This() = @ptrCast(@alignCast(context.?));
+        self.notices[self.count] = notice;
+        self.count += 1;
+    }
+};
+
 /// Plays one animation of a skeleton. The player points into the data, so the data must outlive it.
 pub const Player = struct {
     data: *const Data,
@@ -604,6 +616,7 @@ pub const Player = struct {
     queue: [event_queue_len]Event = undefined,
     queued: usize = 0,
     dropped: u32 = 0,
+    hooks: hook_types.Hooks = .{},
 
     pub fn init(data: *const Data, animation: *const Animation) Player {
         return .{ .data = data, .animation = animation };
@@ -714,6 +727,58 @@ pub const Player = struct {
         }
         const dropped_now = total - delivered;
         self.dropped = @intCast(@min(@as(u64, self.dropped) + dropped_now, std.math.maxInt(u32)));
+        self.emitCrossedEvents(previous_time, dt);
+    }
+
+    fn emitCrossedEvents(self: *Player, previous_time: f32, dt: f32) void {
+        const markers = self.animation.events;
+        const clip_name = self.animation.name;
+        if (!self.animation.looping) {
+            for (markers) |marker| {
+                if (marker.time <= previous_time or marker.time > previous_time + dt) continue;
+                self.hooks.emit(.{
+                    .phase = .event,
+                    .name = if (marker.id == null) marker.name else "",
+                    .id = marker.id,
+                    .clip = clip_name,
+                });
+            }
+            return;
+        }
+
+        const clip_length = self.animation.length;
+        const length: f64 = clip_length;
+        const duration: f64 = dt;
+        var cursor: f64 = 0;
+        while (true) {
+            var next_offset = std.math.inf(f64);
+            for (markers) |marker| {
+                const first: f64 = if (marker.time > previous_time)
+                    marker.time - previous_time
+                else
+                    clip_length - previous_time + marker.time;
+                const cycles = if (first > cursor) 0 else @floor((cursor - first) / length) + 1;
+                const candidate = first + cycles * length;
+                if (candidate <= duration and candidate < next_offset) next_offset = candidate;
+            }
+            if (!std.math.isFinite(next_offset)) break;
+
+            for (markers) |marker| {
+                const first: f64 = if (marker.time > previous_time)
+                    marker.time - previous_time
+                else
+                    clip_length - previous_time + marker.time;
+                const cycles = if (first > cursor) 0 else @floor((cursor - first) / length) + 1;
+                if (first + cycles * length != next_offset) continue;
+                self.hooks.emit(.{
+                    .phase = .event,
+                    .name = if (marker.id == null) marker.name else "",
+                    .id = marker.id,
+                    .clip = clip_name,
+                });
+            }
+            cursor = next_offset;
+        }
     }
 };
 
@@ -1019,8 +1084,12 @@ test "a skeletal player emits crossed events in order and extracts looping root 
     var data = try Data.parse(std.testing.allocator, source, 16, 16);
     defer data.deinit();
     var player = Player.init(&data, data.findAnimation("walk").?);
+    var log = HookLog{};
+    try std.testing.expect(player.hooks.subscribe(&log, HookLog.record));
 
     player.update(0.5);
+    try std.testing.expectEqualStrings("left_foot", log.notices[0].name);
+    try std.testing.expectEqualStrings("walk", log.notices[0].clip);
     try std.testing.expectApproxEqAbs(@as(f32, 5), player.rootMotionDelta()[0], 1e-5);
     var pose = Pose{};
     player.poseWithoutRootMotion(&pose);
@@ -1029,6 +1098,9 @@ test "a skeletal player emits crossed events in order and extracts looping root 
     try std.testing.expectEqualStrings("left_foot", initial_event.name);
 
     player.update(0.75);
+    try std.testing.expectEqual(@as(usize, 3), log.count);
+    try std.testing.expectEqualStrings("right_foot", log.notices[1].name);
+    try std.testing.expectEqualStrings("left_foot", log.notices[2].name);
     try std.testing.expectApproxEqAbs(@as(f32, 7.5), player.rootMotionDelta()[0], 1e-5);
     const first = player.pollEvent() orelse return error.TestExpectedEvent;
     const second = player.pollEvent() orelse return error.TestExpectedEvent;
@@ -1053,9 +1125,14 @@ test "a skeletal player's bounded event queue counts every excess loop event" {
     var data = try Data.parse(std.testing.allocator, source, 16, 16);
     defer data.deinit();
     var player = Player.init(&data, data.findAnimation("loop").?);
+    var log = HookLog{};
+    try std.testing.expect(player.hooks.subscribe(&log, HookLog.record));
     player.update(100);
     try std.testing.expectEqual(@as(usize, event_queue_len), player.queued);
     try std.testing.expectEqual(@as(u32, 484), player.dropped);
+    try std.testing.expectEqual(@as(usize, 500), log.count);
+    try std.testing.expectEqualStrings("tick", log.notices[0].name);
+    try std.testing.expectEqualStrings("tick", log.notices[log.count - 1].name);
     var count: usize = 0;
     while (player.pollEvent()) |_| count += 1;
     try std.testing.expectEqual(event_queue_len, count);

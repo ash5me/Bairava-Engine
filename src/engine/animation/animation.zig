@@ -82,6 +82,12 @@ pub const machine = @import("machine.zig");
 pub const Machine = machine.Machine;
 pub const MachineDefinition = machine.Definition;
 
+/// Runtime callbacks for authored events and state-machine blend phases.
+pub const hooks = @import("hooks.zig");
+pub const Hooks = hooks.Hooks;
+pub const HookNotice = hooks.Notice;
+pub const HookPhase = hooks.Phase;
+
 /// Skeletal animation: bones, sprite attachments on them, and keyed bone transforms. See docs/animation.md.
 pub const skeleton = @import("skeleton.zig");
 
