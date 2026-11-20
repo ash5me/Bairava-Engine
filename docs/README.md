@@ -44,8 +44,8 @@ inside the engine. Avoid leaving duplicate or obsolete implementations beside th
   `zig build docs` assembles a curated Jekyll site at `zig-out/doc/bairava/`, with the
   generated API reference at `api/index.md`. The manifest covers the package root's 87
   exports and includes compiler-derived callable type information plus a member-contract
-  checklist. Member coverage is partial; GitHub Pages is configured in CI but hosting and
-  release retention are not verified. See the
+  checklist. Member coverage is partial; GitHub Pages `/dev/` is deployed and verified, while
+  release snapshot retention remains unverified. See the
   [API documentation plan](plans/Bairava-Engine-Complete-API-Documentation-Implementation-Plan-Updated.md).
 - [API compatibility](api-compatibility.md)
 - [Build profiles](build-profiles.md)

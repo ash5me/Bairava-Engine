@@ -28,10 +28,10 @@ This plan defines the complete implementation sequence. The checkpoint below rec
 - The typed manifest allowlists all 87 package-root exports. The AST exporter validates root coverage, canonical-name uniqueness, and direct alias targets; a compile-time test resolves each entry through the configured engine module.
 - `zig build docs` generates the public-only Markdown inventory and assembles a curated Jekyll source tree with 23 guides, navigation, search data, a landing page, 404 page, and engine/Zig/source-commit metadata. All 87 allowlisted entries are labeled experimental. Callable signatures are derived from compiler reflection; the manifest supplies summaries and selected authored contracts. The lifecycle guide embeds a compile-checked public API example.
 - The manifest now carries member-contract items and a nine-area checklist for fields, methods, parameters, returns, errors, allocators, handles, callbacks, and capacities. The exporter validates checklist claims and renders outstanding `needs_review` areas. Initial member-level contracts cover `Config`, `Context`, `DrawContext`, `SpriteBatch`, texture resources/handles, scene callbacks, and navigation; this is a first tranche, not complete coverage.
-- `zig build test` runs the example, public export/signature/member-checklist checks, and 15 documentation-site tests. CI generates and renders the site on Linux, then checks required pages, internal links/anchors, search targets, and implementation-detail leakage in rendered output. Local Ruby/Bundler/Jekyll reproduction is still a separate validation task.
-- Original documentation prose is licensed CC BY 4.0, and a pull-request checklist covers API and documentation changes. GitHub Pages deployment is configured in CI but not verified: the Pages API returns 404 and no deployment has run. After repository setup, manually verify Pages uses GitHub Actions, permissions, a `main` deployment at `/dev/`, a test release snapshot, and that a later deployment preserves its URL.
+- `zig build test` runs the example, public export/signature/member-checklist checks, and 16 documentation-site tests. CI generates and renders the site on Linux, then checks required pages, internal links/anchors, search targets, and implementation-detail leakage in rendered output. Local Ruby/Bundler/Jekyll reproduction is still a separate validation task.
+- Original documentation prose is licensed CC BY 4.0, and a pull-request checklist covers API and documentation changes. Pages is enabled with GitHub Actions as its source. CI run `44758340333` successfully configured and deployed the site; HTTPS checks returned 200 for the project root, `/dev/`, and `/dev/api/`, and the `docs-archive` branch contains the deployed `/dev/` site. A test release snapshot and subsequent-deployment retention check remain outstanding.
 - Existing release tags predate the current docs builder and are not backfilled. New release tags must use `vMAJOR.MINOR.PATCH`, match the package/API version, and include the documentation tooling.
-- API coverage is not yet complete at the member-contract level: type fields, method semantics, and many ownership/error/threading details still need review and documentation. The local site builder and CI workflow are implemented, but actual GitHub Pages configuration and deployment remain external blockers. Do not treat this implementation as completion of the full plan.
+- API coverage is not yet complete at the member-contract level: type fields, method semantics, and many ownership/error/threading details still need review and documentation. The development site is live and verified; release snapshot publishing and retention still require a test release and follow-up deployment. Do not treat this implementation as completion of the full plan.
 
 ## 2. Decisions and constraints
 
@@ -709,9 +709,9 @@ Do not deploy public documentation from untrusted pull-request contexts.
 
 ### One-time repository configuration
 
-- [ ] Enable GitHub Pages for the repository.
-- [ ] Configure Pages to use GitHub Actions as the deployment source.
-- [ ] Verify repository Actions permissions.
+- [x] Enable GitHub Pages for the repository.
+- [x] Configure Pages to use GitHub Actions as the deployment source.
+- [x] Verify repository Actions permissions.
 - [x] Configure the workflow's Pages build/deploy permissions.
 - [x] Confirm repository visibility is compatible with intended Pages availability.
 - [x] Decide whether to use the proposed `ash5me.github.io/Bairava-Engine/` URL or a custom domain.
@@ -719,12 +719,12 @@ Do not deploy public documentation from untrusted pull-request contexts.
 
 ### Manual deployment verification gate
 
-Hosting is **configured but not verified** until all of these are checked:
+The first development deployment is verified. Release retention remains unverified until the remaining checks pass:
 
-- [ ] Enable GitHub Pages in repository Settings.
-- [ ] Select GitHub Actions as the Pages deployment source.
-- [ ] Confirm workflow Pages permissions and repository Actions settings.
-- [ ] Run a deployment from `main` and verify the `/dev/` URL over HTTPS.
+- [x] Enable GitHub Pages in repository Settings.
+- [x] Select GitHub Actions as the Pages deployment source.
+- [x] Confirm workflow Pages permissions and repository Actions settings.
+- [x] Run a deployment from `main` and verify the `/dev/` URL over HTTPS.
 - [ ] Publish a test release snapshot and verify its versioned URL.
 - [ ] Run a later deployment and verify the earlier release URL remains unchanged.
 
