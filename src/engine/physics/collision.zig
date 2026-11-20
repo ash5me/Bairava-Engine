@@ -13,6 +13,14 @@ const Box = shapes.Box;
 const Circle = shapes.Circle;
 const OrientedBox = shapes.OrientedBox;
 
+/// A collider hit along a segment. A segment starting inside a shape returns fraction zero.
+pub const Hit = struct {
+    index: usize,
+    fraction: f32,
+    point: Point,
+    normal: Point,
+};
+
 /// A static box or circle that queries can hit. Triggers are queryable but do not block movement.
 /// `layer` is a set of bits, and one collider can belong to several layers. See queries.zig for
 /// how masks select layers.
@@ -209,6 +217,347 @@ pub fn colliderBounds(collider: Collider) ?Box {
         return bounds;
     }
     return boundingBox(collider.box, collider.rotation);
+}
+
+/// Ray/segment against an axis-aligned box. Box faces are inclusive for contact; empty or
+/// non-finite inputs miss. A segment starting inside reports fraction zero with the nearest
+/// outward face normal.
+pub fn rayVsBox(index: usize, origin: Point, delta: Point, box: Box) ?Hit {
+    if (isEmptyBox(box) or !finite4(origin.x, origin.y, delta.x, delta.y)) return null;
+    const right = box.x + box.w;
+    const bottom = box.y + box.h;
+    if (!finite4(right, bottom, origin.x + delta.x, origin.y + delta.y)) return null;
+
+    if (origin.x >= box.x and origin.x <= right and origin.y >= box.y and origin.y <= bottom) {
+        const distances = [4]f32{ origin.x - box.x, right - origin.x, origin.y - box.y, bottom - origin.y };
+        var face: usize = 0;
+        for (distances[1..], 1..) |distance, candidate| {
+            if (distance < distances[face]) face = candidate;
+        }
+        const normal = switch (face) {
+            0 => Point{ .x = -1, .y = 0 },
+            1 => Point{ .x = 1, .y = 0 },
+            2 => Point{ .x = 0, .y = -1 },
+            else => Point{ .x = 0, .y = 1 },
+        };
+        return .{ .index = index, .fraction = 0, .point = origin, .normal = normal };
+    }
+
+    var entry: f32 = -std.math.inf(f32);
+    var exit: f32 = std.math.inf(f32);
+    var normal = Point{ .x = 0, .y = 0 };
+    if (delta.x == 0) {
+        if (origin.x < box.x or origin.x > right) return null;
+    } else {
+        var near = (box.x - origin.x) / delta.x;
+        var far = (right - origin.x) / delta.x;
+        var near_normal = Point{ .x = -1, .y = 0 };
+        if (near > far) {
+            std.mem.swap(f32, &near, &far);
+            near_normal.x = 1;
+        }
+        if (near > entry) {
+            entry = near;
+            normal = near_normal;
+        }
+        exit = @min(exit, far);
+    }
+    if (delta.y == 0) {
+        if (origin.y < box.y or origin.y > bottom) return null;
+    } else {
+        var near = (box.y - origin.y) / delta.y;
+        var far = (bottom - origin.y) / delta.y;
+        var near_normal = Point{ .x = 0, .y = -1 };
+        if (near > far) {
+            std.mem.swap(f32, &near, &far);
+            near_normal.y = 1;
+        }
+        if (near > entry) {
+            entry = near;
+            normal = near_normal;
+        }
+        exit = @min(exit, far);
+    }
+    if (entry > exit or exit < 0 or entry < 0 or entry > 1) return null;
+    const point = Point{ .x = origin.x + delta.x * entry, .y = origin.y + delta.y * entry };
+    return .{ .index = index, .fraction = entry, .point = point, .normal = normal };
+}
+
+/// Ray/segment against an open-disk collider, with rim contact counted as a hit. A segment
+/// starting inside reports fraction zero and a unit-ish outward normal.
+pub fn rayVsCircle(index: usize, origin: Point, delta: Point, circle: Circle) ?Hit {
+    if (isEmptyCircle(circle) or !finite4(origin.x, origin.y, delta.x, delta.y) or
+        !finite4(origin.x + delta.x, origin.y + delta.y, 0, 0)) return null;
+    const mx = origin.x - circle.x;
+    const my = origin.y - circle.y;
+    const radius_squared = circle.r * circle.r;
+    const start_distance_squared = mx * mx + my * my;
+    if (start_distance_squared < radius_squared) {
+        const normal = if (start_distance_squared > 0)
+            unitPoint(mx, my)
+        else if (delta.x != 0 or delta.y != 0)
+            unitPoint(-delta.x, -delta.y)
+        else
+            Point{ .x = 1, .y = 0 };
+        return .{ .index = index, .fraction = 0, .point = origin, .normal = normal };
+    }
+    const a = delta.x * delta.x + delta.y * delta.y;
+    if (a == 0 or !std.math.isFinite(a)) return null;
+    const b = 2 * (mx * delta.x + my * delta.y);
+    const c = start_distance_squared - radius_squared;
+    const discriminant = b * b - 4 * a * c;
+    if (discriminant < 0 or !std.math.isFinite(discriminant)) return null;
+    const root = std.math.sqrt(discriminant);
+    const denominator = 2 * a;
+    var fraction = (-b - root) / denominator;
+    if (fraction < 0) fraction = (-b + root) / denominator;
+    if (fraction < 0 or fraction > 1 or !std.math.isFinite(fraction)) return null;
+    const point = Point{ .x = origin.x + delta.x * fraction, .y = origin.y + delta.y * fraction };
+    return .{
+        .index = index,
+        .fraction = fraction,
+        .point = point,
+        .normal = unitPoint(point.x - circle.x, point.y - circle.y),
+    };
+}
+
+/// Ray/segment against a rotated box. The ray is transformed into box-local coordinates and the
+/// hit point and normal are transformed back to world coordinates.
+pub fn rayVsOrientedBox(index: usize, origin: Point, delta: Point, box: OrientedBox) ?Hit {
+    if (!std.math.isFinite(box.rotation) or !finite4(origin.x, origin.y, delta.x, delta.y) or
+        !finite4(origin.x + delta.x, origin.y + delta.y, box.x, box.y)) return null;
+    const center = Point{ .x = box.x + box.w / 2, .y = box.y + box.h / 2 };
+    const cosine = @cos(box.rotation);
+    const sine = @sin(box.rotation);
+    const ox = origin.x - center.x;
+    const oy = origin.y - center.y;
+    const local_origin = Point{
+        .x = ox * cosine + oy * sine + box.w / 2,
+        .y = -ox * sine + oy * cosine + box.h / 2,
+    };
+    const local_delta = Point{
+        .x = delta.x * cosine + delta.y * sine,
+        .y = -delta.x * sine + delta.y * cosine,
+    };
+    var hit = rayVsBox(index, local_origin, local_delta, .{ .x = 0, .y = 0, .w = box.w, .h = box.h }) orelse return null;
+    hit.point = .{ .x = origin.x + delta.x * hit.fraction, .y = origin.y + delta.y * hit.fraction };
+    const local_normal = hit.normal;
+    hit.normal = .{
+        .x = local_normal.x * cosine - local_normal.y * sine,
+        .y = local_normal.x * sine + local_normal.y * cosine,
+    };
+    return hit;
+}
+
+/// Ray/segment against a collider's active shape. Triggers are queryable like other colliders.
+pub fn rayVsCollider(index: usize, origin: Point, delta: Point, collider: Collider) ?Hit {
+    if (collider.circle) |circle| return rayVsCircle(index, origin, delta, circle);
+    return rayVsOrientedBox(index, origin, delta, .{
+        .x = collider.box.x,
+        .y = collider.box.y,
+        .w = collider.box.w,
+        .h = collider.box.h,
+        .rotation = collider.rotation,
+    });
+}
+
+/// Casts an axis-aligned box along a segment against a collider. Rounded-rectangle Minkowski
+/// sums make box/circle and box/box contacts exact; box/OBB uses continuous SAT.
+pub fn castBoxVsCollider(index: usize, box: Box, delta: Point, collider: Collider) ?Hit {
+    if (isEmptyBox(box) or !finite4(delta.x, delta.y, box.x + box.w, box.y + box.h)) return null;
+    if (collider.circle) |circle| {
+        var hit = rayVsRoundedRect(
+            index,
+            .{ .x = box.x + box.w / 2, .y = box.y + box.h / 2 },
+            delta,
+            .{ .x = circle.x, .y = circle.y },
+            box.w / 2,
+            box.h / 2,
+            circle.r,
+        ) orelse return null;
+        hit.point = .{ .x = box.x + delta.x * hit.fraction, .y = box.y + delta.y * hit.fraction };
+        return hit;
+    }
+    if (isEmptyBox(collider.box)) return null;
+    if (collider.rotation == 0) {
+        const expanded = Box{
+            .x = collider.box.x - box.w,
+            .y = collider.box.y - box.h,
+            .w = collider.box.w + box.w,
+            .h = collider.box.h + box.h,
+        };
+        var hit = rayVsBox(index, .{ .x = box.x, .y = box.y }, delta, expanded) orelse return null;
+        hit.point = .{ .x = box.x + delta.x * hit.fraction, .y = box.y + delta.y * hit.fraction };
+        return hit;
+    }
+    return castBoxVsObb(index, box, delta, .{
+        .x = collider.box.x,
+        .y = collider.box.y,
+        .w = collider.box.w,
+        .h = collider.box.h,
+        .rotation = collider.rotation,
+    });
+}
+
+/// Casts a circle along a segment against a collider using rounded-rectangle Minkowski sums.
+pub fn castCircleVsCollider(index: usize, circle: Circle, delta: Point, collider: Collider) ?Hit {
+    if (isEmptyCircle(circle) or !finite4(delta.x, delta.y, circle.x, circle.y)) return null;
+    if (collider.circle) |target| {
+        if (isEmptyCircle(target)) return null;
+        return rayVsCircle(index, .{ .x = circle.x, .y = circle.y }, delta, .{
+            .x = target.x,
+            .y = target.y,
+            .r = target.r + circle.r,
+        });
+    }
+    if (collider.rotation == 0) {
+        if (isEmptyBox(collider.box)) return null;
+        return rayVsRoundedRect(index, .{ .x = circle.x, .y = circle.y }, delta, .{
+            .x = collider.box.x + collider.box.w / 2,
+            .y = collider.box.y + collider.box.h / 2,
+        }, collider.box.w / 2, collider.box.h / 2, circle.r);
+    }
+    const center = Point{ .x = collider.box.x + collider.box.w / 2, .y = collider.box.y + collider.box.h / 2 };
+    const cosine = @cos(collider.rotation);
+    const sine = @sin(collider.rotation);
+    const ox = circle.x - center.x;
+    const oy = circle.y - center.y;
+    var hit = rayVsRoundedRect(
+        index,
+        .{ .x = ox * cosine + oy * sine + collider.box.w / 2, .y = -ox * sine + oy * cosine + collider.box.h / 2 },
+        .{ .x = delta.x * cosine + delta.y * sine, .y = -delta.x * sine + delta.y * cosine },
+        .{ .x = collider.box.w / 2, .y = collider.box.h / 2 },
+        collider.box.w / 2,
+        collider.box.h / 2,
+        circle.r,
+    ) orelse return null;
+    const local_point = hit.point;
+    hit.point = .{
+        .x = center.x + (local_point.x - collider.box.w / 2) * cosine - (local_point.y - collider.box.h / 2) * sine,
+        .y = center.y + (local_point.x - collider.box.w / 2) * sine + (local_point.y - collider.box.h / 2) * cosine,
+    };
+    const local_normal = hit.normal;
+    hit.normal = .{
+        .x = local_normal.x * cosine - local_normal.y * sine,
+        .y = local_normal.x * sine + local_normal.y * cosine,
+    };
+    return hit;
+}
+
+fn castBoxVsObb(index: usize, box: Box, delta: Point, target: OrientedBox) ?Hit {
+    if (isEmptyBox(box) or target.w <= 0 or target.h <= 0 or !std.math.isFinite(target.rotation) or
+        !finite4(target.x, target.y, target.w, target.h) or !finite4(delta.x, delta.y, 0, 0) or
+        !finite4(box.x + delta.x, box.y + delta.y, target.x + target.w, target.y + target.h)) return null;
+    const mover_center = Point{ .x = box.x + box.w / 2, .y = box.y + box.h / 2 };
+    const target_center = Point{ .x = target.x + target.w / 2, .y = target.y + target.h / 2 };
+    const axes = [4]Point{
+        .{ .x = 1, .y = 0 },
+        .{ .x = 0, .y = 1 },
+        .{ .x = @cos(target.rotation), .y = @sin(target.rotation) },
+        .{ .x = -@sin(target.rotation), .y = @cos(target.rotation) },
+    };
+    var entry: f32 = 0;
+    var exit: f32 = 1;
+    var normal = Point{ .x = 0, .y = 0 };
+    for (axes) |axis| {
+        const center_delta = (target_center.x - mover_center.x) * axis.x + (target_center.y - mover_center.y) * axis.y;
+        const speed = delta.x * axis.x + delta.y * axis.y;
+        const mover_radius = @abs(axis.x) * box.w / 2 + @abs(axis.y) * box.h / 2;
+        const target_radius = @abs(axis.x * @cos(target.rotation) + axis.y * @sin(target.rotation)) * target.w / 2 +
+            @abs(-axis.x * @sin(target.rotation) + axis.y * @cos(target.rotation)) * target.h / 2;
+        const radius = mover_radius + target_radius;
+        if (speed == 0) {
+            if (@abs(center_delta) > radius) return null;
+            continue;
+        }
+        var near = (center_delta - radius) / speed;
+        var far = (center_delta + radius) / speed;
+        var axis_normal = Point{ .x = -axis.x, .y = -axis.y };
+        if (near > far) {
+            std.mem.swap(f32, &near, &far);
+            axis_normal = .{ .x = axis.x, .y = axis.y };
+        }
+        if (near > entry) {
+            entry = near;
+            normal = axis_normal;
+        }
+        exit = @min(exit, far);
+        if (entry > exit) return null;
+    }
+    if (exit < 0 or entry > 1) return null;
+    const fraction = @max(entry, 0);
+    if (fraction == 0 and normal.x == 0 and normal.y == 0) {
+        normal = unitPoint(-delta.x, -delta.y);
+    }
+    return .{
+        .index = index,
+        .fraction = fraction,
+        .point = .{ .x = box.x + delta.x * fraction, .y = box.y + delta.y * fraction },
+        .normal = normal,
+    };
+}
+
+fn rayVsRoundedRect(index: usize, origin: Point, delta: Point, center: Point, half_w: f32, half_h: f32, radius: f32) ?Hit {
+    if (!finite4(origin.x, origin.y, delta.x, delta.y) or
+        !finite4(origin.x + delta.x, origin.y + delta.y, 0, 0) or
+        !finite4(center.x, center.y, half_w, half_h) or
+        !std.math.isFinite(radius) or half_w < 0 or half_h < 0 or radius <= 0) return null;
+
+    const local_x = origin.x - center.x;
+    const local_y = origin.y - center.y;
+    const outside_x = @max(@abs(local_x) - half_w, 0);
+    const outside_y = @max(@abs(local_y) - half_h, 0);
+    if (outside_x * outside_x + outside_y * outside_y <= radius * radius) {
+        var normal = if (outside_x > 0 or outside_y > 0)
+            unitPoint(@as(f32, if (local_x < 0) -1 else 1) * outside_x, @as(f32, if (local_y < 0) -1 else 1) * outside_y)
+        else
+            nearestRectNormal(local_x, local_y, half_w + radius, half_h + radius);
+        if (delta.x == 0 and delta.y == 0 and outside_x == 0 and outside_y == 0) normal = nearestRectNormal(local_x, local_y, half_w + radius, half_h + radius);
+        return .{ .index = index, .fraction = 0, .point = origin, .normal = normal };
+    }
+
+    var best: ?Hit = null;
+    const horizontal = Box{ .x = center.x - half_w, .y = center.y - half_h - radius, .w = 2 * half_w, .h = 2 * radius };
+    const vertical = Box{ .x = center.x - half_w - radius, .y = center.y - half_h, .w = 2 * radius, .h = 2 * half_h };
+    if (rayVsBox(index, origin, delta, horizontal)) |hit| {
+        if (hit.normal.y != 0) best = hit;
+    }
+    if (rayVsBox(index, origin, delta, vertical)) |hit| {
+        if (hit.normal.x != 0) best = earlierHit(best, hit);
+    }
+
+    for ([_]f32{ -1, 1 }) |sx| {
+        for ([_]f32{ -1, 1 }) |sy| {
+            const corner = Circle{
+                .x = center.x + sx * half_w,
+                .y = center.y + sy * half_h,
+                .r = radius,
+            };
+            if (rayVsCircle(index, origin, delta, corner)) |hit| {
+                if ((hit.point.x - corner.x) * sx >= 0 and (hit.point.y - corner.y) * sy >= 0)
+                    best = earlierHit(best, hit);
+            }
+        }
+    }
+    return best;
+}
+
+fn nearestRectNormal(x: f32, y: f32, half_w: f32, half_h: f32) Point {
+    const dx = half_w - @abs(x);
+    const dy = half_h - @abs(y);
+    if (dx <= dy) return .{ .x = if (x < 0) -1 else 1, .y = 0 };
+    return .{ .x = 0, .y = if (y < 0) -1 else 1 };
+}
+
+fn earlierHit(current: ?Hit, candidate: Hit) ?Hit {
+    if (current) |hit| return if (candidate.fraction < hit.fraction) candidate else hit;
+    return candidate;
+}
+
+fn unitPoint(x: f32, y: f32) Point {
+    const length = std.math.sqrt(x * x + y * y);
+    if (length == 0 or !std.math.isFinite(length)) return .{ .x = 1, .y = 0 };
+    return .{ .x = x / length, .y = y / length };
 }
 
 /// Candidate top-left position at first contact while moving a box horizontally into a circle.
@@ -492,4 +841,62 @@ test "rotated bounds contain the complete oriented rectangle" {
     try std.testing.expectApproxEqAbs(@as(f32, -5), bounds.y, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 10), bounds.w, 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 20), bounds.h, 0.01);
+}
+
+test "ray against a box returns the first contact and reports starts inside at zero" {
+    const box = Box{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    const hit = rayVsBox(3, .{ .x = -5, .y = 5 }, .{ .x = 20, .y = 0 }, box).?;
+    try std.testing.expectEqual(@as(usize, 3), hit.index);
+    try std.testing.expectEqual(@as(f32, 0.25), hit.fraction);
+    try std.testing.expectEqual(Point{ .x = 0, .y = 5 }, hit.point);
+    try std.testing.expectEqual(Point{ .x = -1, .y = 0 }, hit.normal);
+
+    const inside = rayVsBox(0, .{ .x = 5, .y = 4 }, .{ .x = 0, .y = 0 }, box).?;
+    try std.testing.expectEqual(@as(f32, 0), inside.fraction);
+    try std.testing.expectEqual(Point{ .x = 0, .y = -1 }, inside.normal);
+    try expect(rayVsBox(0, .{ .x = -5, .y = 5 }, .{ .x = 4, .y = 0 }, box) == null);
+}
+
+test "ray against a circle counts tangency and reports an outward normal" {
+    const circle = Circle{ .x = 0, .y = 0, .r = 5 };
+    const tangent = rayVsCircle(1, .{ .x = -10, .y = 5 }, .{ .x = 20, .y = 0 }, circle).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), tangent.fraction, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0), tangent.point.x, 1e-6);
+    try std.testing.expectEqual(Point{ .x = 0, .y = 1 }, tangent.normal);
+    try expect(rayVsCircle(0, .{ .x = -10, .y = 5.1 }, .{ .x = 20, .y = 0 }, circle) == null);
+
+    const inside = rayVsCircle(0, .{ .x = 0, .y = 0 }, .{ .x = 0, .y = 0 }, circle).?;
+    try std.testing.expectEqual(@as(f32, 0), inside.fraction);
+}
+
+test "ray against a rotated box returns world-space contact and normal" {
+    const box = OrientedBox{ .x = 0, .y = 0, .w = 20, .h = 4, .rotation = std.math.pi / 4.0 };
+    const hit = rayVsOrientedBox(0, .{ .x = 0, .y = 2 }, .{ .x = 20, .y = 0 }, box).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 0.3586), hit.fraction, 1e-3);
+    try std.testing.expectApproxEqAbs(@as(f32, 7.17), hit.point.x, 0.02);
+    try std.testing.expectApproxEqAbs(@as(f32, 2), hit.point.y, 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, -0.7071), hit.normal.x, 1e-3);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.7071), hit.normal.y, 1e-3);
+}
+
+test "box and circle casts use rounded exact contacts" {
+    const wall = Collider{ .box = .{ .x = 50, .y = 0, .w = 10, .h = 20 }, .layer = 1 };
+    const box_hit = castBoxVsCollider(0, .{ .x = 0, .y = 0, .w = 10, .h = 10 }, .{ .x = 100, .y = 0 }, wall).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 0.4), box_hit.fraction, 1e-6);
+    try std.testing.expectEqual(Point{ .x = 40, .y = 0 }, box_hit.point);
+    try std.testing.expectEqual(Point{ .x = -1, .y = 0 }, box_hit.normal);
+
+    const circle_hit = castCircleVsCollider(
+        0,
+        .{ .x = 0, .y = 10, .r = 5 },
+        .{ .x = 100, .y = 0 },
+        wall,
+    ).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 0.45), circle_hit.fraction, 1e-6);
+    try std.testing.expectEqual(Point{ .x = 45, .y = 10 }, circle_hit.point);
+
+    const corner_target = Collider{ .box = .{ .x = 10, .y = 10, .w = 4, .h = 4 }, .layer = 1 };
+    const corner = castCircleVsCollider(0, .{ .x = 0, .y = 0, .r = 5 }, .{ .x = 20, .y = 20 }, corner_target).?;
+    try std.testing.expect(corner.fraction > 0 and corner.fraction < 1);
+    try std.testing.expect(corner.normal.x < 0 and corner.normal.y < 0);
 }

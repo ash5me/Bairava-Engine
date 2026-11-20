@@ -9,6 +9,7 @@ const Point = shapes.Point;
 const Box = shapes.Box;
 const OrientedBox = shapes.OrientedBox;
 pub const Collider = collision.Collider;
+pub const Hit = collision.Hit;
 const all_layers: u32 = std.math.maxInt(u32);
 
 const max_entries = 1_000_000;
@@ -150,6 +151,88 @@ pub const Index = struct {
         return written;
     }
 
+    /// First ray hit along the segment from `origin` through `origin + delta`.
+    pub fn raycast(self: *Index, origin: Point, delta: Point, mask: u32) ?Hit {
+        const count = self.collectRay(origin, delta);
+        var closest: ?Hit = null;
+        for (self.candidates[0..count]) |index| {
+            const collider = self.colliders[index];
+            if (!collider.enabled or !hits(collider, mask)) continue;
+            const hit = collision.rayVsCollider(index, origin, delta, collider) orelse continue;
+            closest = if (closest) |current|
+                if (hit.fraction < current.fraction or
+                    (hit.fraction == current.fraction and hit.index < current.index)) hit else current
+            else
+                hit;
+        }
+        return closest;
+    }
+
+    /// Writes ray hits in fraction order, breaking ties by collider index. If `out` is too small,
+    /// keeps the nearest hits. Returns the number of hits written.
+    pub fn raycastAll(self: *Index, origin: Point, delta: Point, mask: u32, out: []Hit) usize {
+        const count = self.collectRay(origin, delta);
+        var written: usize = 0;
+        for (self.candidates[0..count]) |index| {
+            const collider = self.colliders[index];
+            if (!collider.enabled or !hits(collider, mask)) continue;
+            const hit = collision.rayVsCollider(index, origin, delta, collider) orelse continue;
+            var insertion: usize = 0;
+            while (insertion < written and hitBeforeOrEqual(out[insertion], hit)) : (insertion += 1) {}
+            if (insertion >= out.len) continue;
+            const new_written = @min(written + 1, out.len);
+            var move = new_written;
+            while (move > insertion + 1) : (move -= 1) out[move - 1] = out[move - 2];
+            out[insertion] = hit;
+            written = new_written;
+        }
+        return written;
+    }
+
+    /// Sweeps an axis-aligned box from its current pose by `delta`.
+    pub fn castBox(self: *Index, box: Box, delta: Point, mask: u32) ?Hit {
+        const count = self.collectShapeSweep(.{
+            .x = @min(box.x, box.x + delta.x),
+            .y = @min(box.y, box.y + delta.y),
+            .w = box.w + @abs(delta.x),
+            .h = box.h + @abs(delta.y),
+        });
+        var closest: ?Hit = null;
+        for (self.candidates[0..count]) |index| {
+            const collider = self.colliders[index];
+            if (!collider.enabled or !hits(collider, mask)) continue;
+            const hit = collision.castBoxVsCollider(index, box, delta, collider) orelse continue;
+            closest = if (closest) |current|
+                if (hit.fraction < current.fraction or
+                    (hit.fraction == current.fraction and hit.index < current.index)) hit else current
+            else
+                hit;
+        }
+        return closest;
+    }
+
+    /// Sweeps a circle from its current center by `delta`.
+    pub fn castCircle(self: *Index, circle: shapes.Circle, delta: Point, mask: u32) ?Hit {
+        const count = self.collectShapeSweep(.{
+            .x = @min(circle.x, circle.x + delta.x) - circle.r,
+            .y = @min(circle.y, circle.y + delta.y) - circle.r,
+            .w = 2 * circle.r + @abs(delta.x),
+            .h = 2 * circle.r + @abs(delta.y),
+        });
+        var closest: ?Hit = null;
+        for (self.candidates[0..count]) |index| {
+            const collider = self.colliders[index];
+            if (!collider.enabled or !hits(collider, mask)) continue;
+            const hit = collision.castCircleVsCollider(index, circle, delta, collider) orelse continue;
+            closest = if (closest) |current|
+                if (hit.fraction < current.fraction or
+                    (hit.fraction == current.fraction and hit.index < current.index)) hit else current
+            else
+                hit;
+        }
+        return closest;
+    }
+
     /// Moves `box` by (dx, dy), resolving X before Y like the slice-based query. Only colliders
     /// intersecting the swept bounds enter the narrow phase.
     pub fn moveBox(self: *Index, box: Box, dx: f32, dy: f32, mask: u32) Point {
@@ -192,6 +275,79 @@ pub const Index = struct {
         return self.candidate_count;
     }
 
+    fn collectRay(self: *Index, origin: Point, delta: Point) usize {
+        if (!std.math.isFinite(origin.x) or !std.math.isFinite(origin.y) or
+            !std.math.isFinite(delta.x) or !std.math.isFinite(delta.y)) return self.collectAll();
+        const end_x = origin.x + delta.x;
+        const end_y = origin.y + delta.y;
+        if (!std.math.isFinite(end_x) or !std.math.isFinite(end_y)) return self.collectAll();
+        var cell_x = cellCoordinate(origin.x, self.cell_size) orelse return self.collectAll();
+        var cell_y = cellCoordinate(origin.y, self.cell_size) orelse return self.collectAll();
+        const end_cell_x = cellCoordinate(end_x, self.cell_size) orelse return self.collectAll();
+        const end_cell_y = cellCoordinate(end_y, self.cell_size) orelse return self.collectAll();
+        const step_x: i32 = if (delta.x > 0) 1 else if (delta.x < 0) -1 else 0;
+        const step_y: i32 = if (delta.y > 0) 1 else if (delta.y < 0) -1 else 0;
+        const delta_t_x = if (step_x == 0) std.math.inf(f32) else self.cell_size / @abs(delta.x);
+        const delta_t_y = if (step_y == 0) std.math.inf(f32) else self.cell_size / @abs(delta.y);
+        var max_t_x = if (step_x > 0)
+            (@as(f32, @floatFromInt(cell_x + 1)) * self.cell_size - origin.x) / delta.x
+        else if (step_x < 0)
+            (@as(f32, @floatFromInt(cell_x)) * self.cell_size - origin.x) / delta.x
+        else
+            std.math.inf(f32);
+        var max_t_y = if (step_y > 0)
+            (@as(f32, @floatFromInt(cell_y + 1)) * self.cell_size - origin.y) / delta.y
+        else if (step_y < 0)
+            (@as(f32, @floatFromInt(cell_y)) * self.cell_size - origin.y) / delta.y
+        else
+            std.math.inf(f32);
+
+        self.beginQuery();
+        var visited: usize = 0;
+        while (true) {
+            visited += 1;
+            if (visited > max_query_cells) return self.collectAll();
+            self.appendRayNeighborhood(cell_x, cell_y);
+            if (cell_x == end_cell_x and cell_y == end_cell_y) break;
+            if (max_t_x < max_t_y) {
+                cell_x += step_x;
+                max_t_x += delta_t_x;
+            } else if (max_t_y < max_t_x) {
+                cell_y += step_y;
+                max_t_y += delta_t_y;
+            } else {
+                cell_x += step_x;
+                cell_y += step_y;
+                max_t_x += delta_t_x;
+                max_t_y += delta_t_y;
+            }
+        }
+        return self.candidate_count;
+    }
+
+    fn appendRayNeighborhood(self: *Index, cell_x: i32, cell_y: i32) void {
+        var y_offset: i32 = -1;
+        while (y_offset <= 1) : (y_offset += 1) {
+            var x_offset: i32 = -1;
+            while (x_offset <= 1) : (x_offset += 1) {
+                const x = @as(i64, cell_x) + x_offset;
+                const y = @as(i64, cell_y) + y_offset;
+                if (x < -1_000_000_000 or x > 1_000_000_000 or
+                    y < -1_000_000_000 or y > 1_000_000_000) continue;
+                self.appendCell(@intCast(x), @intCast(y));
+            }
+        }
+    }
+
+    fn collectShapeSweep(self: *Index, bounds: Box) usize {
+        return self.collectBox(.{
+            .x = bounds.x - self.cell_size,
+            .y = bounds.y - self.cell_size,
+            .w = bounds.w + 2 * self.cell_size,
+            .h = bounds.h + 2 * self.cell_size,
+        });
+    }
+
     fn collectAll(self: *Index) usize {
         self.beginQuery();
         for (self.colliders, 0..) |_, index| self.mark(index);
@@ -221,6 +377,10 @@ pub const Index = struct {
         }
     }
 };
+
+fn hitBeforeOrEqual(a: Hit, b: Hit) bool {
+    return a.fraction < b.fraction or (a.fraction == b.fraction and a.index < b.index);
+}
 
 fn hits(collider: Collider, mask: u32) bool {
     return collider.layer & mask != 0;
@@ -538,6 +698,49 @@ test "indexed movement ignores trigger colliders but overlap queries include the
     try std.testing.expectEqual(expected.y, actual.y);
 }
 
+test "indexed ray and shape casts match linear queries" {
+    const linear = @import("queries.zig");
+    const colliders = [_]Collider{
+        .{ .box = .{ .x = 40, .y = -5, .w = 10, .h = 10 }, .layer = 1 },
+        .{
+            .box = .{ .x = 10, .y = -5, .w = 10, .h = 10 },
+            .layer = 2,
+            .circle = .{ .x = 25, .y = 0, .r = 5 },
+        },
+        .{ .box = .{ .x = 20, .y = -5, .w = 10, .h = 10 }, .layer = 1 },
+        .{ .box = .{ .x = 90, .y = -5, .w = 10, .h = 10 }, .layer = 1 },
+    };
+    var index = try Index.init(std.testing.allocator, &colliders, 8);
+    defer index.deinit();
+
+    const origin = Point{ .x = 0, .y = 0 };
+    const delta = Point{ .x = 60, .y = 0 };
+    try std.testing.expectEqual(
+        linear.raycast(&colliders, origin, delta, all_layers),
+        index.raycast(origin, delta, all_layers),
+    );
+    var linear_hits: [4]Hit = undefined;
+    var indexed_hits: [4]Hit = undefined;
+    const linear_count = linear.raycastAll(&colliders, origin, delta, all_layers, &linear_hits);
+    const indexed_count = index.raycastAll(origin, delta, all_layers, &indexed_hits);
+    try std.testing.expectEqual(linear_count, indexed_count);
+    for (linear_hits[0..linear_count], indexed_hits[0..indexed_count]) |expected, actual| {
+        try std.testing.expectEqual(expected.index, actual.index);
+        try std.testing.expectEqual(expected.fraction, actual.fraction);
+    }
+
+    const box = Box{ .x = 0, .y = -2, .w = 5, .h = 4 };
+    try std.testing.expectEqual(
+        linear.castBox(&colliders, box, delta, all_layers),
+        index.castBox(box, delta, all_layers),
+    );
+    const circle = shapes.Circle{ .x = 0, .y = 0, .r = 2 };
+    try std.testing.expectEqual(
+        linear.castCircle(&colliders, circle, delta, all_layers),
+        index.castCircle(circle, delta, all_layers),
+    );
+}
+
 test "indexed circle queries and movement match the linear collider pipeline" {
     const linear = @import("queries.zig");
     const colliders = [_]Collider{
@@ -573,6 +776,27 @@ test "indexed circle queries and movement match the linear collider pipeline" {
     try std.testing.expectEqual(expected.x, actual.x);
     try std.testing.expectEqual(expected.y, actual.y);
     try std.testing.expectEqual(@as(f32, 36), actual.x);
+}
+
+test "indexed diagonal rays collect cells across exact grid corners" {
+    const linear = @import("queries.zig");
+    const colliders = [_]Collider{
+        .{ .box = .{ .x = 20, .y = 20, .w = 8, .h = 8 }, .layer = 1 },
+        .{ .box = .{ .x = 40, .y = 40, .w = 8, .h = 8 }, .layer = 1 },
+        .{ .box = .{ .x = 5, .y = 25, .w = 8, .h = 8 }, .layer = 1 },
+    };
+    var index = try Index.init(std.testing.allocator, &colliders, 8);
+    defer index.deinit();
+
+    const origin = Point{ .x = 0, .y = 0 };
+    const delta = Point{ .x = 56, .y = 56 };
+    try std.testing.expectEqual(
+        linear.raycast(&colliders, origin, delta, all_layers),
+        index.raycast(origin, delta, all_layers),
+    );
+    const hit = index.raycast(origin, delta, all_layers).?;
+    try std.testing.expectEqual(@as(usize, 0), hit.index);
+    try std.testing.expectApproxEqAbs(@as(f32, 20.0 / 56.0), hit.fraction, 1e-6);
 }
 
 test "indexed circles skip empty shapes and enforce the cell-entry cap" {

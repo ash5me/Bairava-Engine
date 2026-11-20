@@ -27,7 +27,16 @@ test "the named Bairava module exports its public engine API" {
     _ = bairava.ShadowSegmentComponent;
     _ = bairava.physics.shapes.OrientedBox;
     _ = bairava.physics.collision.Component;
+    _ = bairava.physics.collision.Hit;
     _ = bairava.physics.queries.all_layers;
+    _ = bairava.physics.queries.raycast;
+    _ = bairava.physics.queries.raycastAll;
+    _ = bairava.physics.queries.castBox;
+    _ = bairava.physics.queries.castCircle;
+    _ = bairava.physics.broad_phase.Index.raycast;
+    _ = bairava.physics.broad_phase.Index.raycastAll;
+    _ = bairava.physics.broad_phase.Index.castBox;
+    _ = bairava.physics.broad_phase.Index.castCircle;
     _ = bairava.navigation.Sight;
     _ = bairava.navigation.inRange;
     _ = bairava.navigation.inCone;

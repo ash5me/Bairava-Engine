@@ -22,6 +22,7 @@ const Point = shapes.Point;
 const Box = shapes.Box;
 const OrientedBox = shapes.OrientedBox;
 pub const Collider = collision.Collider;
+pub const Hit = collision.Hit;
 
 pub const OverlapPhase = enum { enter, stay, exit };
 
@@ -154,6 +155,77 @@ pub fn queryRegion(colliders: []const Collider, region: Box, mask: u32, out: []u
         written += 1;
     }
     return written;
+}
+
+/// First ray hit along the segment from `origin` through `origin + delta`. Triggers are included;
+/// the layer mask filters by collider layer just like overlap queries.
+pub fn raycast(colliders: []const Collider, origin: Point, delta: Point, mask: u32) ?Hit {
+    var closest: ?Hit = null;
+    for (colliders, 0..) |collider, index| {
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        const hit = collision.rayVsCollider(index, origin, delta, collider) orelse continue;
+        closest = if (closest) |current|
+            if (hit.fraction < current.fraction or
+                (hit.fraction == current.fraction and hit.index < current.index)) hit else current
+        else
+            hit;
+    }
+    return closest;
+}
+
+/// Writes ray hits in fraction order, breaking ties by collider index. If `out` is too small,
+/// keeps the nearest hits. Returns the number of hits written.
+pub fn raycastAll(colliders: []const Collider, origin: Point, delta: Point, mask: u32, out: []Hit) usize {
+    var written: usize = 0;
+    for (colliders, 0..) |collider, index| {
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        const hit = collision.rayVsCollider(index, origin, delta, collider) orelse continue;
+        var insertion: usize = 0;
+        while (insertion < written and hitBeforeOrEqual(out[insertion], hit)) : (insertion += 1) {}
+        if (insertion >= out.len) continue;
+        const new_written = @min(written + 1, out.len);
+        var move = new_written;
+        while (move > insertion + 1) : (move -= 1) out[move - 1] = out[move - 2];
+        out[insertion] = hit;
+        written = new_written;
+    }
+    return written;
+}
+
+fn hitBeforeOrEqual(a: Hit, b: Hit) bool {
+    return a.fraction < b.fraction or (a.fraction == b.fraction and a.index < b.index);
+}
+
+/// Sweeps an axis-aligned box from its current pose by `delta`; the hit point is the moving
+/// box's top-left reference position at first contact.
+pub fn castBox(colliders: []const Collider, box: Box, delta: Point, mask: u32) ?Hit {
+    var closest: ?Hit = null;
+    for (colliders, 0..) |collider, index| {
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        const hit = collision.castBoxVsCollider(index, box, delta, collider) orelse continue;
+        closest = if (closest) |current|
+            if (hit.fraction < current.fraction or
+                (hit.fraction == current.fraction and hit.index < current.index)) hit else current
+        else
+            hit;
+    }
+    return closest;
+}
+
+/// Sweeps a circle from its current center by `delta`. The hit point is the moving circle's
+/// center at first contact.
+pub fn castCircle(colliders: []const Collider, circle: shapes.Circle, delta: Point, mask: u32) ?Hit {
+    var closest: ?Hit = null;
+    for (colliders, 0..) |collider, index| {
+        if (!collider.enabled or !hits(collider, mask)) continue;
+        const hit = collision.castCircleVsCollider(index, circle, delta, collider) orelse continue;
+        closest = if (closest) |current|
+            if (hit.fraction < current.fraction or
+                (hit.fraction == current.fraction and hit.index < current.index)) hit else current
+        else
+            hit;
+    }
+    return closest;
 }
 
 /// Moves `box` by (dx, dy) and returns its new top-left corner. Only colliders the mask hits can stop it.
@@ -487,6 +559,65 @@ test "trigger colliders remain queryable but never block linear movement" {
         .{ .box = .{ .x = 70, .y = 0, .w = 10, .h = 30 }, .layer = 1 },
     };
     try expectEqual(@as(f32, 60), moveBox(&mixed, .{ .x = 0, .y = 0, .w = 10, .h = 10 }, 100, 0, all_layers).x);
+}
+
+test "ray queries select nearest hit, sort all hits, and honor masks" {
+    const colliders = [_]Collider{
+        .{ .box = .{ .x = 20, .y = -5, .w = 5, .h = 10 }, .layer = 1 },
+        .{ .box = .{ .x = 5, .y = -5, .w = 5, .h = 10 }, .layer = 2 },
+        .{ .box = .{ .x = 10, .y = -5, .w = 5, .h = 10 }, .layer = 1 },
+        .{ .box = .{ .x = 40, .y = -5, .w = 5, .h = 10 }, .layer = 1 },
+    };
+    const origin = Point{ .x = 0, .y = 0 };
+    const delta = Point{ .x = 30, .y = 0 };
+    const hit = raycast(&colliders, origin, delta, 1).?;
+    try expectEqual(@as(usize, 2), hit.index);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0 / 3.0), hit.fraction, 1e-6);
+    try expectEqual(Point{ .x = 10, .y = 0 }, hit.point);
+    try expectEqual(@as(?Hit, null), raycast(&colliders, origin, delta, 4));
+    try expectEqual(@as(?Hit, null), raycast(&colliders, origin, .{ .x = 4, .y = 0 }, 1));
+
+    var hits_found: [4]Hit = undefined;
+    const count = raycastAll(&colliders, origin, delta, all_layers, &hits_found);
+    try expectEqual(@as(usize, 3), count);
+    try expectEqual(@as(usize, 1), hits_found[0].index);
+    try expectEqual(@as(usize, 2), hits_found[1].index);
+    try expectEqual(@as(usize, 0), hits_found[2].index);
+    var only_nearest: [1]Hit = undefined;
+    try expectEqual(@as(usize, 1), raycastAll(&colliders, origin, delta, all_layers, &only_nearest));
+    try expectEqual(@as(usize, 1), only_nearest[0].index);
+}
+
+test "shape casts and ray queries include triggers as queryable shapes" {
+    const colliders = [_]Collider{
+        .{
+            .box = .{ .x = 20, .y = 0, .w = 10, .h = 20 },
+            .layer = 1,
+            .is_trigger = true,
+        },
+        .{ .box = .{ .x = 50, .y = 0, .w = 10, .h = 20 }, .layer = 1 },
+    };
+    const ray_hit = raycast(&colliders, .{ .x = 0, .y = 10 }, .{ .x = 100, .y = 0 }, 1).?;
+    try expectEqual(@as(usize, 0), ray_hit.index);
+    const box_hit = castBox(&colliders, .{ .x = 0, .y = 2, .w = 10, .h = 10 }, .{ .x = 100, .y = 0 }, 1).?;
+    try expectEqual(@as(usize, 0), box_hit.index);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.1), box_hit.fraction, 1e-6);
+    const circle_hit = castCircle(&colliders, .{ .x = 0, .y = 10, .r = 5 }, .{ .x = 100, .y = 0 }, 1).?;
+    try expectEqual(@as(usize, 0), circle_hit.index);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.15), circle_hit.fraction, 1e-6);
+}
+
+test "axis-aligned box cast reaches the same flush wall position as movement" {
+    const walls = [_]Collider{.{
+        .box = .{ .x = 50, .y = 0, .w = 10, .h = 20 },
+        .layer = 1,
+    }};
+    const mover = Box{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    const cast = castBox(&walls, mover, .{ .x = 100, .y = 0 }, all_layers).?;
+    const moved = moveBox(&walls, mover, 100, 0, all_layers);
+    try expectEqual(@as(f32, 40), cast.point.x);
+    try expectEqual(moved.x, cast.point.x);
+    try expectEqual(@as(f32, 0), cast.point.y);
 }
 
 test "moveBox stops flush against the nearest wall on each side" {

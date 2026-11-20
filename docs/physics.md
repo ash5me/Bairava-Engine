@@ -46,6 +46,21 @@ The result reports total pair/event counts and how many entries did not fit in e
 size those buffers for the expected maximum if every pair and event must be retained. Use the current
 pair buffer as the previous-pair slice on the next fixed update.
 
+## Rays and shape casts
+
+`queries.raycast` returns the nearest `Hit` along a segment; `raycastAll` writes hits sorted by
+fraction and then collider index, retaining the nearest hits when its output is too small. Both
+include trigger colliders and filter disabled colliders by layer mask. Box faces count as contact
+surfaces (including the otherwise-exclusive right and bottom edges), and circle tangencies count
+as hits. A ray that starts inside a shape returns fraction zero with an outward normal; a zero-length
+ray therefore only hits when its origin is inside (or on a box contact face; circle containment is
+strict). Empty or non-finite geometry and ray inputs miss.
+
+`queries.castBox` sweeps an axis-aligned box and `queries.castCircle` sweeps a circle. Their `Hit`
+point is the moving shape's reference position at first contact (box top-left or circle center).
+The uniform-grid `Index` provides matching `raycast`, `raycastAll`, `castBox`, and `castCircle`
+queries over its static collider slice.
+
 ## Uniform grid
 
 `broad_phase.Index` stores static colliders in a uniform grid. Rebuild the index after collider
