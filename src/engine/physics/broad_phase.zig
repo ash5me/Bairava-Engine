@@ -245,7 +245,7 @@ fn slideX(colliders: []const Collider, candidates: []const usize, box: Box, dx: 
     var result = target;
     for (candidates) |index| {
         const collider = colliders[index];
-        if (!collider.enabled or !hits(collider, mask)) continue;
+        if (!collider.enabled or collider.is_trigger or !hits(collider, mask)) continue;
         if (collider.circle) |circle| {
             if (collision.circleStopX(box, dx, circle)) |stop| {
                 if (dx > 0 and stop >= box.x and stop < target) {
@@ -317,7 +317,7 @@ fn slideY(colliders: []const Collider, candidates: []const usize, box: Box, dy: 
     var result = target;
     for (candidates) |index| {
         const collider = colliders[index];
-        if (!collider.enabled or !hits(collider, mask)) continue;
+        if (!collider.enabled or collider.is_trigger or !hits(collider, mask)) continue;
         if (collider.circle) |circle| {
             if (collision.circleStopY(box, dy, circle)) |stop| {
                 if (dy > 0 and stop >= box.y and stop < target) {
@@ -513,6 +513,29 @@ test "indexed movement matches linear one-way collider behavior" {
     const drop_actual = index.moveBoxIgnoringOneWay(box, 0, 80, 1);
     try std.testing.expectEqual(drop_expected.x, drop_actual.x);
     try std.testing.expectEqual(drop_expected.y, drop_actual.y);
+}
+
+test "indexed movement ignores trigger colliders but overlap queries include them" {
+    const linear = @import("queries.zig");
+    const colliders = [_]Collider{
+        .{
+            .box = .{ .x = 40, .y = 0, .w = 10, .h = 30 },
+            .layer = 1,
+            .is_trigger = true,
+        },
+        .{ .box = .{ .x = 70, .y = 0, .w = 10, .h = 30 }, .layer = 1 },
+    };
+    var index = try Index.init(std.testing.allocator, &colliders, 8);
+    defer index.deinit();
+
+    const probe = Box{ .x = 42, .y = 2, .w = 2, .h = 2 };
+    try std.testing.expectEqual(@as(?usize, 0), index.firstOverlap(probe, 1));
+    const mover = Box{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    const expected = linear.moveBox(&colliders, mover, 100, 0, 1);
+    const actual = index.moveBox(mover, 100, 0, 1);
+    try std.testing.expectEqual(@as(f32, 60), expected.x);
+    try std.testing.expectEqual(expected.x, actual.x);
+    try std.testing.expectEqual(expected.y, actual.y);
 }
 
 test "indexed circle queries and movement match the linear collider pipeline" {

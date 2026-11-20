@@ -23,6 +23,90 @@ const Box = shapes.Box;
 const OrientedBox = shapes.OrientedBox;
 pub const Collider = collision.Collider;
 
+pub const OverlapPhase = enum { enter, stay, exit };
+
+/// A discrete overlap transition between collider indices in the source slice.
+pub const OverlapEvent = struct {
+    phase: OverlapPhase,
+    a: usize,
+    b: usize,
+};
+
+/// A normalized pair of collider indices. `a` is always less than `b`.
+pub const OverlapPair = struct {
+    a: usize,
+    b: usize,
+};
+
+/// Counts from one trigger-overlap collection pass. Pair and event counts are totals; dropped
+/// fields report how many did not fit in the caller's respective output buffers.
+pub const OverlapResult = struct {
+    pair_count: usize = 0,
+    event_count: usize = 0,
+    dropped_pairs: usize = 0,
+    dropped_events: usize = 0,
+};
+
+/// Collects discrete enter, stay, and exit events for overlapping pairs where at least one
+/// collider is a trigger. The caller owns all buffers and should use the current-pair buffer as
+/// the previous-pair buffer on the next update. Pair indices refer to this collider slice, so its
+/// ordering must remain stable between calls. Pairwise collider layer and mask rules apply.
+pub fn collectTriggerEvents(
+    colliders: []const Collider,
+    previous_pairs: []const OverlapPair,
+    current_pairs: []OverlapPair,
+    out_events: []OverlapEvent,
+) OverlapResult {
+    var result = OverlapResult{};
+    for (colliders, 0..) |a, a_index| {
+        if (!a.enabled) continue;
+        for (colliders[a_index + 1 ..], a_index + 1..) |b, b_index| {
+            if (!b.enabled or (!a.is_trigger and !b.is_trigger)) continue;
+            if (!collision.colliderOverlaps(a, b)) continue;
+
+            const pair = OverlapPair{ .a = a_index, .b = b_index };
+            if (result.pair_count < current_pairs.len) {
+                current_pairs[result.pair_count] = pair;
+            } else {
+                result.dropped_pairs += 1;
+            }
+            result.pair_count += 1;
+
+            const phase: OverlapPhase = if (containsPair(previous_pairs, pair)) .stay else .enter;
+            appendOverlapEvent(&result, out_events, .{ .phase = phase, .a = a_index, .b = b_index });
+        }
+    }
+
+    for (previous_pairs) |pair| {
+        if (pair.a >= colliders.len or pair.b >= colliders.len or pair.a >= pair.b) continue;
+        if (isCurrentTriggerOverlap(colliders, pair)) continue;
+        appendOverlapEvent(&result, out_events, .{ .phase = .exit, .a = pair.a, .b = pair.b });
+    }
+    return result;
+}
+
+fn isCurrentTriggerOverlap(colliders: []const Collider, pair: OverlapPair) bool {
+    const a = colliders[pair.a];
+    const b = colliders[pair.b];
+    return a.enabled and b.enabled and (a.is_trigger or b.is_trigger) and collision.colliderOverlaps(a, b);
+}
+
+fn containsPair(pairs: []const OverlapPair, pair: OverlapPair) bool {
+    for (pairs) |candidate| {
+        if (candidate.a == pair.a and candidate.b == pair.b) return true;
+    }
+    return false;
+}
+
+fn appendOverlapEvent(result: *OverlapResult, out: []OverlapEvent, event: OverlapEvent) void {
+    if (result.event_count < out.len) {
+        out[result.event_count] = event;
+    } else {
+        result.dropped_events += 1;
+    }
+    result.event_count += 1;
+}
+
 /// A mask with every bit set, so it hits any collider with a nonzero layer.
 pub const all_layers: u32 = std.math.maxInt(u32);
 
@@ -95,7 +179,7 @@ fn slideX(colliders: []const Collider, box: Box, dx: f32, mask: u32) f32 {
     if (collision.isEmptyBox(box)) return target;
     var result = target;
     for (colliders) |c| {
-        if (!c.enabled or !hits(c, mask)) continue;
+        if (!c.enabled or c.is_trigger or !hits(c, mask)) continue;
         if (c.circle) |circle| {
             if (collision.circleStopX(box, dx, circle)) |stop| {
                 if (dx > 0 and stop >= box.x and stop < target) {
@@ -171,7 +255,7 @@ fn slideY(colliders: []const Collider, box: Box, dy: f32, mask: u32, ignore_one_
     if (collision.isEmptyBox(box)) return target;
     var result = target;
     for (colliders) |c| {
-        if (!c.enabled or !hits(c, mask)) continue;
+        if (!c.enabled or c.is_trigger or !hits(c, mask)) continue;
         if (c.circle) |circle| {
             if (collision.circleStopY(box, dy, circle)) |stop| {
                 if (dy > 0 and stop >= box.y and stop < target) {
@@ -319,6 +403,90 @@ test "circle colliders use exact narrow-phase queries and ignore their box field
         .circle = .{ .x = -3, .y = -4, .r = 5 },
     }};
     try expectEqual(@as(?usize, null), firstOverlap(&corner_only, .{ .x = 0, .y = 0, .w = 10, .h = 10 }, all_layers));
+}
+
+test "trigger overlaps emit enter stay and exit once per tracked pair" {
+    var colliders = [_]Collider{
+        .{
+            .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 },
+            .layer = 1,
+            .is_trigger = true,
+        },
+        .{ .box = .{ .x = 5, .y = 0, .w = 10, .h = 10 }, .layer = 1 },
+        .{ .box = .{ .x = 6, .y = 1, .w = 2, .h = 2 }, .layer = 1 },
+    };
+    var previous: [2]OverlapPair = undefined;
+    var current: [2]OverlapPair = undefined;
+    var events: [4]OverlapEvent = undefined;
+
+    var result = collectTriggerEvents(&colliders, &.{}, &current, &events);
+    try expectEqual(@as(usize, 2), result.pair_count);
+    try expectEqual(@as(usize, 2), result.event_count);
+    try expectEqual(OverlapEvent{ .phase = .enter, .a = 0, .b = 1 }, events[0]);
+    try expectEqual(OverlapEvent{ .phase = .enter, .a = 0, .b = 2 }, events[1]);
+    @memcpy(previous[0..result.pair_count], current[0..result.pair_count]);
+
+    result = collectTriggerEvents(&colliders, previous[0..2], &current, &events);
+    try expectEqual(@as(usize, 2), result.pair_count);
+    try expectEqual(@as(usize, 2), result.event_count);
+    try expectEqual(OverlapPhase.stay, events[0].phase);
+    try expectEqual(OverlapPhase.stay, events[1].phase);
+    @memcpy(previous[0..result.pair_count], current[0..result.pair_count]);
+
+    colliders[1].box.x = 30;
+    colliders[2].box.x = 40;
+    result = collectTriggerEvents(&colliders, previous[0..2], &current, &events);
+    try expectEqual(@as(usize, 0), result.pair_count);
+    try expectEqual(@as(usize, 2), result.event_count);
+    try expectEqual(OverlapEvent{ .phase = .exit, .a = 0, .b = 1 }, events[0]);
+    try expectEqual(OverlapEvent{ .phase = .exit, .a = 0, .b = 2 }, events[1]);
+}
+
+test "trigger overlaps require a trigger, enabled colliders, and mutual masks" {
+    const colliders = [_]Collider{
+        .{ .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 }, .layer = 1, .is_trigger = true },
+        .{ .box = .{ .x = 1, .y = 1, .w = 2, .h = 2 }, .layer = 1, .mask = 2 },
+        .{ .box = .{ .x = 1, .y = 1, .w = 2, .h = 2 }, .layer = 2, .enabled = false },
+        .{ .box = .{ .x = 20, .y = 20, .w = 2, .h = 2 }, .layer = 1 },
+        .{ .box = .{ .x = 21, .y = 21, .w = 2, .h = 2 }, .layer = 1 },
+    };
+    var pairs: [6]OverlapPair = undefined;
+    var events: [6]OverlapEvent = undefined;
+    const result = collectTriggerEvents(&colliders, &.{}, &pairs, &events);
+    try expectEqual(@as(usize, 0), result.pair_count);
+    try expectEqual(@as(usize, 0), result.event_count);
+}
+
+test "trigger event collection reports undersized output buffers" {
+    const colliders = [_]Collider{
+        .{ .box = .{ .x = 0, .y = 0, .w = 10, .h = 10 }, .layer = 1, .is_trigger = true },
+        .{ .box = .{ .x = 1, .y = 1, .w = 2, .h = 2 }, .layer = 1 },
+        .{ .box = .{ .x = 2, .y = 2, .w = 2, .h = 2 }, .layer = 1 },
+    };
+    var pairs: [1]OverlapPair = undefined;
+    var events: [1]OverlapEvent = undefined;
+    const result = collectTriggerEvents(&colliders, &.{}, &pairs, &events);
+    try expectEqual(@as(usize, 2), result.pair_count);
+    try expectEqual(@as(usize, 1), result.dropped_pairs);
+    try expectEqual(@as(usize, 2), result.event_count);
+    try expectEqual(@as(usize, 1), result.dropped_events);
+}
+
+test "trigger colliders remain queryable but never block linear movement" {
+    const triggers = [_]Collider{.{
+        .box = .{ .x = 40, .y = 0, .w = 10, .h = 30 },
+        .layer = 1,
+        .is_trigger = true,
+    }};
+    const probe = Box{ .x = 42, .y = 2, .w = 2, .h = 2 };
+    try std.testing.expectEqual(@as(?usize, 0), firstOverlap(&triggers, probe, all_layers));
+    try expectEqual(@as(f32, 100), moveBox(&triggers, .{ .x = 0, .y = 0, .w = 10, .h = 10 }, 100, 0, all_layers).x);
+
+    const mixed = [_]Collider{
+        triggers[0],
+        .{ .box = .{ .x = 70, .y = 0, .w = 10, .h = 30 }, .layer = 1 },
+    };
+    try expectEqual(@as(f32, 60), moveBox(&mixed, .{ .x = 0, .y = 0, .w = 10, .h = 10 }, 100, 0, all_layers).x);
 }
 
 test "moveBox stops flush against the nearest wall on each side" {

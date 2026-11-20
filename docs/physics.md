@@ -27,6 +27,9 @@ Set `circle` to use a circle as the collider's only shape; the `box` and `rotati
 ignored. A null circle preserves the box behavior. Circles are open disks: rim contact is not an
 overlap. A circle ignores `one_way` and blocks movement as a solid shape in every direction.
 
+Set `is_trigger = true` to make a collider a sensor. Triggers remain in overlap, point, region, and
+grid queries, but are ignored by box movement response.
+
 ## Detection
 
 `orientedBoxesOverlap` uses the separating-axis theorem for exact rectangle-vs-rectangle overlap.
@@ -35,6 +38,13 @@ tests. These operations do not allocate and do not report movement.
 
 `queries.firstOverlap`, `anyOverlap`, `queryRegion`, and `firstAtPoint` operate on collider slices.
 Every operation filters disabled colliders and checks the collision layer/mask relationship.
+`queries.collectTriggerEvents` compares current trigger overlaps with a caller-owned previous-pair
+slice and fills caller-owned current-pair and event buffers. It emits `enter`, `stay`, and `exit`
+events for pairs where at least one enabled collider is a trigger. Pairwise layer/mask checks apply,
+indices are ordered by the collider slice, and that slice must keep the same ordering across updates.
+The result reports total pair/event counts and how many entries did not fit in either output buffer;
+size those buffers for the expected maximum if every pair and event must be retained. Use the current
+pair buffer as the previous-pair slice on the next fixed update.
 
 ## Uniform grid
 

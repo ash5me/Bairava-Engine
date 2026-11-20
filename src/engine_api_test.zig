@@ -50,6 +50,7 @@ test "ECS collision components collect into collider slices under both layouts" 
             .layer = 1,
             .mask = 2,
             .one_way = true,
+            .is_trigger = true,
             .circle = .{ .x = 3, .y = 4, .r = 5 },
         } });
         _ = try world.spawn(.{ .collision = .{
@@ -63,6 +64,7 @@ test "ECS collision components collect into collider slices under both layouts" 
         try std.testing.expectEqual(@as(usize, 1), count);
         try std.testing.expectEqual(@as(u32, 1), colliders[0].layer);
         try std.testing.expect(colliders[0].one_way);
+        try std.testing.expect(colliders[0].is_trigger);
         try std.testing.expectEqual(@as(?bairava.physics.shapes.Circle, .{ .x = 3, .y = 4, .r = 5 }), colliders[0].circle);
     }
 }

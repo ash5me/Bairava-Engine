@@ -13,8 +13,9 @@ const Box = shapes.Box;
 const Circle = shapes.Circle;
 const OrientedBox = shapes.OrientedBox;
 
-/// A static box or circle that queries and movement can hit. `layer` is a set of bits, and one
-/// collider can belong to several layers. See queries.zig for how masks select layers.
+/// A static box or circle that queries can hit. Triggers are queryable but do not block movement.
+/// `layer` is a set of bits, and one collider can belong to several layers. See queries.zig for
+/// how masks select layers.
 pub const Collider = struct {
     box: Box,
     layer: u32,
@@ -22,6 +23,7 @@ pub const Collider = struct {
     rotation: f32 = 0,
     circle: ?Circle = null,
     one_way: bool = false,
+    is_trigger: bool = false,
     enabled: bool = true,
 };
 
@@ -35,6 +37,7 @@ pub const Component = struct {
     rotation: f32 = 0,
     circle: ?Circle = null,
     one_way: bool = false,
+    is_trigger: bool = false,
     enabled: bool = true,
 
     pub fn collider(self: Component) Collider {
@@ -45,6 +48,7 @@ pub const Component = struct {
             .rotation = self.rotation,
             .circle = self.circle,
             .one_way = self.one_way,
+            .is_trigger = self.is_trigger,
             .enabled = self.enabled,
         };
     }
