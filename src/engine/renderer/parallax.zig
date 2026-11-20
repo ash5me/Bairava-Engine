@@ -48,8 +48,9 @@ pub fn drawPlane(batch: *sprite.SpriteBatch, texture: *const Texture, cam: *cons
     }
 
     const layer_cam = cam.scrolled(plane.scroll);
-    const xs = axisCopies(layer_cam.x, cam.view_w, plane.period_w, plane.repeat_x, plane.anchor_x);
-    const ys = axisCopies(layer_cam.y, cam.view_h, plane.period_h, plane.repeat_y, plane.anchor_y);
+    const layer_view = layer_cam.viewRect();
+    const xs = axisCopies(layer_view.x, layer_view.w, plane.period_w, plane.repeat_x, plane.anchor_x);
+    const ys = axisCopies(layer_view.y, layer_view.h, plane.period_h, plane.repeat_y, plane.anchor_y);
     if (xs.count > max_plane_quads / ys.count) {
         std.debug.panic("parallax plane period {d}x{d} exceeds {d} quads for view {d}x{d}", .{
             plane.period_w, plane.period_h, max_plane_quads, cam.view_w, cam.view_h,

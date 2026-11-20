@@ -137,6 +137,12 @@ pub const Enemy = struct {
             .w = @floatFromInt(frame.w),
             .h = @floatFromInt(frame.h),
         };
+        if (!engine.camera.overlapsView(cam.viewRect(), .{
+            .x = x,
+            .y = y - collide_top,
+            .w = dst.w,
+            .h = dst.h,
+        }, 1)) return;
         batch.drawSprite(atlas, src, dst, .{ .tint = tint, .z = z, .depth_y = self.drawDepthY(alpha) });
     }
 

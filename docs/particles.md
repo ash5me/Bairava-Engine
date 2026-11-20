@@ -26,7 +26,8 @@ not allocate after initialization. Particle lifetime, speed, angle, and size ran
 deterministically from the supplied seed. `setConfig` rejects non-finite or out-of-range values
 without changing the previous configuration. Non-finite and non-positive update steps are ignored.
 
-To draw, call `System.draw(&sprite_batch, texture, source_rect, z)` after beginning the sprite batch.
-Particles are centered on their positions and interpolate their size and RGBA tint over their
-lifetime. Gravity is constant per system and affects velocity. Game code owns the texture and
-controls particle-system lifetime.
+To draw, call `System.draw(&sprite_batch, texture, source_rect, z, camera)` after beginning the
+sprite batch. Particles are centered on their positions and interpolate their size and RGBA tint
+over their lifetime. Drawing culls each particle against the camera's world-space view, including
+the particle's rotation and a one-pixel pad for camera rounding. Gravity is constant per system
+and affects velocity. Game code owns the texture and controls particle-system lifetime.

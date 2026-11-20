@@ -39,6 +39,7 @@ test {
     _ = @import("engine/renderer/post.zig");
     _ = @import("engine/renderer/render_types.zig");
     _ = @import("engine/renderer/parallax.zig");
+    _ = @import("engine/renderer/tilemap_draw.zig");
     _ = @import("engine/renderer/shake.zig");
     _ = @import("engine/renderer/hit_flash.zig");
     _ = @import("engine/core/application.zig");

@@ -1,4 +1,73 @@
 const std = @import("std");
+const shapes = @import("../physics/shapes.zig");
+
+pub const Bounds = shapes.Box;
+
+/// Returns whether non-empty world-space bounds intersect the view grown by `pad`.
+/// Right and bottom edges are exclusive; contact at the left or top edge counts as visible.
+pub fn overlapsView(view: Bounds, bounds: Bounds, pad: f32) bool {
+    if (!validBounds(view) or !validBounds(bounds) or !std.math.isFinite(pad) or pad < 0) return false;
+    const left = view.x - pad;
+    const top = view.y - pad;
+    const right = view.x + view.w + pad;
+    const bottom = view.y + view.h + pad;
+    const bounds_right = bounds.x + bounds.w;
+    const bounds_bottom = bounds.y + bounds.h;
+    if (!(std.math.isFinite(left) and std.math.isFinite(top) and
+        std.math.isFinite(right) and std.math.isFinite(bottom) and
+        std.math.isFinite(bounds_right) and std.math.isFinite(bounds_bottom))) return false;
+    return bounds.x < right and left <= bounds_right and
+        bounds.y < bottom and top <= bounds_bottom;
+}
+
+/// Returns the world-space AABB of a destination rectangle after clockwise rotation around `origin`.
+/// `dst` must expose x, y, w, and h fields, as does `renderer.sprite.Rect`.
+pub fn spriteBounds(dst: anytype, origin: [2]f32, rotation: f32) Bounds {
+    if (!std.math.isFinite(rotation) or
+        !std.math.isFinite(origin[0]) or !std.math.isFinite(origin[1]))
+    {
+        return .{ .x = std.math.nan(f32), .y = 0, .w = 0, .h = 0 };
+    }
+    const rect = Bounds{ .x = dst.x, .y = dst.y, .w = dst.w, .h = dst.h };
+    if (!validBounds(rect)) return rect;
+    const pivot_x = rect.x + origin[0];
+    const pivot_y = rect.y + origin[1];
+    const cosine = @cos(rotation);
+    const sine = @sin(rotation);
+    var min_x: f32 = std.math.inf(f32);
+    var max_x: f32 = -std.math.inf(f32);
+    var min_y: f32 = std.math.inf(f32);
+    var max_y: f32 = -std.math.inf(f32);
+    for ([_]f32{ 0, rect.w }) |x| {
+        for ([_]f32{ 0, rect.h }) |y| {
+            const dx = x - origin[0];
+            const dy = y - origin[1];
+            const world_x = pivot_x + dx * cosine - dy * sine;
+            const world_y = pivot_y + dx * sine + dy * cosine;
+            min_x = @min(min_x, world_x);
+            max_x = @max(max_x, world_x);
+            min_y = @min(min_y, world_y);
+            max_y = @max(max_y, world_y);
+        }
+    }
+    if (!(std.math.isFinite(min_x) and std.math.isFinite(max_x) and
+        std.math.isFinite(min_y) and std.math.isFinite(max_y)))
+    {
+        return .{ .x = std.math.nan(f32), .y = 0, .w = 0, .h = 0 };
+    }
+    const width = max_x - min_x;
+    const height = max_y - min_y;
+    if (!std.math.isFinite(width) or !std.math.isFinite(height)) {
+        return .{ .x = std.math.nan(f32), .y = 0, .w = 0, .h = 0 };
+    }
+    return .{ .x = min_x, .y = min_y, .w = width, .h = height };
+}
+
+fn validBounds(bounds: Bounds) bool {
+    if (!(std.math.isFinite(bounds.x) and std.math.isFinite(bounds.y) and
+        std.math.isFinite(bounds.w) and std.math.isFinite(bounds.h)) or bounds.w <= 0 or bounds.h <= 0) return false;
+    return std.math.isFinite(bounds.x + bounds.w) and std.math.isFinite(bounds.y + bounds.h);
+}
 
 pub const Scroll = struct {
     factor_x: f32 = 1,
@@ -40,6 +109,11 @@ pub const Camera = struct {
     /// world, with each pixel larger. Below 1 it shows more. The engine sets `view_w` and `view_h`
     /// from this each frame, so clamping and culling already follow the zoom.
     zoom: f32 = 1.0,
+
+    /// The visible world rectangle. Zoom is already reflected in `view_w` and `view_h`.
+    pub fn viewRect(self: Camera) Bounds {
+        return .{ .x = self.x, .y = self.y, .w = self.view_w, .h = self.view_h };
+    }
 
     /// Centers the view on a world point, clamped so the view never shows past the world edges.
     pub fn follow(self: *Camera, target_x: f32, target_y: f32) void {
@@ -302,4 +376,41 @@ test "non-finite scroll inputs fall back to identity per axis" {
     try std.testing.expectEqual(cam.y, scrolled.y);
     try std.testing.expect(std.math.isFinite(scrolled.x));
     try std.testing.expect(std.math.isFinite(scrolled.y));
+}
+
+test "view overlap uses half-open edges and grows by its pad" {
+    const view = Bounds{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    try std.testing.expect(!overlapsView(view, .{ .x = 10, .y = 1, .w = 2, .h = 2 }, 0));
+    try std.testing.expect(!overlapsView(view, .{ .x = 1, .y = 10, .w = 2, .h = 2 }, 0));
+    try std.testing.expect(overlapsView(view, .{ .x = -2, .y = 1, .w = 2, .h = 2 }, 0));
+    try std.testing.expect(overlapsView(view, .{ .x = 1, .y = -2, .w = 2, .h = 2 }, 0));
+    try std.testing.expect(overlapsView(view, .{ .x = 10.5, .y = 1, .w = 1, .h = 2 }, 1));
+    try std.testing.expect(!overlapsView(view, .{ .x = 0, .y = 0, .w = 0, .h = 1 }, 1));
+    try std.testing.expect(!overlapsView(view, .{ .x = 0, .y = 0, .w = 1, .h = 1 }, std.math.nan(f32)));
+}
+
+test "camera view follows zoom dimensions and scrolled camera copies" {
+    const cam = Camera{ .x = 20, .y = 30, .view_w = 100, .view_h = 80, .world_w = 500, .world_h = 500 };
+    const sprite_rect = Bounds{ .x = 110, .y = 35, .w = 2, .h = 2 };
+    try std.testing.expect(overlapsView(cam.viewRect(), sprite_rect, 0));
+    var zoomed = cam;
+    zoomed.view_w = 80;
+    zoomed.view_h = 60;
+    try std.testing.expect(!overlapsView(zoomed.viewRect(), sprite_rect, 0));
+
+    const layer_cam = cam.scrolled(.{ .factor_x = 0.5 });
+    try std.testing.expect(overlapsView(layer_cam.viewRect(), .{ .x = 15, .y = 35, .w = 2, .h = 2 }, 0));
+    try std.testing.expect(!overlapsView(cam.viewRect(), .{ .x = 15, .y = 35, .w = 2, .h = 2 }, 0));
+}
+
+test "rotated sprite bounds include destination origin and rotation" {
+    const Rect = struct { x: f32, y: f32, w: f32, h: f32 };
+    const dst = Rect{ .x = 11, .y = 2, .w = 4, .h = 2 };
+    const view = Bounds{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    const unrotated = spriteBounds(dst, .{ 0, 0 }, 0);
+    const rotated = spriteBounds(dst, .{ 0, 0 }, @as(f32, std.math.pi) / 2.0);
+    try std.testing.expect(!overlapsView(view, unrotated, 0));
+    try std.testing.expect(overlapsView(view, rotated, 0));
+    try std.testing.expectApproxEqAbs(@as(f32, 9), rotated.x, 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 11), rotated.x + rotated.w, 1e-5);
 }

@@ -1,6 +1,7 @@
 //! Bounded, deterministic particle simulation with optional SpriteBatch rendering.
 
 const std = @import("std");
+const camera = @import("renderer/camera.zig");
 const sprite = @import("renderer/sprite.zig");
 const texture = @import("renderer/texture.zig");
 
@@ -135,19 +136,23 @@ pub const System = struct {
         texture_ref: *const texture.Texture,
         source: sprite.Rect,
         z: i32,
+        cam: *const camera.Camera,
     ) void {
         for (self.particles[0..self.count]) |particle| {
             const size = particle.currentSize();
             const color = particle.currentColor();
-            batch.drawSprite(texture_ref, source, .{
+            const dst = sprite.Rect{
                 .x = particle.position[0] - size * 0.5,
                 .y = particle.position[1] - size * 0.5,
                 .w = size,
                 .h = size,
-            }, .{
+            };
+            const origin = [2]f32{ size * 0.5, size * 0.5 };
+            if (!camera.overlapsView(cam.viewRect(), camera.spriteBounds(dst, origin, particle.rotation), 1)) continue;
+            batch.drawSprite(texture_ref, source, dst, .{
                 .tint = .{ color[0], color[1], color[2] },
                 .alpha = color[3],
-                .origin = .{ size * 0.5, size * 0.5 },
+                .origin = origin,
                 .rotation = particle.rotation,
                 .z = z,
             });
@@ -290,4 +295,25 @@ test "invalid configuration leaves the previous configuration unchanged" {
     try std.testing.expectError(error.InvalidConfig, system.setConfig(.{ .lifetime = .{ 0, 1 } }));
     try std.testing.expectEqual(@as(f32, 0), system.config.emission_rate);
     try std.testing.expectError(error.InvalidConfig, system.setConfig(.{ .color = .{ 1, 1, 1, 2 } }));
+}
+
+test "particle draw submits only sprites whose rotated bounds meet the camera view" {
+    const fixtures = @import("test_fixtures.zig");
+    const allocator = std.testing.allocator;
+    var system = try System.init(allocator, 2, 4);
+    defer system.deinit();
+    try system.setConfig(.{ .lifetime = .{ 1, 1 }, .size = .{ 4, 4 } });
+    system.setPosition(.{ 4, 4 });
+    _ = system.emit(2);
+    system.particles[1].position = .{ 100, 4 };
+
+    var no_vertices: [0]sprite.Vertex = .{};
+    var no_batches: [0]sprite.Batch = .{};
+    var batch = fixtures.batch(&no_vertices, &no_batches);
+    defer fixtures.freeBatch(&batch);
+    const tex = fixtures.texture(4, 4);
+    const cam = camera.Camera{ .x = 0, .y = 0, .view_w = 10, .view_h = 10, .world_w = 100, .world_h = 100 };
+    batch.begin(cam.view_w, cam.view_h);
+    system.draw(&batch, &tex, .{ .x = 0, .y = 0, .w = 4, .h = 4 }, 0, &cam);
+    try std.testing.expectEqual(@as(u32, 1), batch.sprite_count);
 }

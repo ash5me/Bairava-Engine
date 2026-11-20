@@ -693,6 +693,14 @@ pub const Game = struct {
         var row: usize = 0;
         while (row < self.entities.count()) : (row += 1) {
             const placed = self.entities.get(self.entities.handleAt(row)).?;
+            const world_x = @as(f32, @floatFromInt(placed.col)) * tile_px;
+            const world_y = @as(f32, @floatFromInt(placed.row)) * tile_px;
+            if (!engine.camera.overlapsView(cam.viewRect(), .{
+                .x = world_x,
+                .y = world_y,
+                .w = tile_px,
+                .h = tile_px,
+            }, 1)) continue;
             const id = self.prefabs.get(placed.prefab).tile;
             const src = engine.Rect{
                 .x = @floatFromInt(self.tile.x + (id % across) * tile_size),
@@ -702,8 +710,8 @@ pub const Game = struct {
             };
 
             const dst = engine.Rect{
-                .x = cam.screenX(@as(f32, @floatFromInt(placed.col)) * tile_px),
-                .y = cam.screenY(@as(f32, @floatFromInt(placed.row)) * tile_px),
+                .x = cam.screenX(world_x),
+                .y = cam.screenY(world_y),
                 .w = tile_px,
                 .h = tile_px,
             };
@@ -856,6 +864,18 @@ fn drawForestProp(
     const foot_y = @as(f32, @floatFromInt(cell.row + 1)) * tile_px;
     const width: f32 = @floatFromInt(region.w);
     const height: f32 = @floatFromInt(region.h);
+    const world_dst = engine.Rect{
+        .x = foot_x - width / 2,
+        .y = foot_y - height,
+        .w = width,
+        .h = height,
+    };
+    if (!engine.camera.overlapsView(cam.viewRect(), .{
+        .x = world_dst.x,
+        .y = world_dst.y,
+        .w = world_dst.w,
+        .h = world_dst.h,
+    }, 1)) return;
     batch.drawSprite(
         texture,
         .{
@@ -865,10 +885,10 @@ fn drawForestProp(
             .h = height,
         },
         .{
-            .x = cam.screenX(foot_x - width / 2),
-            .y = cam.screenY(foot_y - height),
-            .w = width,
-            .h = height,
+            .x = cam.screenX(world_dst.x),
+            .y = cam.screenY(world_dst.y),
+            .w = world_dst.w,
+            .h = world_dst.h,
         },
         .{ .z = actor_z, .depth_y = foot_y },
     );
