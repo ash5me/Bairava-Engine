@@ -7,8 +7,12 @@ const engine = @import("bairava");
 
 const log = engine.log.scoped("benchmark");
 
-const sprite_count: u32 = 1000;
+const entity_count: u32 = 10_000;
+const collision_queries_per_update: u32 = 1_000;
+const columns: u32 = 100;
 const texture_path = "assets/sample/white.png";
+const Collider = engine.physics.broad_phase.Collider;
+const CollisionIndex = engine.physics.broad_phase.Index;
 /// Frames the summary covers. The frame history keeps this many, so once it holds a full window past the warm-up,
 /// the summary covers exactly the frames measured.
 const report_frames = engine.diagnostics.history_capacity;
@@ -28,17 +32,73 @@ const config = engine.Config{
 
 const Benchmark = struct {
     texture: engine.Texture,
+    entities: []Entity,
+    colliders: []Collider,
+    collision_queries: u64 = 0,
+    collision_hits: u64 = 0,
     reported: bool = false,
 
+    const Entity = struct {
+        x: f32,
+        y: f32,
+        vx: f32,
+    };
+
     pub fn init(ctx: *engine.Context) !Benchmark {
-        return .{ .texture = try ctx.loadTexture(texture_path) };
+        var texture = try ctx.loadTexture(texture_path);
+        errdefer texture.deinit();
+        const entities = try ctx.allocators.game.alloc(Entity, @intCast(entity_count));
+        const colliders = try ctx.allocators.game.alloc(Collider, @intCast(entity_count));
+        for (entities, 0..) |*entity, index| {
+            const item_index: u32 = @intCast(index);
+            const column = item_index % columns;
+            const row = item_index / columns;
+            const x = @as(f32, @floatFromInt(column)) * 8;
+            const y = @as(f32, @floatFromInt(row)) * 6;
+            entity.* = .{
+                .x = x,
+                .y = y,
+                .vx = 8 + @as(f32, @floatFromInt(index % 5)),
+            };
+            colliders[index] = .{
+                .box = .{ .x = x, .y = y, .w = 8, .h = 6 },
+                .layer = 1,
+            };
+        }
+        return .{ .texture = texture, .entities = entities, .colliders = colliders };
     }
 
     pub fn update(self: *Benchmark, ctx: *engine.Context, nav: *engine.SceneNavigator) void {
         _ = nav;
         if (ctx.input.wasPressed(.escape)) ctx.running = false;
+        for (self.entities, 0..) |*entity, index| {
+            entity.x += entity.vx * ctx.dt;
+            if (entity.x >= 800) entity.x -= 800;
+            self.colliders[index].box.x = entity.x;
+        }
+        var collision_index = CollisionIndex.init(ctx.allocators.frame, self.colliders, 16) catch |err| {
+            log.err("collision benchmark index build failed: {s}", .{@errorName(err)});
+            ctx.running = false;
+            return;
+        };
+        defer collision_index.deinit();
+        var hits: u64 = 0;
+        for (0..collision_queries_per_update) |query| {
+            const query_index: u32 = @intCast(query);
+            const x: f32 = @floatFromInt((query_index *% 37) % 800);
+            const y: f32 = @floatFromInt((query_index *% 19) % 600);
+            var results: [64]usize = undefined;
+            hits += @intCast(collision_index.queryRegion(
+                .{ .x = x, .y = y, .w = 32, .h = 24 },
+                1,
+                &results,
+            ));
+        }
+        self.collision_queries += collision_queries_per_update;
+        self.collision_hits += hits;
         if (ctx.diagnostics_enabled) {
-            ctx.diagnostics.snapshot.world.entities = sprite_count;
+            ctx.diagnostics.snapshot.world.entities = @intCast(self.entities.len);
+            ctx.diagnostics.snapshot.world.collision_queries += collision_queries_per_update;
             self.reportWhenReady(ctx.diagnostics);
         }
     }
@@ -78,20 +138,18 @@ const Benchmark = struct {
             collector.spikes.total,
             engine.diagnostics.spike_threshold_seconds * 1000.0,
         });
+        log.info("collision workload: {d} query calls, {d} total hits", .{ self.collision_queries, self.collision_hits });
     }
 
     pub fn draw(self: *Benchmark, dc: *const engine.DrawContext) void {
-        var index: u32 = 0;
-        while (index < sprite_count) : (index += 1) {
-            const column = index % 40;
-            const row = index / 40;
+        for (self.entities, 0..) |entity, index| {
             const shade = @as(f32, @floatFromInt(index % 7)) / 12.0;
             dc.batch.drawSprite(
                 &self.texture,
                 .{ .x = 0, .y = 0, .w = 4, .h = 4 },
                 .{
-                    .x = @as(f32, @floatFromInt(column)) * 8,
-                    .y = @as(f32, @floatFromInt(row)) * 6,
+                    .x = entity.x,
+                    .y = entity.y,
                     .w = 8,
                     .h = 6,
                 },
@@ -101,7 +159,7 @@ const Benchmark = struct {
     }
 
     pub fn debugText(_: *const Benchmark, out: *engine.diagnostics.Text) void {
-        out.print("benchmark: {d} deterministic sprites; Escape quits", .{sprite_count});
+        out.print("benchmark: {d} moving entities / sprites; Escape quits", .{entity_count});
     }
 
     pub fn deinit(self: *Benchmark) void {

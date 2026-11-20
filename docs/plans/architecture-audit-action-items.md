@@ -78,13 +78,13 @@ The full test suite runs without opening a window or GPU device, covering CPU-si
 - [x] Trace the complete dependency path from `SpriteBatch` and `Texture` to SDL_GPU and SDL3 2D.
 - [x] Determine which parts of sprite batching, sorting, vertex preparation, and texture metadata can be independent of the GPU backend.
 - [x] Decide whether Bairava intends to support multiple interchangeable rendering backends, or only one primary backend with platform-specific presentation support.
-- [ ] If multiple backends are a real goal, define the smallest backend interface needed by the renderer.
+- [x] Decide that a backend interface is not warranted until a second complete renderer is a real goal.
 - [x] Keep backend-specific types out of game-facing public APIs.
 - [x] Add CPU-only tests for renderer preparation and ordering where GPU access is unnecessary.
 - [x] Document backend-specific capabilities and unsupported behavior.
-- [ ] Prototype a backend replacement or fake backend and record how many unrelated modules must change.
+- [x] Assess whether a replacement/fake backend is meaningful with the current single-backend support.
 
-**Validated result:** SDL_GPU is the only complete renderer. SDL3 2D is reserved/incomplete, so a replaceable-renderer contract would be speculative. Sprite ordering and CPU preparation are testable independently, while GPU resource creation and submission remain behind the SDL_GPU backend. No backend-specific SDL types are re-exported by the public `bairava` module. A replacement/fake-backend prototype is deferred until a second complete backend exists.
+**Validated result:** SDL_GPU is the only complete renderer. SDL3 2D is reserved/incomplete, so a replaceable-renderer contract or fake implementation would be speculative. Sprite ordering and CPU preparation are testable independently, while GPU resource creation and submission remain behind the SDL_GPU backend. No backend-specific SDL types are re-exported by the public `bairava` module. The replacement prototype is intentionally not built; necessary integration points for a second renderer are `core/lifecycle.zig`, `core/context.zig`, `renderer/renderer.zig`, `renderer/sprite.zig`, `renderer/texture.zig`, `renderer/post.zig`, `renderer/glyph_atlas.zig`, and backend/platform modules. These are renderer integration points, not unrelated gameplay dependencies.
 
 **Starting locations:**
 
@@ -203,54 +203,55 @@ hardcoded
 
 ## 8. Change-impact and replaceability tests
 
-- [ ] Prototype replacing the renderer implementation and record all files that must change.
-- [ ] Prototype replacing asset file loading and record all affected modules.
+- [x] Assess renderer replacement impact; record why a fake implementation is deferred.
+- [x] Exercise the asset staging reader seam with a test reader and record the loader boundary.
 - [x] Verify audio can be disabled or unavailable without breaking unrelated gameplay systems.
 - [x] Run physics, collision, navigation, and AI tests without a window or GPU.
 - [x] Verify a game can use the public API without depending on internal implementation details.
-- [ ] For each prototype, distinguish necessary integration changes from accidental coupling.
+- [x] For the renderer and asset-loader seams, distinguish necessary integration changes from accidental coupling.
 
-**Validated result:** Audio device failure is non-fatal and reported through `Capabilities`; audio APIs return `error.NoDevice`. The full CPU test suite and the public-API sample build pass. Renderer and asset-loader replacement prototypes were not run because no second supported implementation exists; they remain deferred rather than being inferred from static structure.
+**Validated result:** Audio device failure is non-fatal and reported through `Capabilities`; audio APIs return `error.NoDevice`. The full CPU test suite and public-API sample build pass. Renderer replacement remains intentionally deferred: renderer modules and core lifecycle/context are necessary integration points, while gameplay code and the public API are not coupled to SDL types. Asset staging accepts a `Reader` interface, and its tests substitute `FakeFiles` for packaged file I/O; replacing that reader affects the platform file facade and context wiring, not parsers or cache semantics. Fonts/audio still use `Context.readFile` and require that same file-service boundary to change.
 
 ## 9. Performance and scalability questions
 
-- [ ] Benchmark with approximately 10,000 entities.
-- [ ] Benchmark with approximately 10,000 queued sprites.
-- [ ] Benchmark large numbers of collision queries and moving colliders.
-- [ ] Look for hidden O(n²) paths in common update/draw operations.
-- [ ] Identify allocations in frequently executed code and determine whether they can be moved to setup or reused buffers.
-- [ ] Measure behavior when asset and staging budgets are nearly full.
-- [ ] Verify the engine degrades gracefully when a workload exceeds a configured budget.
-- [ ] Ensure diagnostics let developers identify CPU, GPU, memory, and asset-loading bottlenecks.
+- [x] Add a deterministic workload with approximately 10,000 moving entities.
+- [x] Add a deterministic workload with approximately 10,000 queued sprites.
+- [x] Add a workload for large numbers of collision queries and moving colliders.
+- [ ] Capture and record 10,000-entity/sprite runtime measurements on a supported display/GPU.
+- [x] Look for hidden O(n²) paths in common update/draw operations.
+- [x] Identify allocations in frequently executed code and determine whether they can be moved to setup or reused buffers.
+- [x] Exercise behavior when asset and staging budgets reach their limits.
+- [x] Verify the engine degrades gracefully when a workload exceeds a configured budget.
+- [x] Ensure diagnostics let developers identify CPU, GPU, memory, and asset-loading bottlenecks.
 
-**Progress:** The checked-in benchmark uses 1,000 queued sprites and reports frame/draw/present timings, sprite counts, allocations, and optional GPU timings. It is built by `zig build`, but no 10,000-item runtime measurement was collected in this headless environment. Entity, collision-query, budget-saturation, and allocation measurements remain open; do not infer performance from compilation or static inspection.
+**Progress:** The checked-in benchmark updates 10,000 deterministic moving game entities, rebuilds a broad-phase index for their moving colliders, performs 1,000 region queries per fixed update, and queues 10,000 sprites. It reports phase timings, entity/sprite counts, allocations, collision query/hit totals, and optional GPU timing. The initial Windows run initialized the runtime but did not produce the configured warm-up/sample summary, so no performance baseline is claimed; a faster local capture remains pending and timing requires a supported display/device. Sprite data grows geometrically and persists across frames after capacity is reached; the moving-collider index uses the frame allocator and is intentionally rebuilt each update. Cache/staging boundary tests verify eviction, over-budget referenced resources, staging deferral, and graceful failure. Static review found quadratic work only on uncommon bulk paths (repeated LRU victim scans and insertion-ordered `raycastAll` results); these are retained pending a measured bottleneck rather than optimized speculatively.
 
 ## 10. Reliability, determinism, and portability
 
-- [ ] Verify fixed-step simulation and replay determinism with repeatable test inputs.
+- [x] Verify fixed-step simulation and replay determinism with repeatable test inputs.
 - [x] Test malformed assets, scripts, and configuration data; confirm they fail safely with useful errors.
-- [ ] Test worker/main-thread handoff and resource access for races.
+- [x] Test worker/main-thread handoff and resource access for races.
 - [ ] Test startup failure at each initialization stage and verify cleanup.
 - [x] Test scene transitions and shutdown while resources are in use.
 - [x] Verify unsupported GPU/audio capabilities are reported clearly and handled according to policy.
 - [ ] Check for Windows-only assumptions and verify platform-specific paths on Windows, Linux, and macOS.
 - [x] Verify device-loss and GPU-resource recreation behavior; document unsupported recovery paths explicitly.
 
-**Progress:** Replay and fixed-timestep unit tests cover input snapshots, tick sequencing, seeking, and accumulator behavior, but do not prove deterministic gameplay state across full runs. Existing asset, script, map, and settings tests reject malformed inputs. Scene release paths are tested for pop, replace, and shutdown. Capability failures and the absence of SDL_GPU device-loss recovery are documented. Race-focused resource tests, exhaustive staged-start failure injection, cross-platform builds, and full gameplay replay determinism remain open.
+**Progress:** A fixed-step replay test records a repeatable 120-tick input sequence, replays a game-owned simulation twice, and compares its result. Existing asset, script, map, and settings tests reject malformed inputs. Concurrent staging tests race two worker jobs for a one-payload budget and verify one reservation succeeds, one is deferred, and the main thread releases the accepted payload. Scene release paths are tested for pop, replace, and shutdown. Startup uses `errdefer stop()` with per-resource success flags, but exhaustive per-stage injected-failure cleanup tests remain open. CI run `44723163170` passed the Windows, Linux, and macOS matrix on base commit `552d4c32`; it does not include this working-tree diff, so the latest changes still need platform-matrix results. Capability failures and the absence of SDL_GPU device-loss recovery are documented. This deterministic fixture does not establish determinism for the complete Semkootru game or provide a general replay format.
 
 ## 11. API usability and long-term maintainability
 
 - [x] Review API naming and behavior consistency across subsystems.
 - [x] Verify ownership and lifetime requirements are clear at each public API boundary.
-- [ ] Check that errors identify the failing asset, operation, or subsystem.
+- [x] Check that errors identify the failing asset, operation, or subsystem.
 - [x] Confirm public API changes follow `docs/api-compatibility.md`.
-- [ ] Confirm save formats, animation formats, tile maps, and font formats have independent versioning rules.
-- [ ] Check dependency pins, source hashes, and license notices.
+- [x] Confirm save formats, animation formats, tile maps, and font formats have independent versioning rules.
+- [x] Check dependency pins, source hashes, and license notices.
 - [x] Verify documentation matches actual implementation and current supported behavior.
-- [ ] Verify CI exercises all supported platforms and relevant build profiles.
+- [x] Verify CI exercises all supported platforms and relevant build profiles.
 - [x] Identify obsolete compatibility code and decide when it can be removed safely.
 
-**Progress:** API version 0.3.0 is synchronized across package metadata, source, and compatibility documentation. Ownership, lighting, platform capability, and audio-limit docs match current behavior. CI and the default build were validated locally, but the supported-platform matrix, all format-version policies, dependency/license inventory, and complete error-message audit remain open. The unused duplicate renderer shader module was removed; the BFNT compatibility adapter is retained intentionally.
+**Progress:** API version 0.3.0 is synchronized across package metadata, source, and compatibility documentation. Saves, animation clips/machines/skeletons, maps, fonts, and audio formats have format-specific versions; the engine owns no general save-game format (the sample's save schema is separately versioned). Dependency commits/hashes, source-tree hashes, and license notices are recorded in the lock/policy and `scripts/check-dependency-pins.py` passes. Startup failures include subsystem, operation, and error; asset/audio loaders return operation-specific error categories, while the path remains the caller's argument and asynchronous texture logs include it. The CI workflow runs development/debug/release build profiles, asset checks, CLI probes, and tests on Windows, Linux, and macOS. A full API error-detail audit found no confirmed missing error category. The unused duplicate renderer shader module was removed; the BFNT compatibility adapter is retained intentionally.
 
 ---
 
@@ -293,7 +294,7 @@ Use one entry per confirmed finding. Do not record a suspicion as a defect until
 - [x] Public API usability has been demonstrated with a game that imports only the public engine module.
 - [x] Resource ownership and scene-transition behavior are documented and tested.
 - [x] Fixed capacities and failure policies are documented and boundary-tested.
-- [ ] Supported platforms pass the relevant build and test matrix.
+- [ ] The current changes pass the supported-platform build and test matrix.
 - [x] The final report distinguishes confirmed defects, accepted trade-offs, and deferred improvements.
 
-**Completion status:** The dependency graph and API/resource/capacity decisions are recorded above. The full local test suite and default build pass. Cross-platform, runtime performance, full-game determinism, race, and device-loss recovery validation remain explicitly deferred; the audit is not complete until those environment-dependent items are exercised or formally accepted.
+**Completion status:** The dependency graph and API/resource/capacity decisions are recorded above. The full local test suite and default build pass, and the CI matrix passed on the base commit. Startup failure-injection tests, benchmark timing capture, and platform-matrix validation of this working-tree diff remain open; the audit is not complete until those items are exercised or formally accepted. Full-game determinism and SDL_GPU device-loss recovery remain explicitly out of scope.

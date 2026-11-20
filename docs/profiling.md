@@ -12,9 +12,11 @@ Run the deterministic rendering workload with:
 zig build run-benchmark
 ```
 
-It draws 1,000 tinted sprites, in a fixed 40-by-25 grid, from one 4x4 texture at a 320x180 native
-view. The workload and texture are the same each run; it has no random state or dynamic entity
-spawning. Use the same build mode, resolution, vsync setting, and graphics backend when comparing
+It updates 10,000 simple moving game entities, rebuilds a collision grid for their moving colliders,
+performs 1,000 region queries per fixed update, and draws one tinted sprite per entity from one 4x4
+texture at a 320x180 native view. Entities start in a fixed 100-by-100 grid and wrap horizontally;
+the workload and texture are the same each run and use no random state or dynamic spawning. Use the
+same build mode, resolution, vsync setting, and graphics backend when comparing
 results. Let it run past its 60-frame warm-up and the 120 frames it summarizes, then record average, p95, and worst frame
 times along with the individual phase averages. F3 toggles the overlay; F2 opens the console, where
 `performance` prints the current summary; Escape quits.
@@ -48,7 +50,7 @@ query calls.
 repeatable workload first and use those zones to locate a measured bottleneck before changing data
 layouts or caches.
 
-The benchmark also logs that summary itself, under the `benchmark` log scope, once the warm-up and 120 frames are recorded. The benchmark turns on `Config.gpu_timing`, so it logs the GPU summary too, and it logs the spike count with it. Its frame figures therefore include the GPU wait. It runs only in development builds, where the frame times are kept, so a release build logs nothing.
+The benchmark also logs that summary itself, under the `benchmark` log scope, once the warm-up and 120 frames are recorded. It reports cumulative collision query calls and hits as well. The benchmark turns on `Config.gpu_timing`, so it logs the GPU summary too, and it logs the spike count with it. Its frame figures therefore include the GPU wait. It runs only in development builds, where the frame times are kept, so a release build logs nothing.
 
 The overlay shows a strip of allocations per frame and a line of per-frame plot values. The plots are sprites queued, draw calls made last frame, allocations requested so far this frame across every scope, and bytes requested. Each plot keeps the same 120-frame window as the frame graph, so its average and p95 are over those frames. Allocation counts restart at the start of each frame, while the totals in the memory line keep counting from startup.
 

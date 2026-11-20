@@ -5,6 +5,7 @@ const std = @import("std");
 const input = @import("input/input.zig");
 const gamepad = @import("input/gamepad.zig");
 const platform_types = @import("platform/types.zig");
+const fixed_timestep = @import("core/fixed_timestep.zig");
 
 pub const InputSnapshot = input.Input.Snapshot;
 
@@ -179,6 +180,48 @@ test "a replay recording enforces sequential ticks and can rewind or seek" {
     log.rewind();
     try std.testing.expectEqual(@as(u64, 5), try log.applyNextInput(&replayed));
     try std.testing.expectError(error.TickUnavailable, log.seek(9));
+}
+
+test "fixed-step replay reproduces a game-owned simulation from recorded input" {
+    const ticks = 120;
+    var recording = Log.init(std.testing.allocator);
+    defer recording.deinit();
+
+    var live = input.Input{};
+    for (0..ticks) |tick| {
+        if (tick == 10) {
+            live.keyDown(.space);
+            live.setHeld(.space, true);
+        } else if (tick == 70) {
+            live.keyUp(.space);
+            live.setHeld(.space, false);
+        }
+        live.latch();
+        try recording.recordInput(@intCast(tick), &live);
+    }
+
+    const simulate = struct {
+        fn run(log: *Log, tick_count: usize) !i64 {
+            var accumulator = fixed_timestep.Accumulator.init(60);
+            var replayed = input.Input{};
+            var position: i64 = 0;
+            for (0..tick_count) |_| {
+                _ = accumulator.addFrameTime(accumulator.fixed_dt);
+                while (accumulator.hasStep()) {
+                    _ = try log.applyNextInput(&replayed);
+                    position += if (replayed.held(.space)) @as(i64, 2) else -1;
+                    if (replayed.wasPressed(.space)) position += 17;
+                    accumulator.consumeStep();
+                }
+            }
+            return position;
+        }
+    }.run;
+
+    const first = try simulate(&recording, ticks);
+    recording.rewind();
+    const second = try simulate(&recording, ticks);
+    try std.testing.expectEqual(first, second);
 }
 
 test "state snapshots restore the nearest checkpoint and validate output capacity" {

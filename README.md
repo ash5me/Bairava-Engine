@@ -56,7 +56,7 @@ zig build run -Ddxil=true           # add Direct3D 12 shader output
 zig build run -Dmetal=true          # add Metal shader output
 
 zig build run-sample                # public-engine scene sample
-zig build run-benchmark             # 1000-sprite profiling workload
+zig build run-benchmark             # 10000-entity and sprite profiling workload
 zig build test                      # Zig, C, API, asset, jobs, and UI tests
 zig build test-ui                   # C text and widget tests only
 zig build check-assets              # validate the asset manifest and atlas

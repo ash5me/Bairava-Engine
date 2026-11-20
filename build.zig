@@ -451,7 +451,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(benchmark);
     const run_benchmark = b.addRunArtifact(benchmark);
     run_benchmark.step.dependOn(b.getInstallStep());
-    b.step("run-benchmark", "Run the deterministic 1000-sprite profiling workload").dependOn(&run_benchmark.step);
+    b.step("run-benchmark", "Run the deterministic 10000-entity and sprite profiling workload").dependOn(&run_benchmark.step);
 
     const text_benchmark = b.addExecutable(.{
         .name = "BairavaTextBenchmark",

@@ -360,6 +360,61 @@ test "budgeted staging reserves payload bytes until upload ownership is released
     try std.testing.expectEqual(@as(usize, 0), unlimited.usedBytes());
 }
 
+test "concurrent staging reservations transfer payload ownership back to the main thread" {
+    const jobs = @import("../jobs/jobs.zig");
+    const Job = struct {
+        reader: Reader,
+        budget: *Budget,
+        staged: ?Staged = null,
+        failure: ?Error = null,
+
+        fn run(self: *@This()) void {
+            self.staged = stageBudgeted(std.heap.page_allocator, self.reader, "tile.png", .{ .bc3 = true }, self.budget) catch |err| {
+                self.failure = err;
+                return;
+            };
+        }
+    };
+
+    const bc3 = try fixtures.compressedImageVariant(std.testing.allocator, @intFromEnum(image.Compression.bc3), 4, 4, 16);
+    defer std.testing.allocator.free(bc3);
+    var files = FakeFiles{ .entries = &.{.{ .name = "tile.png.bc3", .bytes = bc3 }} };
+    var budget = Budget.init(16);
+    var pool = try jobs.Pool.init(2, 2);
+    defer pool.deinit();
+    var counter = std.mem.zeroes(jobs.Counter);
+    var first = Job{ .reader = files.reader(), .budget = &budget };
+    var second = Job{ .reader = files.reader(), .budget = &budget };
+    defer if (first.staged) |*staged| staged.deinit();
+    defer if (second.staged) |*staged| staged.deinit();
+
+    pool.submit(&counter, Job, &first, Job.run);
+    pool.submit(&counter, Job, &second, Job.run);
+    pool.wait(&counter);
+
+    const accepted: usize = @intFromBool(first.staged != null) + @intFromBool(second.staged != null);
+    const first_deferred = if (first.failure) |err| switch (err) {
+        error.BudgetUnavailable => true,
+        else => false,
+    } else false;
+    const second_deferred = if (second.failure) |err| switch (err) {
+        error.BudgetUnavailable => true,
+        else => false,
+    } else false;
+    const deferred: usize = @intFromBool(first_deferred) + @intFromBool(second_deferred);
+    try std.testing.expectEqual(@as(usize, 1), accepted);
+    try std.testing.expectEqual(@as(usize, 1), deferred);
+    if (first.staged) |*staged| {
+        staged.deinit();
+        first.staged = null;
+    }
+    if (second.staged) |*staged| {
+        staged.deinit();
+        second.staged = null;
+    }
+    try std.testing.expectEqual(@as(usize, 0), budget.usedBytes());
+}
+
 test "a source image that is missing reports NotFound, and one that is not an image reports DecodeFailed" {
     var none = FakeFiles{ .entries = &.{} };
     try std.testing.expectError(error.NotFound, stage(std.testing.allocator, none.reader(), "tile.png", .{}));
