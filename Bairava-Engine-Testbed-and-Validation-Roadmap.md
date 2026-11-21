@@ -701,10 +701,10 @@ The order deliberately front-loads the shared harness, the first three high-valu
 ## Stage 3 — One integration slice, then targeted genre stress
 
 - [x] TB-07 Top-Down Adventure / Showcase Integration Test (the single game-like showcase).
-- [ ] TB-08 Isometric World Test (depth sorting and projected-world interactions).
-- [ ] TB-09 Platformer Test (movement resolution and moving-platform behavior).
-- [ ] TB-10 Bullet Hell Stress Test (spawn/despawn, collision density, and particle pressure).
-- [ ] TB-11 UI and Localization Test (visual layout and rendered glyphs; catalog logic remains unit-tested).
+- [x] TB-08 Isometric World Test (depth sorting and projected-world interactions).
+- [x] TB-09 Platformer Test (movement resolution and moving-platform behavior).
+- [x] TB-10 Bullet Hell Stress Test (spawn/despawn, collision density, and particle pressure).
+- [x] TB-11 UI and Localization Test (visual layout and rendered glyphs; catalog logic remains unit-tested).
 
 **Stage exit condition:** The one integration slice exercises public APIs end-to-end. Genre samples are added only after Stage 1 is green and each stresses a distinct engine behavior rather than duplicating the showcase.
 

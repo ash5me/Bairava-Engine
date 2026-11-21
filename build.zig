@@ -553,6 +553,70 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_tb07.addArgs(args);
     b.step("run-tb07", "Run TB-07 Top-Down Adventure Integration Sample").dependOn(&run_tb07.step);
 
+    const tb08 = b.addExecutable(.{
+        .name = "BairavaTB08",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb08_isometric.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb08.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb08);
+    const run_tb08 = b.addRunArtifact(tb08);
+    run_tb08.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb08.addArgs(args);
+    b.step("run-tb08", "Run TB-08 Isometric World Test").dependOn(&run_tb08.step);
+
+    const tb09 = b.addExecutable(.{
+        .name = "BairavaTB09",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb09_platformer.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb09.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb09);
+    const run_tb09 = b.addRunArtifact(tb09);
+    run_tb09.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb09.addArgs(args);
+    b.step("run-tb09", "Run TB-09 Platformer Test").dependOn(&run_tb09.step);
+
+    const tb10 = b.addExecutable(.{
+        .name = "BairavaTB10",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb10_bullet_hell.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb10.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb10);
+    const run_tb10 = b.addRunArtifact(tb10);
+    run_tb10.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb10.addArgs(args);
+    b.step("run-tb10", "Run TB-10 Bullet Hell Stress Test").dependOn(&run_tb10.step);
+
+    const tb11 = b.addExecutable(.{
+        .name = "BairavaTB11",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb11_ui_localization.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb11.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb11);
+    const run_tb11 = b.addRunArtifact(tb11);
+    run_tb11.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb11.addArgs(args);
+    b.step("run-tb11", "Run TB-11 UI and Localization Test").dependOn(&run_tb11.step);
+
     const tb02 = b.addExecutable(.{
         .name = "BairavaTB02",
         .root_module = b.createModule(.{
