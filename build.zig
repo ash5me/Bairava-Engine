@@ -216,8 +216,19 @@ fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, wi
     const run = b.addRunArtifact(harness);
     run.setCwd(b.path("."));
     if (b.args) |args| {
-        if (args.len != 1) @panic("UI tests accept one font path after `--`");
-        run.addArgs(args);
+        const tb01_args = args.len > 0 and (std.mem.eql(u8, args[0], "--count") or
+            std.mem.eql(u8, args[0], "--textures") or
+            std.mem.eql(u8, args[0], "--seed") or
+            std.mem.eql(u8, args[0], "--frames") or
+            std.mem.eql(u8, args[0], "--gpu-timing") or
+            std.mem.eql(u8, args[0], "--cycles") or
+            std.mem.eql(u8, args[0], "--help"));
+        if (tb01_args) {
+            run.addFileArg(b.path("assets/font.ttf"));
+        } else {
+            if (args.len != 1) @panic("UI tests accept one font path after `--`");
+            run.addArgs(args);
+        }
     } else {
         run.addFileArg(b.path("assets/font.ttf"));
     }
@@ -490,6 +501,13 @@ pub fn build(b: *std.Build) void {
 
     const install_sample_texture = b.addInstallFile(b.path("sample/assets/white.png"), "bin/assets/sample/white.png");
     b.getInstallStep().dependOn(&install_sample_texture.step);
+    inline for ([_][]const u8{ "forest_bush.png", "forest_rock.png", "forest_tree.png" }) |name| {
+        const install_texture = b.addInstallFile(
+            b.path("assets/" ++ name),
+            "bin/assets/" ++ name,
+        );
+        b.getInstallStep().dependOn(&install_texture.step);
+    }
 
     const run_sample = b.addRunArtifact(sample);
     run_sample.step.dependOn(b.getInstallStep());
@@ -508,7 +526,25 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(benchmark);
     const run_benchmark = b.addRunArtifact(benchmark);
     run_benchmark.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_benchmark.addArgs(args);
     b.step("run-benchmark", "Run the deterministic 10000-entity and sprite profiling workload").dependOn(&run_benchmark.step);
+    b.step("run-tb01", "Run TB-01 Sprite Rendering Stress Test").dependOn(&run_benchmark.step);
+
+    const tb02 = b.addExecutable(.{
+        .name = "BairavaTB02",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb02_asset_streaming.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb02.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb02);
+    const run_tb02 = b.addRunArtifact(tb02);
+    run_tb02.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb02.addArgs(args);
+    b.step("run-tb02", "Run TB-02 Asset Loading and Streaming Test").dependOn(&run_tb02.step);
 
     const text_benchmark = b.addExecutable(.{
         .name = "BairavaTextBenchmark",
@@ -523,7 +559,9 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(text_benchmark);
     const run_text_benchmark = b.addRunArtifact(text_benchmark);
     run_text_benchmark.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_text_benchmark.addArgs(args);
     b.step("run-text-benchmark", "Run the deterministic multi-provider typography reference workload").dependOn(&run_text_benchmark.step);
+    b.step("run-tb03", "Run TB-03 Text and Font Rendering Test").dependOn(&run_text_benchmark.step);
 
     // Texture atlas: every sprite in one image, packed at build time by tools/atlas/pack.c with
     // stb_rect_pack. The packer runs on the build machine, so it is built for the host, not the target.

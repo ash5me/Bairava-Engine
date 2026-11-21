@@ -1,12 +1,13 @@
 //! Deterministic font-path reference scene. Run with `zig build run-text-benchmark` and capture it on both renderers.
 
+const std = @import("std");
 const engine = @import("bairava");
 
 const log = engine.log.scoped("text-benchmark");
 const warmup_frames: u64 = 60;
 const report_frames: u64 = engine.diagnostics.history_capacity;
 const white = engine.ui.Color{ .r = 1, .g = 1, .b = 1, .a = 1 };
-const config = engine.Config{
+var config = engine.Config{
     .title = "Bairava text benchmark",
     .window_w = 960,
     .window_h = 540,
@@ -14,8 +15,15 @@ const config = engine.Config{
     .native_h = 180,
     .clear_rgb = .{ 0.06, 0.07, 0.09 },
     .settings_file = "benchmark_settings.txt",
-    .gpu_timing = true,
+    .gpu_timing = false,
 };
+
+const Options = struct {
+    count: u32 = 100,
+    frames: u64 = warmup_frames + report_frames,
+    gpu_timing: bool = false,
+};
+var options = Options{};
 
 const TextBenchmark = struct {
     bitmap: engine.ui.Canvas,
@@ -48,7 +56,7 @@ const TextBenchmark = struct {
         if (ctx.diagnostics_enabled and ctx.diagnostics.snapshot.frames >= warmup_frames and self.started.shape_calls == 0) {
             self.started = ctx.fonts.profileStats();
         }
-        if (ctx.diagnostics_enabled and ctx.diagnostics.snapshot.frames >= warmup_frames + report_frames) {
+        if (ctx.diagnostics_enabled and ctx.diagnostics.snapshot.frames >= options.frames) {
             self.reportWhenReady(ctx);
         }
     }
@@ -64,6 +72,10 @@ const TextBenchmark = struct {
 
         self.runtime_latin.clear();
         self.runtime_latin.text(8, 40, "Runtime: AVATAR a\u{0305}", white);
+        var latin_row: u32 = 0;
+        while (latin_row < @min(options.count / 20, 6)) : (latin_row += 1) {
+            self.runtime_latin.text(170, 8 + @as(f32, @floatFromInt(latin_row)) * 14, "Aa 0123 ? AV", white);
+        }
         self.runtime_latin.queue(dc.batch, 1000);
 
         self.runtime_tamil.clear();
@@ -76,7 +88,7 @@ const TextBenchmark = struct {
         self.msdf.queue(dc.batch, 1000);
     }
 
-    fn reportWhenReady(self: *TextBenchmark, ctx: *const engine.Context) void {
+    fn reportWhenReady(self: *TextBenchmark, ctx: *engine.Context) void {
         if (self.reported) return;
         self.reported = true;
         const current = ctx.fonts.profileStats();
@@ -101,6 +113,28 @@ const TextBenchmark = struct {
             },
         );
         log.info("last frame draw calls: {d}; use F10 to compare SDL_GPU and SDL3 2D", .{ctx.diagnostics.snapshot.world.draw_calls});
+        var json: [2048]u8 = undefined;
+        const text = std.fmt.bufPrint(&json,
+            "{{\"testbed\":\"TB-03\",\"scenario\":\"text-font-rendering\",\"result\":\"pass\",\"count\":{d},\"frames\":{d},\"frame_ms_avg\":{d:.3},\"frame_ms_p95\":{d:.3},\"shape_calls\":{d},\"measure_calls\":{d},\"glyph_cache_hits\":{d},\"glyph_cache_misses\":{d},\"glyphs_rasterized\":{d},\"atlas_pages\":{d},\"atlas_cpu_bytes\":{d},\"atlas_upload_bytes\":{d},\"atlas_upload_regions\":{d}}}\n",
+            .{
+                options.count,
+                frames.len,
+                frames.average() * 1000.0,
+                frames.percentile(0.95) * 1000.0,
+                current.shape_calls - self.started.shape_calls,
+                current.measure_calls - self.started.measure_calls,
+                current.glyph_cache_hits - self.started.glyph_cache_hits,
+                current.glyph_cache_misses - self.started.glyph_cache_misses,
+                current.glyphs_rasterized - self.started.glyphs_rasterized,
+                current.atlas_pages,
+                current.atlas_cpu_bytes,
+                current.atlas_gpu_upload_bytes - self.started.atlas_gpu_upload_bytes,
+                current.atlas_gpu_upload_regions - self.started.atlas_gpu_upload_regions,
+            },
+        ) catch "(metrics formatting failed)";
+        ctx.writeFile("TB-03-text-font-rendering-results.json", text) catch |err| {
+            log.err("TB-03 metrics could not be written: {s}", .{@errorName(err)});
+        };
     }
 
     pub fn debugText(_: *const TextBenchmark, out: *engine.diagnostics.Text) void {
@@ -116,6 +150,29 @@ const TextBenchmark = struct {
     }
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_state.deinit();
+    const args = init.args.toSlice(arena_state.allocator()) catch return error.InvalidArgument;
+    var arg_index: usize = 1;
+    while (arg_index < args.len) : (arg_index += 1) {
+        const arg = args[arg_index];
+        if (std.mem.eql(u8, arg, "--count") and arg_index + 1 < args.len) {
+            arg_index += 1;
+            options.count = std.fmt.parseUnsigned(u32, args[arg_index], 10) catch 100;
+        } else if (std.mem.eql(u8, arg, "--frames") and arg_index + 1 < args.len) {
+            arg_index += 1;
+            options.frames = std.fmt.parseUnsigned(u64, args[arg_index], 10) catch options.frames;
+        } else if (std.mem.eql(u8, arg, "--gpu-timing")) {
+            options.gpu_timing = true;
+        } else if (std.mem.eql(u8, arg, "--help")) {
+            std.debug.print("TB-03 options: --count 100|500|1000 --frames 180 --gpu-timing\n", .{});
+            return;
+        } else {
+            return error.InvalidArgument;
+        }
+    }
+    if (!(options.count == 100 or options.count == 500 or options.count == 1000)) return error.InvalidArgument;
+    config.gpu_timing = options.gpu_timing;
     try engine.run(engine.SceneHost(TextBenchmark), config);
 }
