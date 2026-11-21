@@ -222,6 +222,7 @@ fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, wi
             std.mem.eql(u8, args[0], "--frames") or
             std.mem.eql(u8, args[0], "--gpu-timing") or
             std.mem.eql(u8, args[0], "--cycles") or
+            std.mem.eql(u8, args[0], "--count") or
             std.mem.eql(u8, args[0], "--help"));
         if (tb01_args) {
             run.addFileArg(b.path("assets/font.ttf"));
@@ -545,6 +546,22 @@ pub fn build(b: *std.Build) void {
     run_tb02.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_tb02.addArgs(args);
     b.step("run-tb02", "Run TB-02 Asset Loading and Streaming Test").dependOn(&run_tb02.step);
+
+    const tb19 = b.addExecutable(.{
+        .name = "BairavaTB19",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb19_resource_lifecycle.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb19.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb19);
+    const run_tb19 = b.addRunArtifact(tb19);
+    run_tb19.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb19.addArgs(args);
+    b.step("run-tb19", "Run TB-19 Resource and Entity Lifecycle Laboratory").dependOn(&run_tb19.step);
 
     const text_benchmark = b.addExecutable(.{
         .name = "BairavaTextBenchmark",

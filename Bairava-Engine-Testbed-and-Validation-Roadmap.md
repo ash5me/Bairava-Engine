@@ -681,7 +681,7 @@ The order deliberately front-loads the shared harness, the first three high-valu
 - [x] TB-01 Sprite Rendering Stress Test.
 - [x] TB-02 Asset Loading and Streaming Test, including hot reload and dependency invalidation.
 - [x] TB-03 Text and Font Rendering Test.
-- [ ] TB-19 Resource and Entity Lifecycle Laboratory, including resource generations and ECS entity IDs.
+- [x] TB-19 Resource and Entity Lifecycle Laboratory, including resource generations and ECS entity IDs.
 
 **Stage exit condition:** The harness can run headless checks, report failures with meaningful exit codes, track allocations, and clean up after normal and injected failure paths. All four testbeds have repeatable scenarios and actionable diagnostics. Failed hot reload retains the last good asset. Stale resource handles and entity IDs are rejected. Tracking allocator/leak checks pass or have explicitly explained retained allocations.
 
@@ -914,7 +914,7 @@ The first sprint is the shared harness plus TB-01, TB-02, TB-03, and TB-19. Do n
 - [x] TB-01 Sprite Rendering Stress Test.
 - [x] TB-02 Asset Loading and Streaming Test, including hot reload/dependency invalidation.
 - [x] TB-03 Text and Font Rendering Test.
-- [ ] TB-19 Resource and Entity Lifecycle Laboratory.
+- [x] TB-19 Resource and Entity Lifecycle Laboratory.
 
 ## Sprint exit criteria
 
