@@ -129,7 +129,7 @@ pub const System = struct {
         _ = self.emit(requested);
     }
 
-    /// Queues every live particle as a centered, tinted sprite.
+    /// Queues every live world-space particle as a centered, tinted screen-space sprite.
     pub fn draw(
         self: *const System,
         batch: *sprite.SpriteBatch,
@@ -141,14 +141,20 @@ pub const System = struct {
         for (self.particles[0..self.count]) |particle| {
             const size = particle.currentSize();
             const color = particle.currentColor();
-            const dst = sprite.Rect{
+            const world_dst = sprite.Rect{
                 .x = particle.position[0] - size * 0.5,
                 .y = particle.position[1] - size * 0.5,
                 .w = size,
                 .h = size,
             };
             const origin = [2]f32{ size * 0.5, size * 0.5 };
-            if (!camera.overlapsView(cam.viewRect(), camera.spriteBounds(dst, origin, particle.rotation), 1)) continue;
+            if (!camera.overlapsView(cam.viewRect(), camera.spriteBounds(world_dst, origin, particle.rotation), 1)) continue;
+            const dst = sprite.Rect{
+                .x = cam.screenX(world_dst.x),
+                .y = cam.screenY(world_dst.y),
+                .w = world_dst.w,
+                .h = world_dst.h,
+            };
             batch.drawSprite(texture_ref, source, dst, .{
                 .tint = .{ color[0], color[1], color[2] },
                 .alpha = color[3],
@@ -312,8 +318,10 @@ test "particle draw submits only sprites whose rotated bounds meet the camera vi
     var batch = fixtures.batch(&no_vertices, &no_batches);
     defer fixtures.freeBatch(&batch);
     const tex = fixtures.texture(4, 4);
-    const cam = camera.Camera{ .x = 0, .y = 0, .view_w = 10, .view_h = 10, .world_w = 100, .world_h = 100 };
+    const cam = camera.Camera{ .x = 3, .y = 2, .view_w = 10, .view_h = 10, .world_w = 100, .world_h = 100 };
     batch.begin(cam.view_w, cam.view_h);
     system.draw(&batch, &tex, .{ .x = 0, .y = 0, .w = 4, .h = 4 }, 0, &cam);
     try std.testing.expectEqual(@as(u32, 1), batch.sprite_count);
+    try std.testing.expectEqual(@as(f32, -1), batch.quads[0].dst.x);
+    try std.testing.expectEqual(@as(f32, 0), batch.quads[0].dst.y);
 }

@@ -110,6 +110,11 @@ A host function must not call back into the script.
 
 ## Testing
 
-The C tests in `tests/script/test_script.c` cover the language, the bindings, error messages, the limits, and reload
-rollback. They run as part of `zig build test`. `tests/script/fuzz_script.c` feeds random token sequences to the
-runtime; it is not part of the test build, and its header says how to run it under sanitizers.
+The C tests in `tests/script/test_script.c` cover the language, host bindings, error messages, instruction/depth
+limits, and reload rollback. `tests/script/test_game_host.zig` exercises the game's public script bindings, typed
+host failures, recovery after errors, and VM shutdown while a script is active. Both run as part of
+`zig build test`. The C test runner prints a JSON summary with script-call CPU time, expected errors, instruction
+budget exhaustion, successful reloads, and active/peak script instances; it also fails if any VM remains active.
+The host currently exposes no object-handle API, so stale-handle behavior is not applicable to its binding surface.
+`tests/script/fuzz_script.c` feeds random token sequences to the runtime; it is not part of the test build, and its
+header says how to run it under sanitizers.

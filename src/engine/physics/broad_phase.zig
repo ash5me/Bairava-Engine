@@ -253,7 +253,7 @@ pub const Index = struct {
             .w = box.w + @abs(safe_dx),
             .h = box.h + @abs(safe_dy),
         };
-        const count = self.collectBox(swept);
+        const count = self.collectShapeSweep(swept);
         const candidates = self.candidates[0..count];
         const x = slideX(self.colliders, candidates, box, dx, mask);
         const y = slideY(self.colliders, candidates, .{ .x = x, .y = box.y, .w = box.w, .h = box.h }, dy, mask, ignore_one_way);
@@ -653,6 +653,24 @@ test "indexed movement matches linear movement for diagonal motion and layer mas
     const expected = linear.moveBox(&colliders, box, 100, 100, 1);
     const actual = index.moveBox(box, 100, 100, 1);
     try std.testing.expectEqual(expected.x, actual.x);
+    try std.testing.expectEqual(expected.y, actual.y);
+}
+
+test "indexed movement includes tangential circles on adjacent cell boundaries" {
+    const linear = @import("queries.zig");
+    const colliders = [_]Collider{
+        .{
+            .box = .{ .x = 24, .y = 12, .w = 8, .h = 8 },
+            .layer = 1,
+            .circle = .{ .x = 28, .y = 16, .r = 4 },
+        },
+    };
+    var index = try Index.init(std.testing.allocator, &colliders, 24);
+    defer index.deinit();
+    const mover = Box{ .x = 18, .y = 6, .w = 6, .h = 6 };
+    const expected = linear.moveBox(&colliders, mover, 0, 12, 1);
+    const actual = index.moveBox(mover, 0, 12, 1);
+    try std.testing.expectEqual(@as(f32, 10), expected.y);
     try std.testing.expectEqual(expected.y, actual.y);
 }
 

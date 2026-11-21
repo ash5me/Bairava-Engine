@@ -687,20 +687,20 @@ The order deliberately front-loads the shared harness, the first three high-valu
 
 ## Stage 2 — Remaining core systems and deterministic tooling
 
-- [ ] TB-04 Animation Stress Test.
-- [ ] TB-05 Collision and Physics Test.
-- [ ] TB-06 Camera and Viewport Test, including parallax, camera shake, and debug drawing.
-- [ ] TB-21 Tilemap Validation and Stress Test.
-- [ ] TB-22 Particle Pool and Overdraw Stress Test.
-- [ ] TB-23 Deterministic Input Replay and Checkpoints.
-- [ ] TB-24 Script Runtime Host Integration Test (extend `tests/script/` first).
-- [ ] Add behavior-tree unit tests and other pure-logic coverage under `tests/`, not as windowed testbeds.
+- [x] TB-04 Animation Stress Test.
+- [x] TB-05 Collision and Physics Test.
+- [x] TB-06 Camera and Viewport Test, including parallax, camera shake, and debug drawing.
+- [x] TB-21 Tilemap Validation and Stress Test.
+- [x] TB-22 Particle Pool and Overdraw Stress Test.
+- [x] TB-23 Deterministic Input Replay and Checkpoints.
+- [x] TB-24 Script Runtime Host Integration Test (extend `tests/script/` first).
+- [x] Add behavior-tree unit tests and other pure-logic coverage under `tests/`, not as windowed testbeds.
 
 **Stage exit condition:** Core simulation/rendering systems have focused tests, replay can reproduce a recorded run, and script host failures/reloads are contained.
 
 ## Stage 3 — One integration slice, then targeted genre stress
 
-- [ ] TB-07 Top-Down Adventure / Showcase Integration Test (the single game-like showcase).
+- [x] TB-07 Top-Down Adventure / Showcase Integration Test (the single game-like showcase).
 - [ ] TB-08 Isometric World Test (depth sorting and projected-world interactions).
 - [ ] TB-09 Platformer Test (movement resolution and moving-platform behavior).
 - [ ] TB-10 Bullet Hell Stress Test (spawn/despawn, collision density, and particle pressure).
@@ -860,7 +860,7 @@ examples/
     TB-20-sdl-gpu-backend-parity/
     TB-21-tilemaps/
     TB-22-particles/
-    TB-23-replay-determinism/
+    TB-23-replay/
     TB-24-script-runtime/
 
 validation/

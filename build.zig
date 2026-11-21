@@ -223,6 +223,12 @@ fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, wi
             std.mem.eql(u8, args[0], "--gpu-timing") or
             std.mem.eql(u8, args[0], "--cycles") or
             std.mem.eql(u8, args[0], "--count") or
+            std.mem.eql(u8, args[0], "--cols") or
+            std.mem.eql(u8, args[0], "--rows") or
+            std.mem.eql(u8, args[0], "--hz") or
+            std.mem.eql(u8, args[0], "--probes") or
+            std.mem.eql(u8, args[0], "--capacity") or
+            std.mem.eql(u8, args[0], "--burst") or
             std.mem.eql(u8, args[0], "--help"));
         if (tb01_args) {
             run.addFileArg(b.path("assets/font.ttf"));
@@ -531,6 +537,22 @@ pub fn build(b: *std.Build) void {
     b.step("run-benchmark", "Run the deterministic 10000-entity and sprite profiling workload").dependOn(&run_benchmark.step);
     b.step("run-tb01", "Run TB-01 Sprite Rendering Stress Test").dependOn(&run_benchmark.step);
 
+    const tb07 = b.addExecutable(.{
+        .name = "BairavaTB07",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb07_adventure.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb07.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb07);
+    const run_tb07 = b.addRunArtifact(tb07);
+    run_tb07.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb07.addArgs(args);
+    b.step("run-tb07", "Run TB-07 Top-Down Adventure Integration Sample").dependOn(&run_tb07.step);
+
     const tb02 = b.addExecutable(.{
         .name = "BairavaTB02",
         .root_module = b.createModule(.{
@@ -562,6 +584,99 @@ pub fn build(b: *std.Build) void {
     run_tb19.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_tb19.addArgs(args);
     b.step("run-tb19", "Run TB-19 Resource and Entity Lifecycle Laboratory").dependOn(&run_tb19.step);
+
+    const tb04 = b.addExecutable(.{
+        .name = "BairavaTB04",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb04_animation.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb04.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb04);
+    const run_tb04 = b.addRunArtifact(tb04);
+    run_tb04.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb04.addArgs(args);
+    b.step("run-tb04", "Run TB-04 Animation Stress Test").dependOn(&run_tb04.step);
+
+    const tb05 = b.addExecutable(.{
+        .name = "BairavaTB05",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb05_collision.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb05.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb05);
+    const run_tb05 = b.addRunArtifact(tb05);
+    run_tb05.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb05.addArgs(args);
+    b.step("run-tb05", "Run TB-05 Collision and Physics Test").dependOn(&run_tb05.step);
+
+    const tb06 = b.addExecutable(.{
+        .name = "BairavaTB06",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb06_camera_viewport.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb06.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb06);
+    const run_tb06 = b.addRunArtifact(tb06);
+    run_tb06.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb06.addArgs(args);
+    b.step("run-tb06", "Run TB-06 Camera and Viewport Test").dependOn(&run_tb06.step);
+
+    const tb21 = b.addExecutable(.{
+        .name = "BairavaTB21",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb21_tilemap_stress.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb21.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb21);
+    const run_tb21 = b.addRunArtifact(tb21);
+    run_tb21.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb21.addArgs(args);
+    b.step("run-tb21", "Run TB-21 Tilemap Validation and Stress Test").dependOn(&run_tb21.step);
+
+    const tb22 = b.addExecutable(.{
+        .name = "BairavaTB22",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb22_particle_stress.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb22.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb22);
+    const run_tb22 = b.addRunArtifact(tb22);
+    run_tb22.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb22.addArgs(args);
+    b.step("run-tb22", "Run TB-22 Particle Pool and Overdraw Stress Test").dependOn(&run_tb22.step);
+
+    const tb23 = b.addExecutable(.{
+        .name = "BairavaTB23",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb23_replay.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb23.root_module.addImport("bairava", engine_module);
+    const run_tb23 = b.addRunArtifact(tb23);
+    b.step("run-tb23", "Run TB-23 Deterministic Input Replay and Checkpoint Validation").dependOn(&run_tb23.step);
 
     const text_benchmark = b.addExecutable(.{
         .name = "BairavaTextBenchmark",
@@ -847,6 +962,24 @@ pub fn build(b: *std.Build) void {
     const run_imgui_tests = addUiTestHarness(b, "test_imgui", "tests/ui/test_imgui.c", true);
     const run_jobs_tests = addCUnitHarness(b, "test_jobs", "tests/jobs/test_jobs.c", "src/engine/jobs/jobs.c", "src/engine/jobs");
     const run_script_tests = addCUnitHarness(b, "test_script", "tests/script/test_script.c", "src/engine/script/script.c", "src/engine/script");
+    const game_script_host_module = b.createModule(.{
+        .root_source_file = b.path("src/game/script_host.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    game_script_host_module.addImport("bairava", engine_module);
+    const script_host_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/script/test_game_host.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    script_host_test_module.addImport("bairava", engine_module);
+    script_host_test_module.addImport("game_script_host", game_script_host_module);
+    const script_host_tests = b.addTest(.{ .root_module = script_host_test_module });
+    const run_script_host_tests = b.addRunArtifact(script_host_tests);
+    b.step("test-script-host", "Run game script host integration tests").dependOn(&run_script_host_tests.step);
     const ui_test_step = b.step("test-ui", "Run the C text and widget UI tests");
     ui_test_step.dependOn(&run_text_ui_tests.step);
     ui_test_step.dependOn(&run_imgui_tests.step);
@@ -861,6 +994,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&asset_tool_tests.step);
     test_step.dependOn(&run_jobs_tests.step);
     test_step.dependOn(&run_script_tests.step);
+    test_step.dependOn(&run_script_host_tests.step);
     const docs_site_tests = b.addSystemCommand(&.{ "python", "scripts/docs/test_build_site.py" });
     docs_site_tests.setCwd(b.path("."));
     docs_site_tests.addFileInput(b.path("scripts/docs/build_site.py"));

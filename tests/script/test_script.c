@@ -6,8 +6,94 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static int failures = 0;
+static bs_vm *loaded_vms[64];
+static size_t active_script_instances = 0;
+static size_t peak_active_script_instances = 0;
+static size_t script_errors = 0;
+static size_t budget_exhaustions = 0;
+static size_t successful_loads = 0;
+static size_t successful_reloads = 0;
+static size_t script_calls = 0;
+static clock_t script_cpu_ticks = 0;
+
+static bs_vm *tracked_create(size_t max_steps)
+{
+    return bs_create(max_steps);
+}
+
+static void tracked_destroy(bs_vm *vm)
+{
+    size_t i;
+    bs_destroy(vm);
+    for (i = 0; i < sizeof loaded_vms / sizeof loaded_vms[0]; i++) {
+        if (loaded_vms[i] == vm) {
+            loaded_vms[i] = NULL;
+            active_script_instances--;
+            break;
+        }
+    }
+}
+
+static bs_status tracked_load(bs_vm *vm, const char *name, const char *source, size_t length)
+{
+    clock_t start = clock();
+    clock_t end;
+    bs_status status = bs_load(vm, name, source, length);
+    end = clock();
+    if (start != (clock_t)-1 && end != (clock_t)-1) script_cpu_ticks += end - start;
+    if (status == BS_OK) {
+        size_t i;
+        int known = 0;
+        successful_loads++;
+        for (i = 0; i < sizeof loaded_vms / sizeof loaded_vms[0]; i++) {
+            if (loaded_vms[i] == vm) {
+                known = 1;
+                break;
+            }
+        }
+        if (known) {
+            successful_reloads++;
+        } else {
+            for (i = 0; i < sizeof loaded_vms / sizeof loaded_vms[0]; i++) {
+                if (!loaded_vms[i]) {
+                    loaded_vms[i] = vm;
+                    active_script_instances++;
+                    if (active_script_instances > peak_active_script_instances) {
+                        peak_active_script_instances = active_script_instances;
+                    }
+                    break;
+                }
+            }
+        }
+    } else {
+        script_errors++;
+        if (strstr(bs_error(vm), "may never end") != NULL) budget_exhaustions++;
+    }
+    return status;
+}
+
+static bs_status tracked_call(bs_vm *vm, const char *function, int argc, const bs_value *argv, bs_value *result)
+{
+    clock_t start = clock();
+    clock_t end;
+    bs_status status = bs_call(vm, function, argc, argv, result);
+    end = clock();
+    if (start != (clock_t)-1 && end != (clock_t)-1) script_cpu_ticks += end - start;
+    script_calls++;
+    if (status == BS_ERROR) {
+        script_errors++;
+        if (strstr(bs_error(vm), "may never end") != NULL) budget_exhaustions++;
+    }
+    return status;
+}
+
+#define bs_create tracked_create
+#define bs_destroy tracked_destroy
+#define bs_load tracked_load
+#define bs_call tracked_call
 
 #define CHECK(cond)                                                                \
     do {                                                                           \
@@ -304,16 +390,39 @@ static void test_step_and_depth_limits(void)
 {
     bs_vm *vm = bs_create(5000);
     bs_value out;
+    bs_value healthy;
     CHECK(load(vm, "fn spin() { while (true) { } }\n"
                    "fn down(n) { return down(n + 1); }\n"));
     CHECK(bs_call(vm, "spin", 0, NULL, NULL) == BS_ERROR);
     CHECK(error_contains(vm, "may never end"));
     CHECK(bs_call(vm, "down", 1, &(bs_value){ .type = BS_NUMBER, .as.number = 0 }, &out) == BS_ERROR);
     CHECK(error_contains(vm, "nested more than"));
-    /* The budget resets for each call, so a later call still works. */
+    CHECK(bs_call(vm, "spin", 0, NULL, NULL) == BS_ERROR);
+    CHECK(error_contains(vm, "may never end"));
     CHECK(load(vm, "fn ok() { return 7; }\n"));
+    CHECK(bs_call(vm, "ok", 0, NULL, &healthy) == BS_OK);
+    CHECK(healthy.type == BS_NUMBER && healthy.as.number == 7);
+    /* The budget resets for each call, so a later call still works. */
     CHECK(bs_call(vm, "ok", 0, NULL, &out) == BS_OK);
     CHECK(out.type == BS_NUMBER && out.as.number == 7);
+    bs_destroy(vm);
+}
+
+static void test_host_failure_does_not_corrupt_vm_or_host_state(void)
+{
+    bs_vm *vm = bs_create(1000);
+    bs_value out;
+    int calls = 0;
+    CHECK(bs_bind_function(vm, "host_add", 2, 2, host_add, NULL) == BS_OK);
+    CHECK(bs_bind_function(vm, "open_door", 0, 0, host_fail, NULL) == BS_OK);
+    CHECK(load(vm, "fn fail() { open_door(); }\n"
+                   "fn still_works() { return host_add(20, 22); }\n"));
+    CHECK(bs_call(vm, "fail", 0, NULL, NULL) == BS_ERROR);
+    CHECK(error_contains(vm, "the door is locked"));
+    calls = add_calls;
+    CHECK(bs_call(vm, "still_works", 0, NULL, &out) == BS_OK);
+    CHECK(out.type == BS_NUMBER && out.as.number == 42);
+    CHECK(add_calls == calls + 1);
     bs_destroy(vm);
 }
 
@@ -321,7 +430,7 @@ static void test_step_and_depth_limits(void)
 
 static void test_reload_keeps_previous_script_on_failure(void)
 {
-    bs_vm *vm = bs_create(0);
+    bs_vm *vm = bs_create(5000);
     bs_value out;
     CHECK(load(vm, "var v = 1;\nfn value() { return v; }\n"));
     CHECK(!load(vm, "var v = 99;\nfn value() { return v + ; }\n"));
@@ -331,6 +440,12 @@ static void test_reload_keeps_previous_script_on_failure(void)
 
     CHECK(!load(vm, "var v = 5;\nvar boom = 1 / 0;\n"));
     CHECK(global_number(vm, "v") == 1);
+
+    CHECK(!load(vm, "fn spin() { while (true) { } }\nvar doomed = spin();\n"));
+    CHECK(error_contains(vm, "may never end"));
+    CHECK(global_number(vm, "v") == 1);
+    CHECK(bs_call(vm, "value", 0, NULL, &out) == BS_OK);
+    CHECK(out.type == BS_NUMBER && out.as.number == 1);
 
     CHECK(load(vm, "var v = 5;\nfn value() { return v * 2; }\n"));
     CHECK(bs_call(vm, "value", 0, NULL, &out) == BS_OK);
@@ -358,13 +473,24 @@ int main(void)
     test_syntax_errors_name_the_line();
     test_runtime_errors();
     test_step_and_depth_limits();
+    test_host_failure_does_not_corrupt_vm_or_host_state();
     test_reload_keeps_previous_script_on_failure();
     test_clamp_and_limits_are_checked_at_binding();
 
+    if (active_script_instances != 0) {
+        fprintf(stderr, "script VM leak: %zu active script instance(s)\n", active_script_instances);
+        failures++;
+    }
     if (failures != 0) {
         fprintf(stderr, "%d script check(s) failed\n", failures);
         return 1;
     }
-    printf("script tests passed\n");
+    printf("{\"suite\":\"script-host\",\"result\":\"pass\",\"script_calls\":%zu,"
+           "\"script_errors\":%zu,\"budget_exhaustions\":%zu,\"successful_loads\":%zu,"
+           "\"successful_reloads\":%zu,\"active_script_instances\":%zu,"
+           "\"peak_active_script_instances\":%zu,\"script_cpu_ms\":%.3f}\n",
+           script_calls, script_errors, budget_exhaustions, successful_loads, successful_reloads,
+           active_script_instances, peak_active_script_instances,
+           1000.0 * (double)script_cpu_ticks / (double)CLOCKS_PER_SEC);
     return 0;
 }
