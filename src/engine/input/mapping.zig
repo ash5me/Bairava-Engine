@@ -26,6 +26,9 @@ const Binding = action.Binding;
 const Key = input.Key;
 const log = logging.scoped("input");
 
+pub const pressedCode = action.pressedCode;
+pub const bindingOf = action.bindingOf;
+
 /// Reads one binding name. Returns null for a name that is not one of the forms above.
 pub fn parseBinding(text: []const u8) ?Binding {
     if (std.mem.startsWith(u8, text, "mouse_")) {

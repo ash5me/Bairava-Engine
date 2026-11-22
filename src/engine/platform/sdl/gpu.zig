@@ -18,6 +18,20 @@ pub fn waitIdle(device: *Device) void {
     _ = c.SDL_WaitForGPUIdle(device);
 }
 
+pub fn driverName(device: *Device) []const u8 {
+    const name = c.SDL_GetGPUDeviceDriver(device);
+    if (name == null) return "unknown";
+    return std.mem.span(name);
+}
+
+pub fn deviceName(device: *Device) []const u8 {
+    const properties = c.SDL_GetGPUDeviceProperties(device);
+    if (properties == 0) return "unknown";
+    const name = c.SDL_GetStringProperty(properties, c.SDL_PROP_GPU_DEVICE_NAME_STRING, null);
+    if (name == null) return "unknown";
+    return std.mem.span(name);
+}
+
 /// How long a timed frame may wait for the GPU before the run stops. A device that is lost never signals its fence, and
 /// a bounded wait turns that hang into a message.
 const fence_timeout_ns: u64 = 10_000_000_000;

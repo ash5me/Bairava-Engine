@@ -136,7 +136,7 @@ test "engine resource types do not publish backend operations" {
 }
 
 fn expectNoSdlApi(comptime T: type) void {
-    @setEvalBranchQuota(10000);
+    @setEvalBranchQuota(20000);
     const fields = @typeInfo(T).@"struct".fields;
     inline for (fields) |field| {
         if (comptime std.mem.indexOf(u8, @typeName(field.type), "SDL_") != null)

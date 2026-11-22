@@ -243,6 +243,22 @@ pub const Context = struct {
         return self.renderer;
     }
 
+    /// Returns SDL_GPU's actual runtime driver name, such as `vulkan` or `direct3d12`.
+    /// This is distinct from the engine renderer backend selected in `Config`.
+    pub fn gpuDriverName(self: *const Context) []const u8 {
+        return platform.gpu.driverName(contextGpuDevice(self));
+    }
+
+    /// Returns the device name reported by SDL, or `unknown` when the driver does not provide one.
+    pub fn gpuDeviceName(self: *const Context) []const u8 {
+        return platform.gpu.deviceName(contextGpuDevice(self));
+    }
+
+    /// Monotonic nanoseconds, useful for recording elapsed runtime diagnostics.
+    pub fn monotonicTimeNs(_: *const Context) u64 {
+        return platform.clock.nowNs();
+    }
+
     /// Selects an SDL renderer implementation for the next frame. A request for the reserved 2D path resolves to SDL_GPU
     /// (see application.resolveRenderer).
     pub fn setRendererBackend(self: *Context, renderer: application.Renderer) void {

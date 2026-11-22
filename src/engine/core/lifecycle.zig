@@ -164,7 +164,10 @@ pub const Session = struct {
 
         self.format = self.gpu.swapchainFormat();
         const gpu_debug_label: []const u8 = if (build_options.gpu_debug) "on" else "off";
-        elog.info("GPU device ready, validation {s}, swapchain format {d}", .{ gpu_debug_label, self.format });
+        elog.info(
+            "GPU device ready, driver {s}, device {s}, validation {s}, swapchain format {d}",
+            .{ platform.gpu.driverName(self.gpu.device), platform.gpu.deviceName(self.gpu.device), gpu_debug_label, self.format },
+        );
 
         const native_wf: f32 = @floatFromInt(config.native_w);
         const native_hf: f32 = @floatFromInt(config.native_h);

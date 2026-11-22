@@ -58,6 +58,11 @@ pub const Pool = struct {
     pub fn workerCount(self: *const Pool) u32 {
         return c.jobs_worker_count(self.raw);
     }
+
+    /// Returns the number of jobs waiting in the bounded queue, excluding jobs already running.
+    pub fn queuedCount(self: *Pool) u32 {
+        return c.jobs_queued(self.raw);
+    }
 };
 
 // ---- Tests --------------------------------------------------------------------------------------
@@ -84,6 +89,7 @@ test "a pool with zero workers runs each job on the submitting thread" {
     var counter = std.mem.zeroes(Counter);
     var total = std.atomic.Value(u32).init(0);
     pool.submit(&counter, std.atomic.Value(u32), &total, addOne);
+    try std.testing.expectEqual(@as(u32, 0), pool.queuedCount());
     try std.testing.expect(pool.isDone(&counter));
     try std.testing.expectEqual(@as(u32, 1), total.load(.monotonic));
 }

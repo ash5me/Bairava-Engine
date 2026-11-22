@@ -261,6 +261,14 @@ pub const gpu = struct {
     pub fn waitIdle(device: *Device) void {
         sdl_gpu.waitIdle(device);
     }
+
+    pub fn driverName(device: *Device) []const u8 {
+        return sdl_gpu.driverName(device);
+    }
+
+    pub fn deviceName(device: *Device) []const u8 {
+        return sdl_gpu.deviceName(device);
+    }
 };
 
 /// SDL3's software/GPU accelerated 2D renderer backend.
@@ -310,10 +318,25 @@ pub const renderer2d = struct {
     ) void {
         sdl_renderer2d.draw(
             @ptrCast(@alignCast(texture)),
-            src.x, src.y, src.w, src.h,
-            dst.x, dst.y, dst.w, dst.h,
-            presentation_x, presentation_y, scale_x, scale_y,
-            tint, alpha, flip_x, flip_y, origin[0], origin[1], rotation,
+            src.x,
+            src.y,
+            src.w,
+            src.h,
+            dst.x,
+            dst.y,
+            dst.w,
+            dst.h,
+            presentation_x,
+            presentation_y,
+            scale_x,
+            scale_y,
+            tint,
+            alpha,
+            flip_x,
+            flip_y,
+            origin[0],
+            origin[1],
+            rotation,
         );
     }
 };

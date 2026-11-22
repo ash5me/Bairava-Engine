@@ -555,6 +555,8 @@ Create an inventory, settings screen, dialogue panel, and language selector. Inc
 
 Do not start the long-run campaign until TB-23 replay determinism and the TB-19 lifecycle/leak gate are passing. Short lifecycle tests remain part of Stage 1.
 
+**Implementation status:** A bounded deterministic runner is available in `sample/tb12_long_run.zig` and `examples/testbeds/TB-12-long-running-simulation/`. Keep this item incomplete until the initial 30–60 minute campaign has been run and its resource trends reviewed.
+
 ### Systems combined
 
 - Scene lifecycle and transitions.
@@ -598,9 +600,13 @@ These can be developed after the core and integration suites are stable. Some va
 
 Create a controlled scene with normal-mapped sprites, overlapping point lights, shadow segments, and moving occluders. Test the documented light/shadow limits, edge cases, and visual output. Capture screenshots for each configuration and record GPU cost as light count increases.
 
+**Implementation status:** A bounded lighting laboratory is available through `zig build run-tb13` and `examples/testbeds/TB-13-lighting/`. It checks the fixed light/shadow capacities and emits frame/GPU timing per light-count run. Keep this item incomplete until the target renderer's visual configurations have been captured and the light-count performance sweep reviewed.
+
 ## TB-14 — Render Graph Validation
 
 **Code under test:** `src/engine/renderer/render_graph.zig` (validate the actual implementation, not a hypothetical general-purpose render graph).
+
+**Implementation status:** A bounded planner-fixture runner is available through `zig build run-tb14` and `examples/testbeds/TB-14-render-graph/`. It validates order, transient lifetimes, deterministic plans, and the graph's declared compile errors. The planner has no target-resize state, and the post chain has no pass-failure injection API; keep this item incomplete until resize/recreation and runtime failure recovery can be exercised at the renderer level.
 
 - Verify dependency/pass order with graph fixtures and confirm invalid order/cycles are rejected according to the implementation's contract.
 - Verify compatible transient targets are reused only when their lifetimes do not overlap.
@@ -613,17 +619,25 @@ Do not claim arbitrary user-authored passes or multiple render targets unless th
 
 ## TB-15 — Audio Laboratory
 
+**Implementation status:** A bounded audio lab is available through `zig build run-tb15` and `examples/testbeds/TB-15-audio/`. It validates WAV and IMA-preferred decode/streaming, missing/invalid files, bus gain, positional voices, pool saturation, and teardown. Keep this item incomplete until device-loss recovery is exercised using a platform-level hook and playback is listened to on the target device; underruns are not currently exposed.
+
 Test simultaneous sound effects, music streaming, bus volume, looping, positional attenuation, and cleanup when emitters or scenes are destroyed. Include WAV and IMA decode paths where supported, missing/invalid files, audio device loss and reopen/recovery. Record active voices, decode failures, underruns where measurable, and audio memory use. Verify device loss does not deadlock the application or leave stale playback handles.
 
 ## TB-16 — Input Laboratory
+
+**Implementation status:** A bounded interactive lab and synthetic input-contract fixtures are available through `zig build run-tb16` and `examples/testbeds/TB-16-input/`. The fixtures cover key/mouse edges, action remapping, gamepad removal/reconnection with stale-generation rejection, fixed-tick buffer expiry, and paused buffer aging. Keep this item incomplete until focus-change behavior is available through the public input API and keyboard, mouse, and gamepad behavior is manually validated on target platforms; touch remains unsupported.
 
 Show the state of every supported physical input and action mapping in an on-screen panel. Test press/release edges, held states, remapping, window focus loss/gain, gamepad removal/reconnection, and input device changes. Include input-buffer timing: verify how short presses are retained or discarded between simulation ticks, including low-FPS frames and pause/resume. Test touch only when a real touch implementation is available.
 
 ## TB-17 — Navigation Laboratory
 
+**Implementation status:** A bounded visual lab is available through `zig build run-tb17` and `examples/testbeds/TB-17-navigation/`. Startup fixtures exercise narrow-corridor routing, a disconnected `NoPath` result, dynamic gate closure/reopening, flow-field descent, and collision-aware follower arrival. The run records A* path lengths, expansion counts and process CPU timings, flow rebuild costs, and updates up to 64 followers toward one goal. Keep this item incomplete until interactive scenario changes and many-agent behavior are manually reviewed; timings are host/build dependent.
+
 Generate maps with open areas, narrow corridors, blocked routes, disconnected regions, and dynamically changing obstacles. Test ordinary pathfinding plus flow-field generation and follow steering where implemented. Run one agent and then many agents. Record path length, search duration, expansions, field rebuild cost, and behavior when no route exists. Test behavior-tree decision logic in unit tests under `tests/`; do not create a separate visual behavior-tree lab unless a clear rendering/debugging need emerges.
 
 ## TB-18 — Job System Laboratory
+
+**Implementation status:** A bounded command-line lab is available through `zig build run-tb18` and `examples/testbeds/TB-18-jobs/`. It validates small/large job results, queue saturation's inline fallback, nested submit-and-wait, returned error values, and draining pending work at shutdown. The report captures actual worker count, peak concurrent jobs, and process CPU time. Keep this item incomplete until queue/worker behavior is reviewed on each supported platform; cancellation is not available in the pool API.
 
 Exercise small and large jobs, queue saturation, dependencies if supported, error propagation, cancellation if supported, and shutdown while work is pending. Verify that worker threads do not access thread-affine renderer resources directly. Capture queue depth and worker utilization.
 
@@ -647,6 +661,8 @@ This testbed is an early reliability gate and should become a standard regressio
 ## TB-20 — SDL_GPU 2D Backend Parity Smoke
 
 **Priority:** P2 — hardware-gated; no direct Vulkan renderer work.
+
+**Implementation status:** A deterministic bounded smoke scene is available through `zig build run-tb20` and `examples/testbeds/TB-20-sdl-gpu-backend-parity/`. It records the actual SDL_GPU driver/device, runtime shader-format availability, scene workload, and frame timings; `SDL_GPU_DRIVER` can request a driver but never substitutes for runtime identification. The scene uses atlas sprites, alpha/tint/rotation, text, normal maps/lighting, and the existing off-screen post-effect path. Keep TB-20 incomplete until screenshots have been captured and compared on each available backend and host-specific metadata/performance has been reviewed; one backend is only a smoke run, not parity.
 
 The current rendering path remains SDL_GPU. SDL_GPU can select platform graphics backends; this test checks that Bairava's existing 2D scene behaves consistently when SDL_GPU is running on Vulkan, D3D12, or Metal, where each backend is available. It is **not** a from-scratch Vulkan test.
 

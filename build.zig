@@ -217,9 +217,12 @@ fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, wi
     run.setCwd(b.path("."));
     if (b.args) |args| {
         const tb01_args = args.len > 0 and (std.mem.eql(u8, args[0], "--count") or
+            std.mem.eql(u8, args[0], "--entities") or
             std.mem.eql(u8, args[0], "--textures") or
             std.mem.eql(u8, args[0], "--seed") or
             std.mem.eql(u8, args[0], "--frames") or
+            std.mem.eql(u8, args[0], "--ticks") or
+            std.mem.eql(u8, args[0], "--snapshot-interval") or
             std.mem.eql(u8, args[0], "--gpu-timing") or
             std.mem.eql(u8, args[0], "--cycles") or
             std.mem.eql(u8, args[0], "--count") or
@@ -227,6 +230,12 @@ fn addUiTestHarness(b: *std.Build, name: []const u8, test_source: []const u8, wi
             std.mem.eql(u8, args[0], "--rows") or
             std.mem.eql(u8, args[0], "--hz") or
             std.mem.eql(u8, args[0], "--probes") or
+            std.mem.eql(u8, args[0], "--workers") or
+            std.mem.eql(u8, args[0], "--queue") or
+            std.mem.eql(u8, args[0], "--jobs") or
+            std.mem.eql(u8, args[0], "--iterations") or
+            std.mem.eql(u8, args[0], "--lights") or
+            std.mem.eql(u8, args[0], "--capacity-sweep") or
             std.mem.eql(u8, args[0], "--capacity") or
             std.mem.eql(u8, args[0], "--burst") or
             std.mem.eql(u8, args[0], "--help"));
@@ -617,6 +626,121 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_tb11.addArgs(args);
     b.step("run-tb11", "Run TB-11 UI and Localization Test").dependOn(&run_tb11.step);
 
+    const tb12 = b.addExecutable(.{
+        .name = "BairavaTB12",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb12_long_run.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb12.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb12);
+    const run_tb12 = b.addRunArtifact(tb12);
+    run_tb12.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb12.addArgs(args);
+    b.step("run-tb12", "Run TB-12 Long-Running Simulation Test").dependOn(&run_tb12.step);
+
+    const tb13 = b.addExecutable(.{
+        .name = "BairavaTB13",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb13_lighting_lab.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb13.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb13);
+    const run_tb13 = b.addRunArtifact(tb13);
+    run_tb13.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb13.addArgs(args);
+    b.step("run-tb13", "Run TB-13 Lighting Laboratory").dependOn(&run_tb13.step);
+
+    const tb14 = b.addExecutable(.{
+        .name = "BairavaTB14",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb14_render_graph.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    tb14.root_module.addImport("render_graph", b.createModule(.{
+        .root_source_file = b.path("src/engine/renderer/render_graph.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    b.installArtifact(tb14);
+    const run_tb14 = b.addRunArtifact(tb14);
+    run_tb14.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb14.addArgs(args);
+    b.step("run-tb14", "Run TB-14 Render Graph Validation").dependOn(&run_tb14.step);
+
+    const tb15 = b.addExecutable(.{
+        .name = "BairavaTB15",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb15_audio_lab.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb15.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb15);
+    const run_tb15 = b.addRunArtifact(tb15);
+    run_tb15.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb15.addArgs(args);
+    b.step("run-tb15", "Run TB-15 Audio Laboratory").dependOn(&run_tb15.step);
+
+    const tb16 = b.addExecutable(.{
+        .name = "BairavaTB16",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb16_input_lab.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb16.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb16);
+    const run_tb16 = b.addRunArtifact(tb16);
+    run_tb16.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb16.addArgs(args);
+    b.step("run-tb16", "Run TB-16 Input Laboratory").dependOn(&run_tb16.step);
+
+    const tb17 = b.addExecutable(.{
+        .name = "BairavaTB17",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb17_navigation_lab.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb17.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb17);
+    const run_tb17 = b.addRunArtifact(tb17);
+    run_tb17.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb17.addArgs(args);
+    b.step("run-tb17", "Run TB-17 Navigation Laboratory").dependOn(&run_tb17.step);
+
+    const tb18 = b.addExecutable(.{
+        .name = "BairavaTB18",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb18_job_lab.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb18.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb18);
+    const run_tb18 = b.addRunArtifact(tb18);
+    run_tb18.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb18.addArgs(args);
+    b.step("run-tb18", "Run TB-18 Job System Laboratory").dependOn(&run_tb18.step);
+
     const tb02 = b.addExecutable(.{
         .name = "BairavaTB02",
         .root_module = b.createModule(.{
@@ -648,6 +772,22 @@ pub fn build(b: *std.Build) void {
     run_tb19.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_tb19.addArgs(args);
     b.step("run-tb19", "Run TB-19 Resource and Entity Lifecycle Laboratory").dependOn(&run_tb19.step);
+
+    const tb20 = b.addExecutable(.{
+        .name = "BairavaTB20",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/tb20_backend_parity.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    tb20.root_module.addImport("bairava", engine_module);
+    b.installArtifact(tb20);
+    const run_tb20 = b.addRunArtifact(tb20);
+    run_tb20.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_tb20.addArgs(args);
+    b.step("run-tb20", "Run TB-20 SDL_GPU 2D Backend Parity Smoke").dependOn(&run_tb20.step);
 
     const tb04 = b.addExecutable(.{
         .name = "BairavaTB04",

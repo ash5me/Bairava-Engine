@@ -8,7 +8,7 @@ worker, and the main thread uploads it to the GPU between frames.
 - `src/engine/jobs/jobs.h`, `jobs.c`: the C core. A pool owns its threads, a bounded queue, and a mutex with two
   condition variables. POSIX threads are used on Linux and macOS, and Win32 threads on Windows.
 - `src/engine/jobs/jobs.zig`: the Zig interface. `Pool.submit` takes a typed function and its data, and `wait` and
-  `isDone` read a counter.
+  `isDone` read a counter. `queuedCount` reports work waiting in the bounded queue, excluding running work.
 - `src/engine/core/texture_stream.zig`: the streamer, which moves textures through the pool. See "Texture loading".
 - `src/engine/assets/staging.zig`: the CPU half of texture loading. It reads and decodes a texture with no GPU calls
   and no logging, so it can run on a worker.
