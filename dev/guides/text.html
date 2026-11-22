@@ -40,6 +40,13 @@
 <code class="language-plaintext highlighter-rouge">Canvas.text</code>, <code class="language-plaintext highlighter-rouge">Canvas.textWidth</code>, <code class="language-plaintext highlighter-rouge">Canvas.layoutText</code>, and <code class="language-plaintext highlighter-rouge">Canvas.drawTextLayout</code>. The font provider
 and renderer-specific texture details stay inside the engine.</p>
 
+<p>The compatibility text methods use HarfBuzz’s <code class="language-plaintext highlighter-rouge">Latn</code>/<code class="language-plaintext highlighter-rouge">en</code> defaults. For scripts that need explicit
+shaping properties, pass <code class="language-plaintext highlighter-rouge">ui.TextOptions</code> to <code class="language-plaintext highlighter-rouge">Canvas.textWithOptions</code>,
+<code class="language-plaintext highlighter-rouge">Canvas.textWidthWithOptions</code>, and <code class="language-plaintext highlighter-rouge">Canvas.layoutTextWithOptions</code>, for example
+<code class="language-plaintext highlighter-rouge">.{ .script = "Taml", .language = "ta" }</code>. Measurement and layout must use the same options as
+drawing so widths, wrapping, and glyph placement agree. These options affect runtime outline and
+MSDF fonts; static BFNT and bitmap providers retain their existing codepoint-based behavior.</p>
+
 <p>There are three rendering kinds:</p>
 
 <table>
@@ -151,7 +158,7 @@ successful compilation or CPU tests alone do not close them.</p>
 
     </main>
     <footer>
-      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source 224462df8409bb7f72151371b525e1b67ddb21f4. Experimental software; APIs and documentation may change.</p>
+      <p>Engine 0.3.0 · Zig 0.16.0-dev.3142+5ccfeb926 · Source a922c3aa9225f4efa04579cc8aa6891423b08dfc. Experimental software; APIs and documentation may change.</p>
       <p><a href="/Bairava-Engine/dev/license/">Documentation license</a></p>
     </footer>
     <script src="/Bairava-Engine/dev/assets/search.js" defer></script>
