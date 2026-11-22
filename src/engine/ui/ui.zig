@@ -24,6 +24,7 @@ pub const FontStore = font_store.FontStore;
 pub const FontProfileStats = font_store.ProfileStats;
 pub const TextAlignment = text_layout.Alignment;
 pub const TextLayout = text_layout.Layout;
+pub const TextOptions = font_store.TextOptions;
 
 /// An RGBA color, each channel from 0 to 1.
 pub const Color = struct {
@@ -117,16 +118,34 @@ pub const Canvas = struct {
         return self.fonts.textWidth(self.font, str);
     }
 
+    /// The width of `str` in pixels, shaped with the supplied script and language when supported by this font.
+    pub fn textWidthWithOptions(self: *const Canvas, str: []const u8, options: TextOptions) f32 {
+        return self.fonts.textWidthWithOptions(self.font, str, options);
+    }
+
     /// Builds a wrapped, aligned text block. Line slices borrow `str`; release the result with
     /// `TextLayout.deinit` and the allocator used here.
     pub fn layoutText(self: *const Canvas, allocator: std.mem.Allocator, str: []const u8, max_width: f32, alignment: TextAlignment) text_layout.LayoutError!TextLayout {
-        return font_store.layoutTextOf(
+        return self.layoutTextWithOptions(allocator, str, max_width, alignment, .{});
+    }
+
+    /// Builds a wrapped, aligned text block using the supplied script and language for shaping.
+    pub fn layoutTextWithOptions(
+        self: *const Canvas,
+        allocator: std.mem.Allocator,
+        str: []const u8,
+        max_width: f32,
+        alignment: TextAlignment,
+        options: TextOptions,
+    ) text_layout.LayoutError!TextLayout {
+        return font_store.layoutTextWithOptionsOf(
             self.fonts,
             self.font,
             allocator,
             str,
             max_width,
             alignment,
+            options,
         );
     }
 
@@ -150,6 +169,12 @@ pub const Canvas = struct {
     /// Adds `str` with its top-left corner at (x, y), in pixels.
     pub fn text(self: *Canvas, x: f32, y: f32, str: []const u8, color: Color) void {
         self.fonts.drawText(self.font, self.list, x, y, str, toC(color)) catch |err|
+            std.debug.panic("could not draw text with font {d}: {s}", .{ self.font.id, @errorName(err) });
+    }
+
+    /// Adds `str` with its top-left corner at (x, y), using the supplied script and language for shaping.
+    pub fn textWithOptions(self: *Canvas, x: f32, y: f32, str: []const u8, options: TextOptions, color: Color) void {
+        self.fonts.drawTextWithOptions(self.font, self.list, x, y, str, options, toC(color)) catch |err|
             std.debug.panic("could not draw text with font {d}: {s}", .{ self.font.id, @errorName(err) });
     }
 
@@ -403,6 +428,60 @@ test "Canvas keeps runtime glyph clusters across wrapping and widgets measure th
     );
     try std.testing.expectEqual(canvas.textWidth("AV"), widget_width);
     try std.testing.expect(widgets.ctx.draw_text != null);
+}
+
+test "Canvas Tamil options agree across measurement, wrapping, and drawing" {
+    const runtime_font = @import("../text/runtime_font.zig");
+    const glyph_atlas = @import("../renderer/glyph_atlas.zig");
+    const glyph_cache = @import("../text/glyph_cache.zig");
+    const allocator = std.testing.allocator;
+    const blob = runtime_font.hb.hb_blob_create_from_file_or_fail("tests/fixtures/NotoSansTamil.ttf") orelse
+        return error.FixtureMissing;
+    defer runtime_font.hb.hb_blob_destroy(blob);
+    var len: c_uint = 0;
+    const data = runtime_font.hb.hb_blob_get_data(blob, &len);
+    if (data == null or len == 0) return error.FixtureMissing;
+    const bytes: [*]const u8 = @ptrCast(data);
+    var atlas = glyph_atlas.Atlas{
+        .allocator = allocator,
+        .cache = try glyph_cache.Cache.init(allocator, .{}),
+        .pages = &.{},
+    };
+    defer atlas.deinit();
+    const fonts = try font_store.createWithAtlas(allocator, &atlas);
+    defer font_store.destroy(fonts);
+    const handle = try font_store.insertRuntime(
+        fonts,
+        try runtime_font.RuntimeFont.init(allocator, bytes[0..@as(usize, len)], 16),
+    );
+    var canvas = Canvas.create(allocator, fonts, handle);
+    defer canvas.deinit();
+
+    const tamil: TextOptions = .{ .script = "Taml", .language = "ta" };
+    const conjunct = "\u{0B95}\u{0BCD}\u{0BB7}";
+    const width = canvas.textWidthWithOptions(conjunct, tamil);
+    try std.testing.expect(width > 0);
+
+    var layout = try canvas.layoutTextWithOptions(allocator, conjunct, width + 1, .left, tamil);
+    defer layout.deinit();
+    const shaped_layout = @import("../text/shaped_layout.zig");
+    const conjunct_glyphs = shaped_layout.glyphsOf(&layout, 0);
+    try std.testing.expectEqual(@as(usize, 1), conjunct_glyphs.len);
+    try std.testing.expectApproxEqAbs(width, layout.lines[0].width, 1e-4);
+
+    const wrapped = "\u{0BA4}\u{0BAE}\u{0BBF}\u{0BB4}\u{0BCD} " ++ conjunct;
+    const word = wrapped[0..15];
+    var word_layout = try canvas.layoutTextWithOptions(allocator, wrapped, canvas.textWidthWithOptions(word, tamil), .left, tamil);
+    defer word_layout.deinit();
+    try std.testing.expectEqual(@as(usize, 2), word_layout.lines.len);
+    try std.testing.expectEqual(@as(usize, 1), shaped_layout.glyphsOf(&word_layout, 1).len);
+
+    const white = Color{ .r = 1, .g = 1, .b = 1, .a = 1 };
+    canvas.textWithOptions(0, 0, conjunct, tamil, white);
+    try std.testing.expectEqual(@as(c_int, 1), canvas.list.count);
+    canvas.clear();
+    canvas.text(0, 0, conjunct, white);
+    try std.testing.expectEqual(@as(c_int, 3), canvas.list.count);
 }
 
 /// A font with empty metrics, except for a 1x1 white block at the origin. Its texture comes from the test fixtures, with no GPU object.

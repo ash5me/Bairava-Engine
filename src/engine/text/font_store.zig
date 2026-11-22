@@ -30,6 +30,7 @@ const platform = @import("../platform/platform.zig");
 const Texture = @import("../renderer/texture.zig").Texture;
 
 pub const FontHandle = font_registry.FontHandle;
+pub const TextOptions = shaper.Options;
 pub const InsertError = font_registry.InsertError;
 pub const LayoutError = shaped_layout.LayoutError;
 pub const DrawError = error{ RuntimeDrawingUnavailable, LayoutFontMismatch, QuadListFull } || glyph_records.Error || LayoutError;
@@ -97,12 +98,17 @@ pub const FontStore = opaque {
 
     /// The width of `str` in pixels, in the font `handle` names.
     pub fn textWidth(self: *FontStore, handle: FontHandle, str: []const u8) f32 {
+        return self.textWidthWithOptions(handle, str, .{});
+    }
+
+    /// The width of `str` in pixels, shaped with `options` for runtime outline and MSDF fonts.
+    pub fn textWidthWithOptions(self: *FontStore, handle: FontHandle, str: []const u8, options: TextOptions) f32 {
         return switch (resourceOf(stateOf(self), handle).*) {
             .bfnt_coverage => |*font_value| bfnt_measure.width(&font_value.baked, str, 1.0),
-            .msdf => |*font_value| msdfShaper(font_value).measure(str, .{}) catch |err|
+            .msdf => |*font_value| msdfShaper(font_value).measure(str, options) catch |err|
                 std.debug.panic("could not measure MSDF font text: {s}", .{@errorName(err)}),
             .bitmap => |*font_value| bitmapWidth(&font_value.descriptor, str),
-            .runtime_coverage => |*font_value| runtimeShaper(font_value).measure(str, .{}) catch |err|
+            .runtime_coverage => |*font_value| runtimeShaper(font_value).measure(str, options) catch |err|
                 std.debug.panic("could not measure outline font text: {s}", .{@errorName(err)}),
         };
     }
@@ -110,9 +116,23 @@ pub const FontStore = opaque {
     /// Adds `str` to `list` with its top-left corner at (x, y), in pixels, in the font `handle` names. Runtime glyphs
     /// use the session atlas; the runtime flushes it before either renderer path submits the batch.
     pub fn drawText(self: *FontStore, handle: FontHandle, list: *c.ui_quad_list, x: f32, y: f32, str: []const u8, color: c.ui_color) DrawError!void {
+        return self.drawTextWithOptions(handle, list, x, y, str, .{}, color);
+    }
+
+    /// Adds `str` using the requested script and language for runtime outline and MSDF shaping.
+    pub fn drawTextWithOptions(
+        self: *FontStore,
+        handle: FontHandle,
+        list: *c.ui_quad_list,
+        x: f32,
+        y: f32,
+        str: []const u8,
+        options: TextOptions,
+        color: c.ui_color,
+    ) DrawError!void {
         switch (resourceOf(stateOf(self), handle).*) {
             .bfnt_coverage => |*font_value| drawBfntText(font_value, list, x, y, str, color),
-            .msdf => |*font_value| try drawMsdfText(stateOf(self), handle, font_value, list, x, y, str, color),
+            .msdf => |*font_value| try drawMsdfText(stateOf(self), handle, font_value, list, x, y, str, options, color),
             .bitmap => |*font_value| try drawBitmapText(&font_value.descriptor, list, x, y, str, color),
             .runtime_coverage => |*font_value| try drawRuntimeText(
                 stateOf(self),
@@ -122,6 +142,7 @@ pub const FontStore = opaque {
                 x,
                 y,
                 str,
+                options,
                 color,
             ),
         }
@@ -201,6 +222,19 @@ pub fn layoutTextOf(
     max_width: f32,
     alignment: text_layout.Alignment,
 ) LayoutError!text_layout.Layout {
+    return layoutTextWithOptionsOf(store, handle, allocator, text, max_width, alignment, .{});
+}
+
+/// Lays out text through the selected provider, passing `options` to shaped runtime providers.
+pub fn layoutTextWithOptionsOf(
+    store: *FontStore,
+    handle: FontHandle,
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    max_width: f32,
+    alignment: text_layout.Alignment,
+    options: TextOptions,
+) LayoutError!text_layout.Layout {
     const state = stateOf(store);
     const resource = resourceOf(state, handle);
     switch (resource.*) {
@@ -211,7 +245,7 @@ pub fn layoutTextOf(
             max_width,
             resource.metrics().line_height,
             alignment,
-            .{},
+            options,
         ),
         .msdf => |*font_value| return shaped_layout.layout(
             allocator,
@@ -220,7 +254,7 @@ pub fn layoutTextOf(
             max_width,
             resource.metrics().line_height,
             alignment,
-            .{},
+            options,
         ),
         .bfnt_coverage, .bitmap => {
             const measure_context = LayoutMeasureContext{ .store = store, .handle = handle };
@@ -478,6 +512,7 @@ fn drawRuntimeText(
     x: f32,
     y: f32,
     str: []const u8,
+    options: TextOptions,
     color: c.ui_color,
 ) DrawError!void {
     if (state.atlas == null) return error.RuntimeDrawingUnavailable;
@@ -488,7 +523,7 @@ fn drawRuntimeText(
         std.math.floatMax(f32),
         resourceOf(state, handle).metrics().line_height,
         .left,
-        .{},
+        options,
     );
     defer layout.deinit();
 
@@ -503,6 +538,7 @@ fn drawMsdfText(
     x: f32,
     y: f32,
     str: []const u8,
+    options: TextOptions,
     color: c.ui_color,
 ) DrawError!void {
     var layout = try shaped_layout.layout(
@@ -512,7 +548,7 @@ fn drawMsdfText(
         std.math.floatMax(f32),
         resourceOf(state, handle).metrics().line_height,
         .left,
-        .{},
+        options,
     );
     defer layout.deinit();
     try appendMsdfRecords(font_value, list, &layout, x, y, color);

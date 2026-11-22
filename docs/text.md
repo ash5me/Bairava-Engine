@@ -4,6 +4,13 @@ Game code uses one text surface: load a `FontHandle`, then measure, lay out, and
 `Canvas.text`, `Canvas.textWidth`, `Canvas.layoutText`, and `Canvas.drawTextLayout`. The font provider
 and renderer-specific texture details stay inside the engine.
 
+The compatibility text methods use HarfBuzz's `Latn`/`en` defaults. For scripts that need explicit
+shaping properties, pass `ui.TextOptions` to `Canvas.textWithOptions`,
+`Canvas.textWidthWithOptions`, and `Canvas.layoutTextWithOptions`, for example
+`.{ .script = "Taml", .language = "ta" }`. Measurement and layout must use the same options as
+drawing so widths, wrapping, and glyph placement agree. These options affect runtime outline and
+MSDF fonts; static BFNT and bitmap providers retain their existing codepoint-based behavior.
+
 There are three rendering kinds:
 
 | Kind | Source and loading | Sampling and rendering |
