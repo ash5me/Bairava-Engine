@@ -431,17 +431,10 @@ test "Canvas keeps runtime glyph clusters across wrapping and widgets measure th
 }
 
 test "Canvas Tamil options agree across measurement, wrapping, and drawing" {
-    const runtime_font = @import("../text/runtime_font.zig");
+    const font_test_support = @import("../text/font_test_support.zig");
     const glyph_atlas = @import("../renderer/glyph_atlas.zig");
     const glyph_cache = @import("../text/glyph_cache.zig");
     const allocator = std.testing.allocator;
-    const blob = runtime_font.hb.hb_blob_create_from_file_or_fail("tests/fixtures/NotoSansTamil.ttf") orelse
-        return error.FixtureMissing;
-    defer runtime_font.hb.hb_blob_destroy(blob);
-    var len: c_uint = 0;
-    const data = runtime_font.hb.hb_blob_get_data(blob, &len);
-    if (data == null or len == 0) return error.FixtureMissing;
-    const bytes: [*]const u8 = @ptrCast(data);
     var atlas = glyph_atlas.Atlas{
         .allocator = allocator,
         .cache = try glyph_cache.Cache.init(allocator, .{}),
@@ -452,7 +445,7 @@ test "Canvas Tamil options agree across measurement, wrapping, and drawing" {
     defer font_store.destroy(fonts);
     const handle = try font_store.insertRuntime(
         fonts,
-        try runtime_font.RuntimeFont.init(allocator, bytes[0..@as(usize, len)], 16),
+        try font_test_support.runtimeTamilFixture(allocator),
     );
     var canvas = Canvas.create(allocator, fonts, handle);
     defer canvas.deinit();
