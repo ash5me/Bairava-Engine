@@ -11,6 +11,7 @@ inside the engine. Avoid leaving duplicate or obsolete implementations beside th
 
 ## Core guides
 
+- [Semkootru sample game](semkootru.md)
 - [Getting started](getting-started.md)
 - [Application lifecycle](application-lifecycle.md)
 - [Rendering](rendering.md)
