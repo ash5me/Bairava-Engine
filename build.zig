@@ -899,6 +899,21 @@ pub fn build(b: *std.Build) void {
     b.step("run-text-benchmark", "Run the deterministic multi-provider typography reference workload").dependOn(&run_text_benchmark.step);
     b.step("run-tb03", "Run TB-03 Text and Font Rendering Test").dependOn(&run_text_benchmark.step);
 
+    const text_msdf_probe = b.addExecutable(.{
+        .name = "BairavaMsdfProbe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/msdf_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    text_msdf_probe.root_module.addImport("bairava", engine_module);
+    b.installArtifact(text_msdf_probe);
+    const run_text_msdf_probe = b.addRunArtifact(text_msdf_probe);
+    run_text_msdf_probe.step.dependOn(b.getInstallStep());
+    b.step("run-tb03-msdf-probe", "Run the TB-03 MSDF size comparison").dependOn(&run_text_msdf_probe.step);
+
     // Texture atlas: every sprite in one image, packed at build time by tools/atlas/pack.c with
     // stb_rect_pack. The packer runs on the build machine, so it is built for the host, not the target.
     const atlas_tool = b.addExecutable(.{

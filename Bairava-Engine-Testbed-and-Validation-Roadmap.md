@@ -194,8 +194,15 @@ Validate shaping, glyph lookup, rasterization, atlas allocation, line layout, Un
 - Use multiple fonts, font sizes, and both MSDF and grayscale coverage paths where supported.
 - Request many distinct glyphs to create atlas pressure and page exhaustion.
 - Repeatedly change strings, font sizes, and font handles during runtime.
+- For MSDF, compare the same glyph baked at 16, 24, 32, and 48 px before changing the generator or shader. Preserve a rendered comparison, the atlas glyph crop and RGB channels, baked size, atlas UVs, and destination rectangle.
 - Test multiline layout, baseline alignment, line height, and fallback glyph behavior.
 - Render text through the Canvas, UI, and debug-overlay paths.
+
+Run the focused MSDF comparison with `zig build run-tb03-msdf-probe`, capture the four rendered samples, then export the matching atlas crops and metadata with:
+
+```powershell
+python scripts/msdf_probe.py --report zig-out/bin/TB-03-msdf-scale-probe.json --assets zig-out/bin/assets --output zig-out/msdf-probe
+```
 
 ### Measurements
 

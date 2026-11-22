@@ -22,8 +22,117 @@ const Options = struct {
     count: u32 = 100,
     frames: u64 = warmup_frames + report_frames,
     gpu_timing: bool = false,
+    msdf_probe: bool = false,
 };
 var options = Options{};
+
+const msdf_probe_heights = [_]u32{ 16, 24, 32, 48 };
+const msdf_probe_y = [_]f32{ 4, 30, 66, 110 };
+
+pub const MsdfScaleProbe = struct {
+    labels: engine.ui.Canvas,
+    samples: [msdf_probe_heights.len]engine.ui.Canvas = undefined,
+    reported: bool = false,
+
+    pub fn init(ctx: *engine.Context) !MsdfScaleProbe {
+        const label_font = try ctx.loadBitmapFont("assets/fonts/font8x8_basic.fnt");
+        var result = MsdfScaleProbe{
+            .labels = engine.ui.Canvas.create(ctx.allocators.game, ctx.fonts, label_font),
+        };
+        errdefer result.labels.deinit();
+        var initialized: usize = 0;
+        errdefer for (result.samples[0..initialized]) |*sample| sample.deinit();
+        for (msdf_probe_heights, 0..) |height, index| {
+            const path = try std.fmt.allocPrint(ctx.allocators.game, "assets/default_font_msdf_{d}px.mfnt", .{height});
+            defer ctx.allocators.game.free(path);
+            const font = try ctx.loadMsdfFont(path, @floatFromInt(height));
+            result.samples[index] = engine.ui.Canvas.create(ctx.allocators.game, ctx.fonts, font);
+            initialized += 1;
+        }
+        return result;
+    }
+
+    pub fn update(self: *MsdfScaleProbe, ctx: *engine.Context, nav: *engine.SceneNavigator) void {
+        _ = nav;
+        if (ctx.input.wasPressed(.escape)) ctx.running = false;
+        if (!self.reported and self.samplesReady()) self.writeReport(ctx);
+    }
+
+    fn samplesReady(self: *const MsdfScaleProbe) bool {
+        for (self.samples) |sample| if (sample.list.count == 0) return false;
+        return true;
+    }
+
+    fn writeReport(self: *MsdfScaleProbe, ctx: *engine.Context) void {
+        var buffer: [4096]u8 = undefined;
+        var length: usize = 0;
+        const start = std.fmt.bufPrint(&buffer,
+            "{{\"testbed\":\"TB-03\",\"glyph\":\"A\",\"window_px\":[{d},{d}],\"logical_px\":[{d},{d}],\"samples\":[",
+            .{ config.window_w, config.window_h, config.native_w, config.native_h }) catch {
+            log.err("MSDF probe metadata could not be formatted", .{});
+            return;
+        };
+        length = start.len;
+        for (self.samples, msdf_probe_heights, 0..) |sample, height, index| {
+            const quad = sample.list.items[0];
+            const separator = if (index == 0) "" else ",";
+            const row = std.fmt.bufPrint(buffer[length..],
+                "{s}{{\"baked_px\":{d},\"src_px\":[{d:.1},{d:.1},{d:.1},{d:.1}],\"dst_px\":[{d:.1},{d:.1},{d:.1},{d:.1}]}}",
+                .{
+                    separator,
+                    height,
+                    quad.src.x,
+                    quad.src.y,
+                    quad.src.w,
+                    quad.src.h,
+                    quad.dst.x,
+                    quad.dst.y,
+                    quad.dst.w,
+                    quad.dst.h,
+                }) catch {
+                log.err("MSDF probe metadata could not be formatted", .{});
+                return;
+            };
+            length += row.len;
+        }
+        const end = std.fmt.bufPrint(buffer[length..], "]}}\n", .{}) catch {
+            log.err("MSDF probe metadata could not be formatted", .{});
+            return;
+        };
+        length += end.len;
+        ctx.writeFile("TB-03-msdf-scale-probe.json", buffer[0..length]) catch |err| {
+            log.err("MSDF probe metadata could not be written: {s}", .{@errorName(err)});
+            return;
+        };
+        self.reported = true;
+        log.info("MSDF probe metadata written: TB-03-msdf-scale-probe.json", .{});
+    }
+
+    pub fn draw(self: *MsdfScaleProbe, dc: *const engine.DrawContext) void {
+        self.labels.clear();
+        for (msdf_probe_heights, msdf_probe_y) |height, y| {
+            var label: [24]u8 = undefined;
+            const text = std.fmt.bufPrint(&label, "{d}px baked", .{height}) catch unreachable;
+            self.labels.text(4, y, text, white);
+        }
+        self.labels.queue(dc.batch, 1000);
+
+        for (&self.samples, msdf_probe_y) |*sample, y| {
+            sample.clear();
+            sample.text(108, y, "A", white);
+            sample.queue(dc.batch, 1000);
+        }
+    }
+
+    pub fn debugText(_: *const MsdfScaleProbe, out: *engine.diagnostics.Text) void {
+        out.print("MSDF glyph A: 16/24/32/48px bake; Escape quits", .{});
+    }
+
+    pub fn deinit(self: *MsdfScaleProbe) void {
+        for (&self.samples) |*sample| sample.deinit();
+        self.labels.deinit();
+    }
+};
 
 const TextBenchmark = struct {
     bitmap: engine.ui.Canvas,
@@ -165,8 +274,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
             options.frames = std.fmt.parseUnsigned(u64, args[arg_index], 10) catch options.frames;
         } else if (std.mem.eql(u8, arg, "--gpu-timing")) {
             options.gpu_timing = true;
+        } else if (std.mem.eql(u8, arg, "--msdf-probe")) {
+            options.msdf_probe = true;
         } else if (std.mem.eql(u8, arg, "--help")) {
-            std.debug.print("TB-03 options: --count 100|500|1000 --frames 180 --gpu-timing\n", .{});
+            std.debug.print("TB-03 options: --count 100|500|1000 --frames 180 --gpu-timing --msdf-probe\n", .{});
             return;
         } else {
             return error.InvalidArgument;
@@ -174,5 +285,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
     if (!(options.count == 100 or options.count == 500 or options.count == 1000)) return error.InvalidArgument;
     config.gpu_timing = options.gpu_timing;
-    try engine.run(engine.SceneHost(TextBenchmark), config);
+    if (options.msdf_probe) {
+        try engine.run(engine.SceneHost(MsdfScaleProbe), config);
+    } else {
+        try engine.run(engine.SceneHost(TextBenchmark), config);
+    }
 }
