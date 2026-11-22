@@ -150,7 +150,7 @@ const Tb11 = struct {
         }
 
         const latin_font = try ctx.loadFont("assets/ui_font_9px.bfnt", 9);
-        const tamil_font = try ctx.loadOutlineFont("assets/fonts/tamilfont.ttf", 16);
+        const tamil_font = try ctx.loadOutlineFont("assets/fonts/ChemmozhiParanar.ttf", 16);
         const latin_ui = engine.ui.Ui.init(allocator, ctx.fonts, latin_font);
         const tamil_ui = engine.ui.Ui.init(allocator, ctx.fonts, tamil_font);
         const content = engine.ui.Canvas.create(allocator, ctx.fonts, latin_font);

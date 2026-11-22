@@ -38,7 +38,7 @@ const TextBenchmark = struct {
         const bitmap = try ctx.loadBitmapFont("assets/fonts/font8x8_basic.fnt");
         const bfnt = try ctx.loadFont("assets/ui_font_9px.bfnt", 9);
         const runtime_latin = try ctx.loadOutlineFont("assets/fonts/font.ttf", 16);
-        const runtime_tamil = try ctx.loadOutlineFont("assets/fonts/tamilfont.ttf", 24);
+        const runtime_tamil = try ctx.loadOutlineFont("assets/fonts/ChemmozhiParanar.ttf", 24);
         const msdf = try ctx.loadMsdfFont("assets/default_font_msdf_24px.mfnt", 24);
         const allocator = ctx.allocators.game;
         return .{
